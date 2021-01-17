@@ -1,0 +1,16 @@
+[package]
+name = "static_init_macro"
+version = "0.1.0"
+authors = ["Olivier Kannengieser <okannen@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+proc-macro=true
+
+[dependencies]
+syn= {version = "1", features = ["full"]}
+quote="1"
+proc-macro2="1"
+memchr="2"

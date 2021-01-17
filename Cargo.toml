@@ -1,0 +1,15 @@
+[package]
+name = "static_init"
+version = "0.1.0"
+authors = ["Olivier Kannengieser <okannen@gmail.com>"]
+edition = "2018"
+
+[workspace]
+members = [
+      "static_init_macro",
+      "test_suite"
+      ]
+
+[dependencies.static_init_macro]
+version="0.1.0"
+path="static_init_macro"
