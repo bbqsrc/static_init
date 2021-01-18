@@ -11,6 +11,33 @@ use proc_macro::TokenStream;
 extern crate proc_macro2;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 
+/// The function on which this attribute is applied will be
+/// run before main start. 
+///
+/// ```
+/// #[constructor]
+/// fn initer () {
+/// // run before main start
+/// }
+/// ```
+///
+/// The execution order is unspecified but on elf plateform (linux)
+/// a priority can be specified using the syntax `constructor(<num>)` where
+/// `<num>` is a number included in the range [0 ; 2^16-1]. Functions with
+/// priority number 0 are run first (in unspecified order), then functions 
+/// with priority number 1 are run ...
+/// ```
+/// #[constructor(0)]
+/// fn first () {
+/// // run before main start
+/// }
+///
+/// #[constructor(1)]
+/// fn then () {
+/// // run before main start
+/// }
+/// ```
+///
 #[proc_macro_attribute]
 pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
     let func: ItemFn = parse_macro_input!(input);
@@ -38,6 +65,33 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
     gen_ctor_dtor(func,&section,&mod_name).into()
 }
 
+/// The function on which this attribute is applied will be
+/// run after main return. 
+///
+/// ```
+/// #[destructor]
+/// fn droper () {
+/// // run before main start
+/// }
+/// ```
+///
+/// The execution order is unspecified but on elf plateform (linux)
+/// a priority can be specified using the syntax `destructor(<num>)` where
+/// `<num>` is a number included in the range [0 ; 2^16-1]. Functions with
+/// priority number 0 are run first (in unspecified order), then functions 
+/// with priority number 1 are run ...
+/// ```
+/// #[destructor(0)]
+/// fn first () {
+/// // run after main return
+/// }
+///
+/// #[destructor(0)]
+/// fn then () {
+/// // run after main return
+/// }
+/// ```
+///
 #[proc_macro_attribute]
 pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
     let func: ItemFn = parse_macro_input!(input);
@@ -63,13 +117,69 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
     let mod_name = format!("__static_init_constructor_{}",func.sig.ident);
     gen_ctor_dtor(func,&section,&mod_name).into()
 }
-struct DynOptions{
-    init: bool,
-    init_priority: Option<u16>,
-    drop: bool,
-    drop_priority: Option<u16>,
-}
-
+/// Statics on which this attribute is applied will be
+/// be initialized at run time (optionaly see bellow), before
+/// main start. This allow to have statics initialized with non
+/// const expressions.
+/// ```
+/// struct A(i32);
+///
+/// impl A {
+///   //new is not const
+///   fn new(v:i32) -> A {
+///     A(v)
+///   }
+/// }
+///
+/// #[dynamic]
+/// static V :A = A::new(42);
+/// ```
+///
+/// The execution order is unspecified but on elf plateform (linux)
+/// a priority can be specified using the syntax `dynamic(<num>)` where
+/// `<num>` is a number included in the range [0 ; 2^16-1]. Statics with
+/// priority number 0 are initialized first (in unspecified order), then statics 
+/// with priority number 1 are run ...
+/// ```
+/// # use static_init_macro::dynamic;
+/// struct A(i32);
+///
+/// impl A {
+///   //new is not const
+///   fn new(v:i32) -> A {
+///     A(v)
+///   }
+/// }
+///
+/// //V1 must be initialized first
+/// //because V2 uses the value of V1.
+/// #[dynamic(10)]
+/// static mut V1 :A = A::new(33);
+///
+/// #[dynamic(20)]
+/// static V2 :A = A::new(unsafe{V1.0} + 9);
+/// ```
+///
+/// Finaly the full syntax is for the attribute is:
+///
+/// ```text 
+/// "dynamic" [ "(" <dyn_opts> ")" ]
+///
+/// dyn_opts:
+///   <dyn_opt>
+///   <dyn_opt>, <dyn_opts>
+///
+/// dyn_opt:
+///   "init" [ "=" <priority> ]
+///   "drop" [ "=" <priority> ]
+/// ```  
+///
+/// The macro attribute `dynamic` is equivalent to `dynamic(init=65535)`
+/// and `dynamic(<num>)` to `dynamic(init=65535)`. In the absence of `init`
+/// dyn_opt, the static will not be created dynamically. The `drop` dyn_opt
+/// cause the static to be dropped after main returns. The priority in as the
+/// same semantic as for the [macro@destructor] attribute: variables with the lowest
+/// priority number are dropped first.
 #[proc_macro_attribute]
 pub fn dynamic(args: TokenStream, input: TokenStream) -> TokenStream {
     let item: ItemStatic = parse_macro_input!(input);
@@ -81,6 +191,14 @@ pub fn dynamic(args: TokenStream, input: TokenStream) -> TokenStream {
 
     gen_dyn_init(item,options).into()
 }
+
+struct DynOptions{
+    init: bool,
+    init_priority: Option<u16>,
+    drop: bool,
+    drop_priority: Option<u16>,
+}
+
 
 fn parse_priority(args: TokenStream) -> std::result::Result<Option<u16>,TokenStream2> {
     if !args.is_empty() {
@@ -227,9 +345,17 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynOptions) -> TokenStream2 {
                     }
             })
     } else { None};
-    *stat.expr = parse_quote!{
-        #typ::uninit()
-    };
+    if options.init {
+        *stat.expr = parse_quote!{
+            #typ::uninit()
+        };
+    }
+    else {
+        assert!(options.drop);
+        *stat.expr = parse_quote!{
+            #typ::from(#expr)
+        };
+    }
     *stat.ty = typ;
 
     quote!{
