@@ -10,3 +10,6 @@ path = ".."
 name = "macro"
 path = "tests/macro.rs"
 
+[dev-dependencies]
+lazy_static = "1.4"
+

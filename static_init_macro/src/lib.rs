@@ -11,10 +11,14 @@ use proc_macro::TokenStream;
 extern crate proc_macro2;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 
+//TODO: on windows sectionls are classified in alphabetical order by the linker
+//then the c runtime will run every thing between CRT$XCA and CRT$XCZ so
+//it should be possible to define priorty using this
+
 /// The function on which this attribute is applied will be
 /// run before main start. 
 ///
-/// ```
+/// ```ignore
 /// #[constructor]
 /// fn initer () {
 /// // run before main start
@@ -23,10 +27,11 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 ///
 /// The execution order is unspecified but on elf plateform (linux)
 /// a priority can be specified using the syntax `constructor(<num>)` where
-/// `<num>` is a number included in the range [0 ; 2^16-1]. Functions with
+/// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1]. Functions with
 /// priority number 0 are run first (in unspecified order), then functions 
-/// with priority number 1 are run ...
-/// ```
+/// with priority number 1 are run ... Priority  65535 is higher than an abscence
+/// of priority.
+/// ```ignore
 /// #[constructor(0)]
 /// fn first () {
 /// // run before main start
@@ -47,16 +52,20 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
         Err(e) => return e.into(),
     };
 
-    let section = if cfg!(target_os = "linux") {
+    let section = if cfg!(target_os = "linux") || cfg!(target_os= "android") || cfg!(target_os = "freebsd") || cfg!(target_os = "netbsd") {
         if let Some(p) = priority {
             format!(".init_array.{:05}",p)
         } else {
             format!(".init_array")
         }
-    } else if cfg!(target_os = "macos") {
+    } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
             format!("__DATA,__mod_init_func")
     } else if cfg!(target_os = "windows") {
-            format!(".CRT$XCU")
+        if let Some(p) = priority {
+            format!(".RIN{:05}",p)
+        } else {
+            format!(".RIN7")
+        }
     } else {
         unimplemented!()
     };
@@ -68,7 +77,7 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// The function on which this attribute is applied will be
 /// run after main return. 
 ///
-/// ```
+/// ```ignore
 /// #[destructor]
 /// fn droper () {
 /// // run before main start
@@ -77,10 +86,11 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// The execution order is unspecified but on elf plateform (linux)
 /// a priority can be specified using the syntax `destructor(<num>)` where
-/// `<num>` is a number included in the range [0 ; 2^16-1]. Functions with
+/// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1]. Functions with
 /// priority number 0 are run first (in unspecified order), then functions 
-/// with priority number 1 are run ...
-/// ```
+/// with priority number 1 are run ... Priority  65535 is higher than an abscence
+/// of priority.
+/// ```ignore
 /// #[destructor(0)]
 /// fn first () {
 /// // run after main return
@@ -100,16 +110,20 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
         Ok(v) => v,
         Err(e) => return e.into(),
     };
-    let section = if cfg!(target_os = "linux") {
+    let section = if cfg!(target_os = "linux") || cfg!(target_os= "android") || cfg!(target_os = "freebsd") || cfg!(target_os = "netbsd") {
         if let Some(p) = priority {
             format!(".fini_array.{:05}",p)
         } else {
             format!(".fini_array")
         }
-    } else if cfg!(target_os = "macos") {
+    } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
             format!("__DATA,__mod_term_func")
     } else if cfg!(target_os = "windows") {
-            format!(".CRT$XPU")
+        if let Some(p) = priority {
+            format!(".RFI{:05}",p)
+        } else {
+            format!(".RFI7")
+        }
     } else {
         unimplemented!()
     };
@@ -121,7 +135,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// be initialized at run time (optionaly see bellow), before
 /// main start. This allow to have statics initialized with non
 /// const expressions.
-/// ```
+/// ```ignore
 /// struct A(i32);
 ///
 /// impl A {
@@ -140,8 +154,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// `<num>` is a number included in the range [0 ; 2^16-1]. Statics with
 /// priority number 0 are initialized first (in unspecified order), then statics 
 /// with priority number 1 are run ...
-/// ```
-/// # use static_init_macro::dynamic;
+/// ```ignore
 /// struct A(i32);
 ///
 /// impl A {
@@ -177,9 +190,53 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// The macro attribute `dynamic` is equivalent to `dynamic(init=65535)`
 /// and `dynamic(<num>)` to `dynamic(init=65535)`. In the absence of `init`
 /// dyn_opt, the static will not be created dynamically. The `drop` dyn_opt
-/// cause the static to be dropped after main returns. The priority in as the
+/// cause the static to be droped after main returns. The priority in as the
 /// same semantic as for the [macro@destructor] attribute: variables with the lowest
-/// priority number are dropped first.
+/// priority number are droped first.
+///
+/// ```ignore
+/// struct A(i32);
+///
+/// impl A {
+///   //new is not const
+///   fn new(v:i32) -> A {
+///     A(v)
+///   }
+///   //new is not const
+///   const fn const_new(v:i32) -> A {
+///     A(v)
+///   }
+/// }
+///
+/// impl Drop for A {
+///     fn drop(&mut self) {}
+///     }
+///
+/// //const initialized droped after main exit
+/// #[dynamic(drop)]
+/// static mut V1 :A = A::new_const(33);
+///
+/// //initialized before V1 and droped before V1
+/// #[dynamic(20,drop=10)]
+/// static V2 :A = A::new(10);
+///
+/// //as above
+/// #[dynamic(init=20,drop=10)]
+/// static V3 :A = A::new(10);
+///
+/// // not droped
+/// #[dynamic(init)]
+/// static V4 :A = A::new(10);
+///
+/// // not droped
+/// #[dynamic]
+/// static V5 :A = A::new(10);
+///
+/// // not droped
+/// #[dynamic(10)]
+/// static V6 :A = A::new(10);
+/// ```
+
 #[proc_macro_attribute]
 pub fn dynamic(args: TokenStream, input: TokenStream) -> TokenStream {
     let item: ItemStatic = parse_macro_input!(input);
