@@ -4,13 +4,58 @@
 //! 
 //!
 //! # Functionalities
-//! * Code execution before or after `main` but after libc and rust runtime has been initialized.
-//! * Mutable and const statics with non const initialization.
-//! * Statics droppable after `main` exits.
-//! * Zero cost access to statics.
-//! * Priorities on elf plateforms (linux, bsd, etc...) and window.
+//!
+//! [X] Code execution before or after `main` but after libc and rust runtime has been initialized.
+//! [X] Mutable and const statics with non const initialization.
+//! [X] Statics droppable after `main` exits.
+//! [X] Zero cost access to statics.
+//! [X] Priorities on elf plateforms (linux, bsd, etc...) and window.
+//!
+//! # Example
+//! ```rust
+//! use static_init::{constructor,destructor,dynamic};
+//!
+//! #[constructor]
+//! fn do_init(){
+//! }
+//! //Care not to use priorities bellow 100
+//! //as those high priorities are used by
+//! //the rust runtime. (The lower the number
+//! //the higher the priority)
+//! #[constructor(200)]
+//! fn do_first(){
+//! }
+//!
+//! #[destructor]
+//! fn finaly() {
+//! }
+//! #[destructor(0)]
+//! fn ultimately() {
+//! }
+//!
+//! #[dynamic]
+//! static V: Vec<i32> = vec![1,2,3];
+//!
+//! #[dynamic(init,drop)]
+//! static mut V1: Vec<i32> = vec![1,2,3];
+//!
+//! //Initialized before V1 
+//! //then destroyed after V1 
+//! #[dynamic(init=142,drop=142)]
+//! static mut INIT_AND_DROP: Vec<i32> = vec![1,2,3];
+//!
+//! fn main(){
+//!     assert_eq!(V[0],1);
+//!     unsafe{
+//!     assert_eq!(V1[2],3);
+//!     V1[2] = 42;
+//!     assert_eq!(V1[2], 42);
+//!     }
+//! }
+//! ```
 //!
 //! # Attributes
+//!
 //! All functions marked with the [constructor] attribute are 
 //! run before `main` is started.
 //!
@@ -24,11 +69,22 @@
 //! The attributes [constructor] and [destructor] works by placing the marked function pointer in
 //! dedicated object file sections. 
 //!
+//! Priority ranges from 0 to 2<sup>16</sup>-1. The absence of priority is equivalent to
+//! 2<sup>16</sup>. 
+//!
+//! During program initialization:
+//!     - constructors with priority 0 are the first called;
+//!     - constructors without priority are called last.
+//!
+//! During program termination, the order is reversed:
+//!     - destructors without priority are the first called;
+//!     - destructors with priority 0 are the last called.
+//! 
 //! # Comparisons against other crates
 //!
 //! ## [lazy_static][1]
 //!  - lazy_static only provides const statics.
-//!  - Each access to lazy_static statics cost 2ns on a x86.
+//!  - Each access to lazy_static statics costs 2ns on a x86.
 //!  - lazy_static does not provide priorities.
 //!
 //! ## [ctor][2]
@@ -106,8 +162,10 @@ pub use static_init_macro::destructor;
 #[doc(inline)]
 pub use static_init_macro::dynamic;
 
-/// This is the actual type of a mutable static declared with the
-/// 'dynamic' attribute. It implements `Deref<Target=T>` and `DerefMut`.
+
+/// The actual type of "dynamic" mutable statics.
+///
+/// It implements `Deref<Target=T>` and `DerefMut`.
 ///
 /// All associated functions are only usefull for the implementation of
 /// the [dynamic] proc macro attribute
@@ -153,8 +211,9 @@ impl<T> DerefMut for Static<T> {
     }
 }
 
-/// This is the actual type of a const static declared with the
-/// 'dynamic' attribute. It implements `Deref<Target=T>`.
+/// The actual type of "dynamic" non mutable statics.
+///
+/// It implements `Deref<Target=T>`.
 ///
 /// All associated functions are only usefull for the implementation of
 /// the [dynamic] proc macro attribute

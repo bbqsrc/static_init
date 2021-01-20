@@ -15,8 +15,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 //then the c runtime will run every thing between CRT$XCA and CRT$XCZ so
 //it should be possible to define priorty using this
 
-/// The function on which this attribute is applied will be
-/// run before main start.
+/// Attribute for functions run at program initialization (before main)
 ///
 /// ```ignore
 /// #[constructor]
@@ -28,9 +27,9 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 /// windows plateform a priority can be specified using the syntax `constructor(<num>)` where
 /// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1]. 
 ///
-/// Constructor with priority number 0 are run first (in unspecified order), then functions
-/// with priority number 1 are run ... Priority  65535 is higher than an abscence
-/// of priority.
+/// Constructors with priority number 0 are run first (in unspecified order), then functions
+/// with priority number 1 are run ...  then functions
+/// with priority number 65535 and finaly constructors with no priority. 
 ///
 /// ```ignore
 /// #[constructor(0)]
@@ -100,8 +99,7 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
     gen_ctor_dtor(func, &section, &mod_name).into()
 }
 
-/// The function on which this attribute is applied will be
-/// run after main return.
+/// Attribute for functions run at program termination (after main)
 ///
 /// ```ignore
 /// #[destructor]
@@ -114,9 +112,8 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// windows plateform a priority can be specified using the syntax `destructor(<num>)` where
 /// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1]. 
 ///
-/// Constructors with priority number 0 are run first (in unspecified order), then functions
-/// with priority number 1 are run ...  then functions
-/// with priority number 65535 and finaly constructors with no priority. 
+/// Destructors without priority are run first (in unspecified order), then destructors with priority 65535 are run,
+/// the destructors with priority number 65534,... finaly destructors with priority 0 are run. 
 ///
 /// ```ignore
 /// #[destructor(1)]
@@ -177,10 +174,14 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
     let mod_name = format!("__static_init_constructor_{}", func.sig.ident);
     gen_ctor_dtor(func, &section, &mod_name).into()
 }
+
+/// Statics initialized with non const functions.
+///
 /// Statics on which this attribute is applied will be
 /// be initialized at run time (optionaly see bellow), before
-/// main start. This allow to have statics initialized with non
+/// main start. This allow statics initialization with non
 /// const expressions.
+///
 /// ```ignore
 /// struct A(i32);
 ///
@@ -194,7 +195,6 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// #[dynamic]
 /// static V :A = A::new(42);
 /// ```
-///
 /// The execution order of destructors is unspecified. Nevertheless on ELF plateform (linux,any unixes but mac) and
 /// windows plateform a priority can be specified using the syntax `dynamic(<num>)` where
 /// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1]. 
