@@ -34,11 +34,60 @@
 //!  - ctor does not provide priority on elf plateforms (unixes, linux, bsd, etc..)
 //!
 //! # Documentation
+//! ## Mac
+//!   - [MACH_O specification](https://www.cnblogs.com/sunkang/archive/2011/05/24/2055635.html)
+//!   - GCC source code gcc/config/darwin.c indicates that priorities are not supported. 
+//!
+//!   Initialization functions pointers are placed in section "__DATA,__mod_init_func" and
+//!   "__DATA,__mod_term_func"
+//!
 //! ## ELF plateform:
 //!   - `info ld`
 //!   - linker script: `ld --verbose`
 //!   - [ELF specification](https://docs.oracle.com/cd/E23824_01/html/819-0690/chapter7-1.html#scrolltoc)
+//!
+//!   The runtime will run fonctions pointers of section ".init_array" at startup and function
+//!   pointers in ".fini_array" at program exit. The linker place in the target object file
+//!   sectio .init_array all sections from the source objects whose name is of the form
+//!   .init_array.NNNNN in lexicographical order then the .init_array sections of those same source
+//!   objects. It does equivalently with .fini_array and .fini_array.NNNN sections.
+//!
+//!   Usage can be seen in gcc source gcc/config/pru.c
+//!
+//!   Resources of libstdc++ are initialized with priority 100 (see gcc source libstdc++-v3/c++17/default_resource.h)
+//!   The rust standard library function that capture the environment and executable arguments is
+//!   executed at priority 99. Some callbacks constructors and destructors with priority 0 are
+//!   registered by rust/rtlibrary.
+//!   Static C++ objects are usually initialized with no priority (TBC). lib-c resources are
+//!   initialized by the C-runtime before any function in the init_array (whatever the priority) are executed.
+//!
 //! ## Windows
+//!
+//!  - [this blog post](https://www.cnblogs.com/sunkang/archive/2011/05/24/2055635.html)
+//!
+//!  At start up, any functions pointer between sections ".CRT$XIA" and ".CRT$XIZ"
+//!  and then any functions between ".CRT$XCA" and ".CRT$XCZ". It happens that the C library
+//!  initialization functions pointer are placed in ".CRT$XIU" and C++ statics functions initialization
+//!  pointers are placed in ".CRT$XCU". At program finish the pointers between sections
+//!  ".CRT$XPA" and ".CRT$XPZ" are run first then those between ".CRT$XTA" and ".CRT$XTZ".
+//!
+//!  Some reverse engineering was necessary to find out a way to implement 
+//!  constructor/destructor priority.
+//!
+//!  Contrarily to what is reported in this blog post, msvc linker
+//!  only performs a lexicographicall ordering of section whose name
+//!  is of the form "<prefix>$<suffix>" and have the same <prefix>.
+//!  For example "RUST$01" and "RUST$02" will be ordered but those two
+//!  sections will not be ordered with "RHUM" section.
+//!
+//!  Moreover, it seems that section name of the form <prefix>$<suffix> are 
+//!  not limited to 8 characters.
+//!
+//!  So static initialization function pointers will be placed in section ".CRT$XCU" and
+//!  those with a priority `p` in `format!(".CRT$XCT{:05}",p)`. Destructors without priority
+//!  are placed in ".CRT$XPU" and those with a priority in `format!(".CRT$XPT{:05}")`.
+//!
+//!
 //! [1]: https://crates.io/crates/lazy_static
 //! [2]: https://crates.io/crates/ctor
 use core::cell::UnsafeCell;
@@ -136,53 +185,4 @@ impl<T> Deref for ConstStatic<T> {
     fn deref(&self) -> &T {
         unsafe { &**self.0.get() }
     }
-}
-
-#[cfg(target_os = "windows")]
-mod windows {
-    #[link_section = ".RIN0"]
-    #[used]
-    static INIT_START : Option<fn()->()> = None;
-    #[link_section = ".RIN8"]
-    #[used]
-    static INIT_END : Option<fn()->()> = None;
-    #[link_section = ".RFI0"]
-    #[used]
-    static FINI_START : Option<fn()->()> = None;
-    #[link_section = ".RFI8"]
-    #[used]
-    static FINI_END : Option<fn()->()> = None;
-
-    fn initialize() {
-        let mut start: *const Option<fn()->()> = &INIT_START;
-        let end: *const Option<fn()->()> = &INIT_END;
-        while start != end {
-            let f = unsafe{*start};
-            if let Some(f) = f {
-                f()
-            }
-            start = unsafe{start.add(1)};
-        }
-    }
-
-    #[used]
-    #[link_section = ".CRT$XCU"]
-    static INITIALIZER: fn()->() = initialize;
-
-    fn finalize() {
-        let mut start: *const Option<fn()->()> = &FINI_START;
-        let end: *const Option<fn()->()> = &FINI_END;
-        while start != end {
-            let f = unsafe{*start};
-            if let Some(f) = f {
-                f()
-            }
-            start = unsafe{start.add(1)};
-        }
-    }
-
-    #[used]
-    #[link_section = ".CRT$XPU"]
-    static FINALIZER: fn()->() = finalize;
-
 }
