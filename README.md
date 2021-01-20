@@ -5,19 +5,21 @@
 
  Module initialization termination function with priorities and (mutable) statics initialization with
  non const functions.
+
+ Minimum rust version required: 1.49
  
 
  # Functionalities
 
- [X] Code execution before or after `main` but after libc and rust runtime has been initialized.
+ - [x] Code execution before or after `main` but after libc and rust runtime has been initialized.
 
- [X] Mutable and const statics with non const initialization.
+ - [x] Mutable and const statics with non const initialization.
 
- [X] Statics droppable after `main` exits.
+ - [x] Statics dropable after `main` exits.
 
- [X] Zero cost access to statics.
+ - [x] Zero cost access to statics.
 
- [X] Priorities on elf plateforms (linux, bsd, etc...) and window.
+ - [x] Priorities on elf plateforms (linux, bsd, etc...) and window.
 
  # Example
  ```rust
@@ -143,11 +145,11 @@
 
   Contrarily to what is reported in this blog post, msvc linker
   only performs a lexicographicall ordering of section whose name
-  is of the form "<prefix>$<suffix>" and have the same <prefix>.
+  is of the form "\<prefix\>$\<suffix\>" and have the same \<prefix\>.
   For example "RUST$01" and "RUST$02" will be ordered but those two
   sections will not be ordered with "RHUM" section.
 
-  Moreover, it seems that section name of the form <prefix>$<suffix> are 
+  Moreover, it seems that section name of the form \<prefix\>$\<suffix\> are 
   not limited to 8 characters.
 
   So static initialization function pointers are placed in section ".CRT$XCU" and
