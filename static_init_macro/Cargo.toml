@@ -3,6 +3,11 @@ name = "static_init_macro"
 version = "0.1.1"
 authors = ["Olivier Kannengieser <okannen@gmail.com>"]
 edition = "2018"
+description = "Attribute macros for static_init crate"
+keywords = ["no_std","utility","static","constructor","initialization","drop"]
+categories = ["no-std","os"]
+repository = "https://gitlab.com/okannen/static_init"
+license = "MIT OR Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
