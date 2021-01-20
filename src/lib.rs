@@ -1,12 +1,14 @@
 #![no_std]
-//! This crates provides macros to run code or initialize/drop statics and mutable statics at program startup and exit.
+//! Module initialization termination function with priorities and (mutable) statics initialization with
+//! non const functions.
+//! 
 //!
 //! # Functionalities
-//! * Code execution before or after `main`.
+//! * Code execution before or after `main` but after libc and rust runtime has been initialized.
 //! * Mutable and const statics with non const initialization.
 //! * Statics droppable after `main` exits.
 //! * Zero cost access to statics.
-//! * On elf plateforms, priorities can be specified.
+//! * Priorities on elf plateforms (linux, bsd, etc...) and window.
 //!
 //! # Attributes
 //! All functions marked with the [constructor] attribute are 
@@ -20,20 +22,21 @@
 //! after main returns. 
 //!
 //! The attributes [constructor] and [destructor] works by placing the marked function pointer in
-//! dedicated object file sections. On elf plateforms, a priority can also be specified. 
+//! dedicated object file sections. 
 //!
-//! # Comparisons with other crates
+//! # Comparisons against other crates
 //!
 //! ## [lazy_static][1]
 //!  - lazy_static only provides const statics.
 //!  - Each access to lazy_static statics cost 2ns on a x86.
-//!  - lazy_static does not provide priorities on elf plateforms (unixes, linux, bsd, etc..).
+//!  - lazy_static does not provide priorities.
 //!
 //! ## [ctor][2]
 //!  - ctor only provides const statics.
-//!  - ctor does not provide priority on elf plateforms (unixes, linux, bsd, etc..)
+//!  - ctor does not provide priorities.
 //!
-//! # Documentation
+//! # Documentation and details
+//!
 //! ## Mac
 //!   - [MACH_O specification](https://www.cnblogs.com/sunkang/archive/2011/05/24/2055635.html)
 //!   - GCC source code gcc/config/darwin.c indicates that priorities are not supported. 
@@ -41,25 +44,25 @@
 //!   Initialization functions pointers are placed in section "__DATA,__mod_init_func" and
 //!   "__DATA,__mod_term_func"
 //!
-//! ## ELF plateform:
-//!   - `info ld`
-//!   - linker script: `ld --verbose`
-//!   - [ELF specification](https://docs.oracle.com/cd/E23824_01/html/819-0690/chapter7-1.html#scrolltoc)
+//! ## ELF plateforms:
+//!  - `info ld`
+//!  - linker script: `ld --verbose`
+//!  - [ELF specification](https://docs.oracle.com/cd/E23824_01/html/819-0690/chapter7-1.html#scrolltoc)
 //!
-//!   The runtime will run fonctions pointers of section ".init_array" at startup and function
-//!   pointers in ".fini_array" at program exit. The linker place in the target object file
-//!   sectio .init_array all sections from the source objects whose name is of the form
-//!   .init_array.NNNNN in lexicographical order then the .init_array sections of those same source
-//!   objects. It does equivalently with .fini_array and .fini_array.NNNN sections.
+//!  The runtime will run fonctions pointers of section ".init_array" at startup and function
+//!  pointers in ".fini_array" at program exit. The linker place in the target object file
+//!  sectio .init_array all sections from the source objects whose name is of the form
+//!  .init_array.NNNNN in lexicographical order then the .init_array sections of those same source
+//!  objects. It does equivalently with .fini_array and .fini_array.NNNN sections.
 //!
-//!   Usage can be seen in gcc source gcc/config/pru.c
+//!  Usage can be seen in gcc source gcc/config/pru.c
 //!
-//!   Resources of libstdc++ are initialized with priority 100 (see gcc source libstdc++-v3/c++17/default_resource.h)
-//!   The rust standard library function that capture the environment and executable arguments is
-//!   executed at priority 99. Some callbacks constructors and destructors with priority 0 are
-//!   registered by rust/rtlibrary.
-//!   Static C++ objects are usually initialized with no priority (TBC). lib-c resources are
-//!   initialized by the C-runtime before any function in the init_array (whatever the priority) are executed.
+//!  Resources of libstdc++ are initialized with priority 100 (see gcc source libstdc++-v3/c++17/default_resource.h)
+//!  The rust standard library function that capture the environment and executable arguments is
+//!  executed at priority 99. Some callbacks constructors and destructors with priority 0 are
+//!  registered by rust/rtlibrary.
+//!  Static C++ objects are usually initialized with no priority (TBC). lib-c resources are
+//!  initialized by the C-runtime before any function in the init_array (whatever the priority) are executed.
 //!
 //! ## Windows
 //!
@@ -83,9 +86,9 @@
 //!  Moreover, it seems that section name of the form <prefix>$<suffix> are 
 //!  not limited to 8 characters.
 //!
-//!  So static initialization function pointers will be placed in section ".CRT$XCU" and
-//!  those with a priority `p` in `format!(".CRT$XCT{:05}",p)`. Destructors without priority
-//!  are placed in ".CRT$XPU" and those with a priority in `format!(".CRT$XPT{:05}")`.
+//!  So static initialization function pointers are placed in section ".CRT$XCU" and
+//!  those with a priority `p` in `format!(".CRT$XCTZ{:05}",p)`. Destructors without priority
+//!  are placed in ".CRT$XPU" and those with a priority in `format!(".CRT$XPTZ{:05}")`.
 //!
 //!
 //! [1]: https://crates.io/crates/lazy_static

@@ -1,8 +1,13 @@
 [package]
 name = "static_init"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Olivier Kannengieser <okannen@gmail.com>"]
 edition = "2018"
+description = "Code execution during program initialization/termination phases and non const static initialization (and drop)"
+keywords = ["no_std","utility","static","constructor","initialization","drop"]
+categories = ["no-std","os"]
+repository = "https://gitlab.com/okannen/static_init"
+license = "MIT OR Apache-2.0"
 
 [workspace]
 members = [
