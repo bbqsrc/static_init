@@ -16,5 +16,5 @@ members = [
       ]
 
 [dependencies.static_init_macro]
-version="0.1.0"
+version="0.1.1"
 path="static_init_macro"
