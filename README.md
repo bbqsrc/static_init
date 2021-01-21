@@ -93,13 +93,42 @@
 # Safety
   
   Use of the *functionnalities provided by this library are inherently unsafe*. During
-  execution of a constructor, any access to variable initialized with a lower priority (higher
-  priority number) will cause undefined behavior. During execution of a destructor any access
-  to variable droped with a lower priority (higher priority number) will cause undefined
+  execution of a constructor, any access to variable initialized with a lower or equal priority (higher
+  or equal priority number) will cause undefined behavior. During execution of a destructor any access
+  to variable droped with a lower or equal priority (higher or equal priority number) will cause undefined
   behavior.
   
   This is actually the reason to be of the priorities: this is the coder own responsability
-  to ensure that no access is performed to lower priorities.
+  to ensure that no access is performed to lower or equal priorities.
+
+ ```rust
+ use static_init::dynamic;
+
+ #[dynamic]
+ static V1: Vec<i32> = unsafe {vec![1,2,3]};
+
+ //potential undefined behavior: V1 may not have been initialized yet
+ #[dynamic]
+ static V2: i32 = unsafe {V1[0]};
+
+ //undefined behavior, V3 is unconditionnaly initialized before V1
+ #[dynamic(1000)]
+ static V3: i32 = unsafe {V1[0]};
+ 
+ #[dynamic(1000)]
+ static V4: Vec<i32> = unsafe {vec![1,2,3]};
+ 
+ //Good, V5 initialized after V4
+ #[dynamic(2000)]
+ static V5: i32 = unsafe {V4[0]};
+
+ //Good, V6 initialized after V5 and v4
+ #[dynamic]
+ static V6: i32 = unsafe {*V5+V4[1]};
+
+
+ # fn main(){}
+ ```
  
  # Comparisons against other crates
 
