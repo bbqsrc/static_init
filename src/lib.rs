@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::missing_safety_doc)]
 //! Module initialization termination function with priorities and (mutable) statics initialization with
 //! non const functions.
 //! 

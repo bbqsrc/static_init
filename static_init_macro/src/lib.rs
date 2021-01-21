@@ -89,7 +89,7 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
         if let Some(p) = priority {
             format!(".init_array.{:05}", p)
         } else {
-            format!(".init_array")
+            ".init_array".to_string()
         }
     } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
         if priority.is_some() {
@@ -98,12 +98,12 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
             ))
             .into();
         }
-        format!("__DATA,__mod_init_func")
+        "__DATA,__mod_init_func".to_string()
     } else if cfg!(target_os = "windows") {
         if let Some(p) = priority {
             format!(".CRT$XCTZ{:05}", p)
         } else {
-            format!(".CRT$XCU")
+            ".CRT$XCU".to_string()
         }
     } else {
         return quote!(compile_error!("Target not supported")).into();
@@ -172,7 +172,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
         if let Some(p) = priority {
             format!(".fini_array.{:05}", p as u32 + 1)
         } else {
-            format!(".fini_array") //so that it comes the latter
+            ".fini_array".to_string() //so that it comes the latter
         }
     } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
         if priority.is_some() {
@@ -181,12 +181,12 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
             ))
             .into();
         }
-        format!("__DATA,__mod_term_func")
+        "__DATA,__mod_term_func".to_string()
     } else if cfg!(target_os = "windows") {
         if let Some(p) = priority {
             format!(".CRT$XPTZ{:05}", p)
         } else {
-            format!(".CRT$XPU")
+            ".CRT$XPU".to_string()
         }
     } else {
         return quote!(compile_error!("Target not supported")).into();
@@ -344,7 +344,9 @@ fn parse_priority(args: TokenStream) -> std::result::Result<Option<u16>, TokenSt
         let n: LitInt = syn::parse(args).map_err(|e| e.to_compile_error())?;
 
         Ok(Some(
-            n.base10_parse::<u16>().map(|v| 65535-v).map_err(|e| e.to_compile_error())?,
+            n.base10_parse::<u16>()
+                .map(|v| 65535 - v)
+                .map_err(|e| e.to_compile_error())?,
         ))
     } else {
         Ok(None)
@@ -365,21 +367,27 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynOptions, Tok
                     let id = if let Some(id) = id.get_ident() {
                         id
                     } else {
-                        return Err(quote_spanned!(id.span()=>compile_error!("Unexpected attribute argument #id")).into());
+                        return Err(
+                            quote_spanned!(id.span()=>compile_error!("Unexpected attribute argument #id")),
+                        );
                     };
                     if id == "init" {
                         opt.init = true;
                     } else if id == "drop" {
                         opt.drop = true;
                     } else {
-                        return Err(quote_spanned!(id.span()=>compile_error!("Unexpected attribute argument #id")).into());
+                        return Err(
+                            quote_spanned!(id.span()=>compile_error!("Unexpected attribute argument #id")),
+                        );
                     }
                 }
                 NestedMeta::Meta(Meta::NameValue(nv)) => {
                     let id = if let Some(id) = nv.path.get_ident() {
                         id
                     } else {
-                        return Err(quote_spanned!(nv.path.span()=>compile_error!("Unexpected attribute argument #id")).into());
+                        return Err(
+                            quote_spanned!(nv.path.span()=>compile_error!("Unexpected attribute argument #id")),
+                        );
                     };
                     if id == "init" {
                         opt.init = true;
@@ -387,7 +395,9 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynOptions, Tok
                             opt.init_priority =
                                 Some(n.base10_parse::<u16>().map_err(|e| e.to_compile_error())?);
                         } else {
-                            return Err(quote_spanned!(nv.lit.span()=>compile_error!("Expected an init priority (u16)")).into());
+                            return Err(
+                                quote_spanned!(nv.lit.span()=>compile_error!("Expected an init priority (u16)")),
+                            );
                         }
                     } else if id == "drop" {
                         opt.drop = true;
@@ -395,10 +405,14 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynOptions, Tok
                             opt.drop_priority =
                                 Some(n.base10_parse::<u16>().map_err(|e| e.to_compile_error())?);
                         } else {
-                            return Err(quote_spanned!(nv.lit.span()=>compile_error!("Expected a drop priority (u16)")).into());
+                            return Err(
+                                quote_spanned!(nv.lit.span()=>compile_error!("Expected a drop priority (u16)")),
+                            );
                         }
                     } else {
-                        return Err(quote_spanned!(id.span()=>compile_error!("Expected eithe 'init' or 'drop'")).into());
+                        return Err(
+                            quote_spanned!(id.span()=>compile_error!("Expected eithe 'init' or 'drop'")),
+                        );
                     }
                 }
                 NestedMeta::Lit(Lit::Int(n)) => {
@@ -406,10 +420,11 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynOptions, Tok
                     opt.init_priority =
                         Some(n.base10_parse::<u16>().map_err(|e| e.to_compile_error())?);
                 }
-                _ => return Err(
-                    quote_spanned!(arg.span()=>compile_error!("Expected either 'init' or 'drop'"))
-                        .into(),
-                ),
+                _ => {
+                    return Err(
+                        quote_spanned!(arg.span()=>compile_error!("Expected either 'init' or 'drop'")),
+                    )
+                }
             }
         }
 
