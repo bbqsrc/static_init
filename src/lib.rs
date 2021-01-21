@@ -17,33 +17,33 @@
 //! use static_init::{constructor,destructor,dynamic};
 //!
 //! #[constructor]
-//! fn do_init(){
+//! unsafe fn do_init(){
 //! }
 //! //Care not to use priorities bellow 100
 //! //as those high priorities are used by
 //! //the rust runtime. (The lower the number
 //! //the higher the priority)
 //! #[constructor(200)]
-//! fn do_first(){
+//! unsafe fn do_first(){
 //! }
 //!
 //! #[destructor]
-//! fn finaly() {
+//! unsafe fn finaly() {
 //! }
 //! #[destructor(0)]
-//! fn ultimately() {
+//! unsafe fn ultimately() {
 //! }
 //!
 //! #[dynamic]
-//! static V: Vec<i32> = vec![1,2,3];
+//! static V: Vec<i32> = unsafe {vec![1,2,3]};
 //!
 //! #[dynamic(init,drop)]
-//! static mut V1: Vec<i32> = vec![1,2,3];
+//! static mut V1: Vec<i32> = unsafe {vec![1,2,3]};
 //!
 //! //Initialized before V1 
 //! //then destroyed after V1 
 //! #[dynamic(init=142,drop=142)]
-//! static mut INIT_AND_DROP: Vec<i32> = vec![1,2,3];
+//! static mut INIT_AND_DROP: Vec<i32> = unsafe {vec![1,2,3]};
 //!
 //! fn main(){
 //!     assert_eq!(V[0],1);
@@ -80,6 +80,17 @@
 //! During program termination, the order is reversed:
 //!     - destructors without priority are the first called;
 //!     - destructors with priority 0 are the last called.
+//!
+//! # Safety
+//!   
+//!   Use of the *functionnalities provided by this library are inherently unsafe*. During
+//!   execution of a constructor, any access to variable initialized with a lower priority (higher
+//!   priority number) will cause undefined behavior. During execution of a destructor any access
+//!   to variable droped with a lower priority (higher priority number) will cause undefined
+//!   behavior.
+//!   
+//!   This is actually the reason to be of the priorities: this is the coder own responsability
+//!   to ensure that no access is performed to lower priorities.
 //! 
 //! # Comparisons against other crates
 //!
@@ -87,6 +98,7 @@
 //!  - lazy_static only provides const statics.
 //!  - Each access to lazy_static statics costs 2ns on a x86.
 //!  - lazy_static does not provide priorities.
+//!  - lazy_static statics initialization is *safe*.
 //!
 //! ## [ctor][2]
 //!  - ctor only provides const statics.

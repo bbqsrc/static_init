@@ -25,20 +25,31 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 /// ```
 /// The execution order of constructors is unspecified. Nevertheless on ELF plateform (linux,any unixes but mac) and
 /// windows plateform a priority can be specified using the syntax `constructor(<num>)` where
-/// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1]. 
+/// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1].
 ///
 /// Constructors with priority number 0 are run first (in unspecified order), then functions
 /// with priority number 1 are run ...  then functions
-/// with priority number 65535 and finaly constructors with no priority. 
+/// with priority number 65535 and finaly constructors with no priority.
+///
+/// # Safety
+///
+/// Constructor functions must be unsafe. Any access to non data initialized with an equal or lower
+/// priority (priority number larger) will cause undefined behavior. (NB: static data initialized
+/// by a const expression are always in an initialized state so it is always safe to read them)
+///
+/// Notably on Elf platforms accesses to `std::env::*` with a priority number bellow 100 will cause
+/// undefined behavior. On windows accessing `std::env::*` will never causes undefined behavior. On other plateforms any access to
+/// `std::env::*` in a constructor, whatever its priority, will cause undefined behavior. In this
+/// last case, the information may be accessible in the /proc/self directory.
 ///
 /// ```ignore
 /// #[constructor(0)]
-/// fn first () {
+/// unsafe fn first () {
 /// // run before main start
 /// }
 ///
 /// #[constructor(1)]
-/// fn then () {
+/// unsafe fn then () {
 /// // run before main start
 /// }
 /// ```
@@ -61,19 +72,19 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     let section = if cfg!(target_os = "linux")
-     || cfg!(target_os = "android")
-     || cfg!(target_os = "freebsd")
-     || cfg!(target_os = "dragonfly")
-     || cfg!(target_os = "netbsd")
-     || cfg!(target_os = "openbsd")
-     || cfg!(target_os = "solaris")
-     || cfg!(target_os = "illumos")
-     || cfg!(target_os = "emscripten")
-     || cfg!(target_os = "haiku")
-     || cfg!(target_os = "l4re")
-     || cfg!(target_os = "fuchsia")
-     || cfg!(target_os = "redox")
-     || cfg!(target_os = "vxworks")
+        || cfg!(target_os = "android")
+        || cfg!(target_os = "freebsd")
+        || cfg!(target_os = "dragonfly")
+        || cfg!(target_os = "netbsd")
+        || cfg!(target_os = "openbsd")
+        || cfg!(target_os = "solaris")
+        || cfg!(target_os = "illumos")
+        || cfg!(target_os = "emscripten")
+        || cfg!(target_os = "haiku")
+        || cfg!(target_os = "l4re")
+        || cfg!(target_os = "fuchsia")
+        || cfg!(target_os = "redox")
+        || cfg!(target_os = "vxworks")
     {
         if let Some(p) = priority {
             format!(".init_array.{:05}", p)
@@ -82,7 +93,10 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
         }
     } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
         if priority.is_some() {
-            return quote!(compile_error!("Constructor priority not supported on this plateform.")).into();
+            return quote!(compile_error!(
+                "Constructor priority not supported on this plateform."
+            ))
+            .into();
         }
         format!("__DATA,__mod_init_func")
     } else if cfg!(target_os = "windows") {
@@ -103,26 +117,31 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// ```ignore
 /// #[destructor]
-/// fn droper () {
+/// unsafe fn droper () {
 /// // run before main start
 /// }
 /// ```
 ///
 /// The execution order of destructors is unspecified. Nevertheless on ELF plateform (linux,any unixes but mac) and
 /// windows plateform a priority can be specified using the syntax `destructor(<num>)` where
-/// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1]. 
+/// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1].
 ///
 /// Destructors without priority are run first (in unspecified order), then destructors with priority 65535 are run,
-/// the destructors with priority number 65534,... finaly destructors with priority 0 are run. 
+/// the destructors with priority number 65534,... finaly destructors with priority 0 are run.
+///
+/// # Safety
+///
+/// Destructor functions must be unsafe. Any access to statics dropped with an equal or lower
+/// priority (priority number larger) will cause undefined behavior.
 ///
 /// ```ignore
 /// #[destructor(1)]
-/// fn first () {
+/// unsafe fn first () {
 /// // run after main return
 /// }
 ///
 /// #[destructor(0)]
-/// fn then () {
+/// unsafe fn then () {
 /// // run after main return
 /// }
 /// ```
@@ -136,39 +155,41 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
         Err(e) => return e.into(),
     };
     let section = if cfg!(target_os = "linux")
-     || cfg!(target_os = "android")
-     || cfg!(target_os = "freebsd")
-     || cfg!(target_os = "dragonfly")
-     || cfg!(target_os = "netbsd")
-     || cfg!(target_os = "openbsd")
-     || cfg!(target_os = "solaris")
-     || cfg!(target_os = "illumos")
-     || cfg!(target_os = "emscripten")
-     || cfg!(target_os = "haiku")
-     || cfg!(target_os = "l4re")
-     || cfg!(target_os = "fuchsia")
-     || cfg!(target_os = "redox")
-     || cfg!(target_os = "vxworks")
+        || cfg!(target_os = "android")
+        || cfg!(target_os = "freebsd")
+        || cfg!(target_os = "dragonfly")
+        || cfg!(target_os = "netbsd")
+        || cfg!(target_os = "openbsd")
+        || cfg!(target_os = "solaris")
+        || cfg!(target_os = "illumos")
+        || cfg!(target_os = "emscripten")
+        || cfg!(target_os = "haiku")
+        || cfg!(target_os = "l4re")
+        || cfg!(target_os = "fuchsia")
+        || cfg!(target_os = "redox")
+        || cfg!(target_os = "vxworks")
     {
         if let Some(p) = priority {
             format!(".fini_array.{:05}", p as u32 + 1)
         } else {
-            format!(".fini_array")//so that it comes the latter
+            format!(".fini_array") //so that it comes the latter
         }
-    } else 
-        if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
+    } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
         if priority.is_some() {
-            return quote!(compile_error!("Constructor priority not supported on this plateform.")).into();
+            return quote!(compile_error!(
+                "Constructor priority not supported on this plateform."
+            ))
+            .into();
         }
-            format!("__DATA,__mod_term_func")
-        } else if cfg!(target_os = "windows") {
+        format!("__DATA,__mod_term_func")
+    } else if cfg!(target_os = "windows") {
         if let Some(p) = priority {
             format!(".CRT$XPTZ{:05}", p)
         } else {
             format!(".CRT$XPU")
         }
-        } else {
-            return quote!(compile_error!("Target not supported")).into();
+    } else {
+        return quote!(compile_error!("Target not supported")).into();
     };
 
     let mod_name = format!("__static_init_constructor_{}", func.sig.ident);
@@ -182,6 +203,13 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// main start. This allow statics initialization with non
 /// const expressions.
 ///
+/// # Safety
+///
+/// Initialization expressions must be unsafe blocks. During initialization, any access to
+/// other "dynamic" statics initialized with a lower priority will cause undefined
+/// behavior. Similarly, during drop any access to a "dynamic" static dropped with a lower
+/// priority will cause undefined behavior.
+///
 /// ```ignore
 /// struct A(i32);
 ///
@@ -193,15 +221,15 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// }
 ///
 /// #[dynamic]
-/// static V :A = A::new(42);
+/// static V :A = unsafe{A::new(42)};
 /// ```
 /// The execution order of destructors is unspecified. Nevertheless on ELF plateform (linux,any unixes but mac) and
 /// windows plateform a priority can be specified using the syntax `dynamic(<num>)` where
-/// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1]. 
+/// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1].
 ///
 /// Statics with priority number 0 are initialized first (in unspecified order), then statics
 /// with priority number 1 are initialized ...  then statics
-/// with priority number 65535 and finaly statics with no priority. 
+/// with priority number 65535 and finaly statics with no priority.
 ///
 /// ```ignore
 /// struct A(i32);
@@ -216,10 +244,10 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// //V1 must be initialized first
 /// //because V2 uses the value of V1.
 /// #[dynamic(10)]
-/// static mut V1 :A = A::new(33);
+/// static mut V1 :A = unsafe{A::new(33)};
 ///
 /// #[dynamic(20)]
-/// static V2 :A = A::new(unsafe{V1.0} + 9);
+/// static V2 :A = unsafe{A::new(V1.0 + 9)};
 /// ```
 ///
 /// Finaly the full syntax is for the attribute is:
@@ -238,11 +266,13 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// The macro attribute `dynamic` is equivalent to `dynamic(init=65535)`
 /// and `dynamic(<num>)` to `dynamic(init=65535)`. In the absence of `init`
-/// dyn_opt, the static will not be created dynamically. The `drop` dyn_opt
-/// cause the static to be droped after main returns. The priority in as the
+/// the static will not be created dynamically. The `drop` option
+/// cause the static to be droped after main returns. The priority has the
 /// same semantic as for the [macro@destructor] attribute: statics without priority
 /// are droped first, then statics with priority 65536 and finaly statics with priority
 /// 0 are the last dropped.
+///
+/// If a priority is not explicitly specified for drop, it will equal that of init.
 ///
 /// ```ignore
 /// struct A(i32);
@@ -264,27 +294,29 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// //const initialized droped after main exit
 /// #[dynamic(drop)]
-/// static mut V1 :A = A::new_const(33);
+/// static mut V1 :A = unsafe{A::new_const(33)};
 ///
 /// //initialized before V1 and droped after V1
 /// #[dynamic(20,drop=10)]
-/// static V2 :A = A::new(10);
+/// static V2 :A = unsafe{A::new(10)};
 ///
-/// //as above
-/// #[dynamic(init=20,drop=10)]
-/// static V3 :A = A::new(10);
+/// // if a drop priority is not specified, it equals the
+/// // init priority so the attribute bellow is equivalent to
+/// // #[dynamic(init=20, drop=20)
+/// #[dynamic(init=20,drop)]
+/// static V3 :A = unsafe{A::new(10)};
 ///
 /// // not droped
 /// #[dynamic(init)]
-/// static V4 :A = A::new(10);
+/// static V4 :A = unsafe{A::new(10)};
 ///
 /// // not droped
 /// #[dynamic]
-/// static V5 :A = A::new(10);
+/// static V5 :A = unsafe{A::new(10)};
 ///
 /// // not droped
 /// #[dynamic(10)]
-/// static V6 :A = A::new(10);
+/// static V6 :A = unsafe{A::new(10)};
 /// ```
 
 #[proc_macro_attribute]
@@ -399,19 +431,22 @@ fn gen_ctor_dtor(func: ItemFn, section: &str, mod_name: &str) -> TokenStream2 {
     let input = &func.sig.inputs;
     let ret = &func.sig.output;
 
-
-    quote! {
-        #func
-        #[doc(hidden)]
-        pub mod #mod_name {
-            #[link_section = #section]
-            #[used]
-            pub static INIT_FUNC: #ext fn (#input) #ret = super::#func_name;
+    if func.sig.unsafety.is_none() {
+        quote_spanned! {func.span()=>compile_error!("Constructors and destructors must be unsafe functions as they may access uninitialized memory regions")}
+    } else {
+        quote! {
+            #func
+            #[doc(hidden)]
+            pub mod #mod_name {
+                #[link_section = #section]
+                #[used]
+                pub static INIT_FUNC: unsafe #ext fn (#input) #ret = super::#func_name;
+            }
         }
     }
 }
 
-fn gen_dyn_init(mut stat: ItemStatic, options: DynOptions) -> TokenStream2 {
+fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     let mod_name = Ident::new(
         &format!("_static_init_of_{}", stat.ident),
         Span::call_site(),
@@ -419,6 +454,22 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynOptions) -> TokenStream2 {
     let stat_name = &stat.ident;
     let expr = &*stat.expr;
     let stat_typ = &*stat.ty;
+
+    if !matches!(*stat.expr, syn::Expr::Unsafe(_)) {
+        let sp = stat.expr.span();
+        return quote_spanned!(sp=>compile_error!("Initializer expression must be an unsafe block because 
+        this expression may access uninitialized data"));
+    }
+
+    //fix drop priority, if not specified, drop priority equal
+    //that of initialization priority
+    //
+    if let Some(p) = options.init_priority {
+        if options.drop_priority.is_none() {
+            options.drop_priority = Some(p);
+        }
+    }
+
     let (typ, stat_ref): (Type, Expr) = if stat.mutability.is_some() {
         (
             parse_quote! {
@@ -447,10 +498,10 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynOptions) -> TokenStream2 {
         Some(quote! {
                 use ::static_init::{constructor};
                 #con_attr
-                fn init() {
+                unsafe fn init() {
                     use super::*;
                     let r = #expr;
-                    unsafe{#typ::set_to(#stat_ref,r)}
+                    #typ::set_to(#stat_ref,r)
                 }
         })
     } else {
@@ -465,9 +516,9 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynOptions) -> TokenStream2 {
         Some(quote! {
                 use ::static_init::{destructor};
                 #con_attr
-                fn droper() {
+                unsafe fn droper() {
                     use super::*;
-                    unsafe{#typ::drop(#stat_ref)}
+                    #typ::drop(#stat_ref)
                 }
         })
     } else {
@@ -489,7 +540,8 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynOptions) -> TokenStream2 {
     #stat
 
     #[doc(hidden)]
-    pub mod #mod_name {
+    #[allow(unused_unsafe)]
+    mod #mod_name {
         #initer
         #droper
     }
