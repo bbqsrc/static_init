@@ -19,10 +19,9 @@
 //! #[constructor]
 //! unsafe fn do_init(){
 //! }
-//! //Care not to use priorities bellow 100
+//! //Care not to use priorities above 65535-100
 //! //as those high priorities are used by
-//! //the rust runtime. (The lower the number
-//! //the higher the priority)
+//! //the rust runtime. 
 //! #[constructor(200)]
 //! unsafe fn do_first(){
 //! }
@@ -30,7 +29,7 @@
 //! #[destructor]
 //! unsafe fn finaly() {
 //! }
-//! #[destructor(0)]
+//! #[destructor(100)]
 //! unsafe fn ultimately() {
 //! }
 //!
@@ -71,22 +70,24 @@
 //! dedicated object file sections. 
 //!
 //! Priority ranges from 0 to 2<sup>16</sup>-1. The absence of priority is equivalent to
-//! 2<sup>16</sup>. 
+//! a hypothetical priority number of -1. 
 //!
 //! During program initialization:
-//!     - constructors with priority 0 are the first called;
-//!     - constructors without priority are called last.
+//!
+//! - constructors with priority 65535 are the first called;
+//! - constructors without priority are called last.
 //!
 //! During program termination, the order is reversed:
-//!     - destructors without priority are the first called;
-//!     - destructors with priority 0 are the last called.
+//!
+//! - destructors without priority are the first called;
+//! - destructors with priority 65535 are the last called.
 //!
 //! # Safety
 //!   
 //!   Use of the *functionnalities provided by this library are inherently unsafe*. During
-//!   execution of a constructor, any access to variable initialized with a lower or equal priority (higher
-//!   or equal priority number) will cause undefined behavior. During execution of a destructor any access
-//!   to variable droped with a lower or equal priority (higher or equal priority number) will cause undefined
+//!   execution of a constructor, any access to variable initialized with a lower or equal priority 
+//!   will cause undefined behavior. During execution of a destructor any access
+//!   to variable droped with a lower or equal priority will cause undefined
 //!   behavior.
 //!   
 //!   This is actually the reason to be of the priorities: this is the coder own responsability
@@ -110,7 +111,7 @@
 //! static V4: Vec<i32> = unsafe {vec![1,2,3]};
 //! 
 //! //Good, V5 initialized after V4
-//! #[dynamic(2000)]
+//! #[dynamic(500)]
 //! static V5: i32 = unsafe {V4[0]};
 //!
 //! //Good, V6 initialized after V5 and v4
@@ -157,11 +158,11 @@
 //!
 //!  Usage can be seen in gcc source gcc/config/pru.c
 //!
-//!  Resources of libstdc++ are initialized with priority 100 (see gcc source libstdc++-v3/c++17/default_resource.h)
+//!  Resources of libstdc++ are initialized with priority 65535-100 (see gcc source libstdc++-v3/c++17/default_resource.h)
 //!  The rust standard library function that capture the environment and executable arguments is
-//!  executed at priority 99 on gnu platform variants. On other elf plateform they are not accessbile in any constructors. Nevertheless
+//!  executed at priority 65535-99 on gnu platform variants. On other elf plateform they are not accessbile in any constructors. Nevertheless
 //!  one can read into /proc/self directory to retrieve the command line.
-//!  Some callbacks constructors and destructors with priority 0 are
+//!  Some callbacks constructors and destructors with priority 65535 are
 //!  registered by rust/rtlibrary.
 //!  Static C++ objects are usually initialized with no priority (TBC). lib-c resources are
 //!  initialized by the C-runtime before any function in the init_array (whatever the priority) are executed.
@@ -191,8 +192,8 @@
 //!  not limited to 8 characters.
 //!
 //!  So static initialization function pointers are placed in section ".CRT$XCU" and
-//!  those with a priority `p` in `format!(".CRT$XCTZ{:05}",p)`. Destructors without priority
-//!  are placed in ".CRT$XPU" and those with a priority in `format!(".CRT$XPTZ{:05}")`.
+//!  those with a priority `p` in `format!(".CRT$XCTZ{:05}",65535-p)`. Destructors without priority
+//!  are placed in ".CRT$XPU" and those with a priority in `format!(".CRT$XPTZ{:05}",65535-p)`.
 //!
 //!
 //! [1]: https://crates.io/crates/lazy_static

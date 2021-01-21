@@ -16,7 +16,7 @@ static W: AtomicI32 = unsafe{AtomicI32::new(0)};
 static mut WM: AtomicI32 = unsafe{AtomicI32::new(0)};
 
 lazy_static! {
-    static ref WL: AtomicI32 = unsafe{AtomicI32::new(0)};
+    static ref WL: AtomicI32 = AtomicI32::new(0);
 }
 
 #[bench]

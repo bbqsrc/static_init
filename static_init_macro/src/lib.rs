@@ -27,17 +27,17 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 /// windows plateform a priority can be specified using the syntax `constructor(<num>)` where
 /// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1].
 ///
-/// Constructors with priority number 0 are run first (in unspecified order), then functions
-/// with priority number 1 are run ...  then functions
-/// with priority number 65535 and finaly constructors with no priority.
+/// Constructors with priority number 65535 are run first (in unspecified order), then constructors
+/// with priority number 65534 are run ...  then constructors
+/// with priority number 0 and finaly constructors with no priority.
 ///
 /// # Safety
 ///
-/// Constructor functions must be unsafe. Any access to non data initialized with an equal or lower
-/// priority (priority number larger) will cause undefined behavior. (NB: static data initialized
+/// Constructor functions must be unsafe. Any access to "dynamic" statics with an equal or lower
+/// initialization priority will cause undefined behavior. (NB: usual static data initialized
 /// by a const expression are always in an initialized state so it is always safe to read them)
 ///
-/// Notably on Elf platforms accesses to `std::env::*` with a priority number bellow 100 will cause
+/// Notably, on Elf platforms, accesses to `std::env::*` with a priority number above 65535-100 will cause
 /// undefined behavior. On windows accessing `std::env::*` will never causes undefined behavior. On other plateforms any access to
 /// `std::env::*` in a constructor, whatever its priority, will cause undefined behavior. In this
 /// last case, the information may be accessible in the /proc/self directory.
@@ -56,7 +56,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 ///
 /// NB: Whatever the priority constructors are run after initialization of libc resources. C++ static
 /// objects are initialized as constructors with no priorities. On ELF plateform libstdc++
-/// resources are initialized with priority 100.
+/// resources are initialized with priority 65535-100.
 ///
 ///
 //        crate::os::raw::c_int,
@@ -126,13 +126,13 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// windows plateform a priority can be specified using the syntax `destructor(<num>)` where
 /// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1].
 ///
-/// Destructors without priority are run first (in unspecified order), then destructors with priority 65535 are run,
-/// the destructors with priority number 65534,... finaly destructors with priority 0 are run.
+/// Destructors without priority are run first (in unspecified order), then destructors with priority 0 are run,
+/// then destructors with priority number 1,... finaly destructors with priority 65535 are run.
 ///
 /// # Safety
 ///
 /// Destructor functions must be unsafe. Any access to statics dropped with an equal or lower
-/// priority (priority number larger) will cause undefined behavior.
+/// priority will cause undefined behavior.
 ///
 /// ```ignore
 /// #[destructor(1)]
@@ -223,13 +223,13 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// #[dynamic]
 /// static V :A = unsafe{A::new(42)};
 /// ```
-/// The execution order of destructors is unspecified. Nevertheless on ELF plateform (linux,any unixes but mac) and
+/// The execution order of "dynamic" static initializations is unspecified. Nevertheless on ELF plateform (linux,any unixes but mac) and
 /// windows plateform a priority can be specified using the syntax `dynamic(<num>)` where
 /// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1].
 ///
-/// Statics with priority number 0 are initialized first (in unspecified order), then statics
-/// with priority number 1 are initialized ...  then statics
-/// with priority number 65535 and finaly statics with no priority.
+/// Statics with priority number 65535 are initialized first (in unspecified order), then statics
+/// with priority number 65534 are initialized ...  then statics
+/// with priority number 0 and finaly statics without priority.
 ///
 /// ```ignore
 /// struct A(i32);
@@ -264,15 +264,16 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///   "drop" [ "=" <priority> ]
 /// ```  
 ///
-/// The macro attribute `dynamic` is equivalent to `dynamic(init=65535)`
-/// and `dynamic(<num>)` to `dynamic(init=65535)`. In the absence of `init`
-/// the static will not be created dynamically. The `drop` option
+/// The macro attribute `dynamic` is equivalent to `dynamic(init=0)`
+/// and `dynamic(<num>)` to `dynamic(init=<num>)`. In the absence of `init`
+/// the static will be const initialized as usual static. The `drop` option
 /// cause the static to be droped after main returns. The priority has the
 /// same semantic as for the [macro@destructor] attribute: statics without priority
-/// are droped first, then statics with priority 65536 and finaly statics with priority
-/// 0 are the last dropped.
+/// are droped first, then statics with priority 0,... and finaly statics with priority
+/// 65535 are the last dropped.
 ///
-/// If a priority is not explicitly specified for drop, it will equal that of init.
+/// If the drop priority is not explicitly specified, it will equal that of the initializaton
+/// priority.
 ///
 /// ```ignore
 /// struct A(i32);
@@ -343,7 +344,7 @@ fn parse_priority(args: TokenStream) -> std::result::Result<Option<u16>, TokenSt
         let n: LitInt = syn::parse(args).map_err(|e| e.to_compile_error())?;
 
         Ok(Some(
-            n.base10_parse::<u16>().map_err(|e| e.to_compile_error())?,
+            n.base10_parse::<u16>().map(|v| 65535-v).map_err(|e| e.to_compile_error())?,
         ))
     } else {
         Ok(None)
@@ -417,7 +418,7 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynOptions, Tok
         Ok(DynOptions {
             init: true,
             init_priority: None,
-            drop: true,
+            drop: false,
             drop_priority: None,
         })
     }
@@ -455,7 +456,7 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     let expr = &*stat.expr;
     let stat_typ = &*stat.ty;
 
-    if !matches!(*stat.expr, syn::Expr::Unsafe(_)) {
+    if !matches!(*stat.expr, syn::Expr::Unsafe(_)) && options.init {
         let sp = stat.expr.span();
         return quote_spanned!(sp=>compile_error!("Initializer expression must be an unsafe block because 
         this expression may access uninitialized data"));
