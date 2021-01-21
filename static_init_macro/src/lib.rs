@@ -395,6 +395,10 @@ fn gen_ctor_dtor(func: ItemFn, section: &str, mod_name: &str) -> TokenStream2 {
     let mod_name = Ident::new(mod_name, Span::call_site());
     let section = LitStr::new(section, Span::call_site());
     let func_name = &func.sig.ident;
+    let ext = &func.sig.abi;
+    let input = &func.sig.inputs;
+    let ret = &func.sig.output;
+
 
     quote! {
         #func
@@ -402,7 +406,7 @@ fn gen_ctor_dtor(func: ItemFn, section: &str, mod_name: &str) -> TokenStream2 {
         pub mod #mod_name {
             #[link_section = #section]
             #[used]
-            pub static INIT_FUNC: fn() = super::#func_name;
+            pub static INIT_FUNC: #ext fn (#input) #ret = super::#func_name;
         }
     }
 }

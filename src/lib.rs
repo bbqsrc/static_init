@@ -5,7 +5,8 @@
 //!
 //! # Functionalities
 //!
-//! - Code execution before or after `main` but after libc and rust runtime has been initialized.
+//! - Code execution before or after `main` but after libc and rust runtime has been initialized
+//! (but not alway std::env see doc bellow)
 //! - Mutable and const statics with non const initialization.
 //! - Statics dropable after `main` exits.
 //! - Zero cost access to statics.
@@ -100,6 +101,8 @@
 //!   Initialization functions pointers are placed in section "__DATA,__mod_init_func" and
 //!   "__DATA,__mod_term_func"
 //!
+//!   std::env is not initialized in any constructor.
+//!
 //! ## ELF plateforms:
 //!  - `info ld`
 //!  - linker script: `ld --verbose`
@@ -115,12 +118,16 @@
 //!
 //!  Resources of libstdc++ are initialized with priority 100 (see gcc source libstdc++-v3/c++17/default_resource.h)
 //!  The rust standard library function that capture the environment and executable arguments is
-//!  executed at priority 99. Some callbacks constructors and destructors with priority 0 are
+//!  executed at priority 99 on gnu platform variants. On other elf plateform they are not accessbile in any constructors. Nevertheless
+//!  one can read into /proc/self directory to retrieve the command line.
+//!  Some callbacks constructors and destructors with priority 0 are
 //!  registered by rust/rtlibrary.
 //!  Static C++ objects are usually initialized with no priority (TBC). lib-c resources are
 //!  initialized by the C-runtime before any function in the init_array (whatever the priority) are executed.
 //!
 //! ## Windows
+//!
+//!   std::env is initialized before any constructors.
 //!
 //!  - [this blog post](https://www.cnblogs.com/sunkang/archive/2011/05/24/2055635.html)
 //!

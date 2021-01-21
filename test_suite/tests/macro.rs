@@ -12,7 +12,7 @@ fn dest_0() {
 }
 
 #[destructor(100)]
-fn dest_1() {
+extern "C" fn dest_1() {
     unsafe {
         assert_eq!(DEST, 1);
         DEST += 1;
