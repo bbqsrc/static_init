@@ -15,7 +15,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 //then the c runtime will run every thing between CRT$XCA and CRT$XCZ so
 //it should be possible to define priorty using this
 
-/// Attribute for functions run at program initialization (before main)
+/// Attribute for functions run at program initialization (before main).
 ///
 /// ```ignore
 /// #[constructor]
@@ -23,22 +23,23 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 /// // run before main start
 /// }
 /// ```
-/// The execution order of constructors is unspecified. Nevertheless on ELF plateform (linux,any unixes but mac) and
+/// The execution order of constructors is unspecified. Nevertheless on ELF plateform (linux, any unixes but mac) and
 /// windows plateform a priority can be specified using the syntax `constructor(<num>)` where
 /// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1].
 ///
-/// Constructors with priority number 65535 are run first (in unspecified order), then constructors
-/// with priority number 65534 are run ...  then constructors
+/// Constructors with a priority of 65535 are run first (in unspecified order), then constructors
+/// with priority 65534 are run ...  then constructors
 /// with priority number 0 and finaly constructors with no priority.
 ///
 /// # Safety
 ///
-/// Constructor functions must be unsafe. Any access to "dynamic" statics with an equal or lower
+/// Constructor functions must be unsafe. Any access to [dynamic] statics with an equal or lower
 /// initialization priority will cause undefined behavior. (NB: usual static data initialized
-/// by a const expression are always in an initialized state so it is always safe to read them)
+/// by a const expression are always in an initialized state so it is always safe to read them).
 ///
-/// Notably, on Elf platforms, accesses to `std::env::*` with a priority number above 65535-100 will cause
-/// undefined behavior. On windows accessing `std::env::*` will never causes undefined behavior. On other plateforms any access to
+/// Notably, on Elf gnu variant platforms, accesses to the program argument or environment through `std::env::*` functionalities 
+/// with a priority 65535-100 will cause undefined behavior. On windows thoses accesses `std::env::*` will never cause 
+/// undefined behavior. On other plateforms (non gnu variant of unixes and mac), any access to
 /// `std::env::*` in a constructor, whatever its priority, will cause undefined behavior. In this
 /// last case, the information may be accessible in the /proc/self directory.
 ///
@@ -54,14 +55,17 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 /// }
 /// ```
 ///
-/// NB: Whatever the priority constructors are run after initialization of libc resources. C++ static
-/// objects are initialized as constructors with no priorities. On ELF plateform libstdc++
+/// NB: Whatever the priority, constructors are run after initialization of libc resources. C++ static
+/// objects are initialized as constructors with no priorities. On ELF plateform, libstdc++
 /// resources are initialized with priority 65535-100.
 ///
+/// # Constructor signature
 ///
-//        crate::os::raw::c_int,
-//        *const *const u8,
-//        *const *const u8,
+/// Constructor function must have type `() -> ()`. But on plateform where the program is linked
+/// with the gnu variant of libc (which covers all gnu variant platforms) constructor functions
+/// can take `argc: i32, argv: **const u8, env: **const u8` arguments. `argc` is the size of the argv
+/// sequence, `argv` and `env` both refer to null terminated sequence of pointer to c-string (c-strings
+/// are null terminated sequence of u8). Cf "glibc source"/csu/elf-init.c. 
 #[proc_macro_attribute]
 pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
     let func: ItemFn = parse_macro_input!(input);
@@ -110,7 +114,9 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     let mod_name = format!("__static_init_constructor_{}", func.sig.ident);
-    gen_ctor_dtor(func, &section, &mod_name).into()
+    let sp = func.sig.inputs.span();
+    let typ = quote_spanned!(sp.span()=>unsafe fn());
+    gen_ctor_dtor(func, &section, &mod_name, &parse2(typ).unwrap()).into()
 }
 
 /// Attribute for functions run at program termination (after main)
@@ -118,7 +124,7 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// ```ignore
 /// #[destructor]
 /// unsafe fn droper () {
-/// // run before main start
+/// // run after main return
 /// }
 /// ```
 ///
@@ -193,7 +199,9 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     let mod_name = format!("__static_init_constructor_{}", func.sig.ident);
-    gen_ctor_dtor(func, &section, &mod_name).into()
+    let sp = func.sig.inputs.span();
+    let typ = quote_spanned!(sp.span()=>unsafe fn());
+    gen_ctor_dtor(func, &section, &mod_name,&parse2(typ).unwrap()).into()
 }
 
 /// Statics initialized with non const functions.
@@ -439,16 +447,15 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynOptions, Tok
     }
 }
 
-fn gen_ctor_dtor(func: ItemFn, section: &str, mod_name: &str) -> TokenStream2 {
+fn gen_ctor_dtor(func: ItemFn, section: &str, mod_name: &str, typ: &TypeBareFn) -> TokenStream2 {
     let mod_name = Ident::new(mod_name, Span::call_site());
     let section = LitStr::new(section, Span::call_site());
     let func_name = &func.sig.ident;
     let ext = &func.sig.abi;
-    let input = &func.sig.inputs;
-    let ret = &func.sig.output;
 
     if func.sig.unsafety.is_none() {
-        quote_spanned! {func.span()=>compile_error!("Constructors and destructors must be unsafe functions as they may access uninitialized memory regions")}
+        quote_spanned! {func.span()=>compile_error!("Constructors and destructors must be unsafe functions as \
+            they may access uninitialized memory regions")}
     } else {
         quote! {
             #func
@@ -456,7 +463,7 @@ fn gen_ctor_dtor(func: ItemFn, section: &str, mod_name: &str) -> TokenStream2 {
             pub mod #mod_name {
                 #[link_section = #section]
                 #[used]
-                pub static INIT_FUNC: unsafe #ext fn (#input) #ret = super::#func_name;
+                pub static INIT_FUNC: unsafe #ext #typ = super::#func_name;
             }
         }
     }
@@ -471,10 +478,15 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     let expr = &*stat.expr;
     let stat_typ = &*stat.ty;
 
-    if !matches!(*stat.expr, syn::Expr::Unsafe(_)) && options.init {
+    if !matches!(*stat.expr, syn::Expr::Unsafe(_)) {
         let sp = stat.expr.span();
-        return quote_spanned!(sp=>compile_error!("Initializer expression must be an unsafe block because 
-        this expression may access uninitialized data"));
+        if options.init {
+            return quote_spanned!(sp=>compile_error!("Initializer expression must be an unsafe block \
+            because this expression may access uninitialized data"));
+        } else {
+            return quote_spanned!(sp=>compile_error!("Although the initialization of this \"dynamic\" static is safe \
+            an unsafe block is required for this initialization as a reminder that the drop phase may lead to undefined behavior"));
+        }
     }
 
     //fix drop priority, if not specified, drop priority equal

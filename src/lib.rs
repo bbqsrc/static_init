@@ -2,7 +2,7 @@
 #![allow(clippy::missing_safety_doc)]
 //! Module initialization termination function with priorities and (mutable) statics initialization with
 //! non const functions.
-//! 
+//!
 //!
 //! # Functionalities
 //!
@@ -22,7 +22,7 @@
 //! }
 //! //Care not to use priorities above 65535-100
 //! //as those high priorities are used by
-//! //the rust runtime. 
+//! //the rust runtime.
 //! #[constructor(200)]
 //! unsafe fn do_first(){
 //! }
@@ -40,8 +40,8 @@
 //! #[dynamic(init,drop)]
 //! static mut V1: Vec<i32> = unsafe {vec![1,2,3]};
 //!
-//! //Initialized before V1 
-//! //then destroyed after V1 
+//! //Initialized before V1
+//! //then destroyed after V1
 //! #[dynamic(init=142,drop=142)]
 //! static mut INIT_AND_DROP: Vec<i32> = unsafe {vec![1,2,3]};
 //!
@@ -57,21 +57,21 @@
 //!
 //! # Attributes
 //!
-//! All functions marked with the [constructor] attribute are 
+//! All functions marked with the [constructor] attribute are
 //! run before `main` is started.
 //!
-//! All function marked with the [destructor] attribute are 
+//! All function marked with the [destructor] attribute are
 //! run after `main` has returned.
 //!
 //! Static variables marked with the [dynamic] attribute can
 //! be initialized before main start and optionaly droped
-//! after main returns. 
+//! after main returns.
 //!
 //! The attributes [constructor] and [destructor] works by placing the marked function pointer in
-//! dedicated object file sections. 
+//! dedicated object file sections.
 //!
 //! Priority ranges from 0 to 2<sup>16</sup>-1. The absence of priority is equivalent to
-//! a hypothetical priority number of -1. 
+//! a hypothetical priority number of -1.
 //!
 //! During program initialization:
 //!
@@ -86,7 +86,7 @@
 //! # Safety
 //!   
 //!   Use of the *functionnalities provided by this library are inherently unsafe*. During
-//!   execution of a constructor, any access to variable initialized with a lower or equal priority 
+//!   execution of a constructor, any access to variable initialized with a lower or equal priority
 //!   will cause undefined behavior. During execution of a destructor any access
 //!   to variable droped with a lower or equal priority will cause undefined
 //!   behavior.
@@ -107,10 +107,10 @@
 //! //undefined behavior, V3 is unconditionnaly initialized before V1
 //! #[dynamic(1000)]
 //! static V3: i32 = unsafe {V1[0]};
-//! 
+//!
 //! #[dynamic(1000)]
 //! static V4: Vec<i32> = unsafe {vec![1,2,3]};
-//! 
+//!
 //! //Good, V5 initialized after V4
 //! #[dynamic(500)]
 //! static V5: i32 = unsafe {V4[0]};
@@ -139,7 +139,7 @@
 //!
 //! ## Mac
 //!   - [MACH_O specification](https://www.cnblogs.com/sunkang/archive/2011/05/24/2055635.html)
-//!   - GCC source code gcc/config/darwin.c indicates that priorities are not supported. 
+//!   - GCC source code gcc/config/darwin.c indicates that priorities are not supported.
 //!
 //!   Initialization functions pointers are placed in section "__DATA,__mod_init_func" and
 //!   "__DATA,__mod_term_func"
@@ -180,7 +180,7 @@
 //!  pointers are placed in ".CRT$XCU". At program finish the pointers between sections
 //!  ".CRT$XPA" and ".CRT$XPZ" are run first then those between ".CRT$XTA" and ".CRT$XTZ".
 //!
-//!  Some reverse engineering was necessary to find out a way to implement 
+//!  Some reverse engineering was necessary to find out a way to implement
 //!  constructor/destructor priority.
 //!
 //!  Contrarily to what is reported in this blog post, msvc linker
@@ -189,7 +189,7 @@
 //!  For example "RUST$01" and "RUST$02" will be ordered but those two
 //!  sections will not be ordered with "RHUM" section.
 //!
-//!  Moreover, it seems that section name of the form \<prefix\>$\<suffix\> are 
+//!  Moreover, it seems that section name of the form \<prefix\>$\<suffix\> are
 //!  not limited to 8 characters.
 //!
 //!  So static initialization function pointers are placed in section ".CRT$XCU" and
@@ -207,11 +207,10 @@ use core::ops::{Deref, DerefMut};
 pub use static_init_macro::constructor;
 
 #[doc(inline)]
-pub use static_init_macro::destructor; 
+pub use static_init_macro::destructor;
 
 #[doc(inline)]
 pub use static_init_macro::dynamic;
-
 
 /// The actual type of "dynamic" mutable statics.
 ///
@@ -224,7 +223,6 @@ pub union Static<T> {
     k: (),
     v: ManuallyDrop<T>,
 }
-
 
 //As a trait in order to avoid noise;
 impl<T> Static<T> {

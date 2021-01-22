@@ -7,9 +7,8 @@
  non const functions.
 
  Minimum rust version required: 1.49
- 
 
- # Functionalities
+# Functionalities
 
  - [x] Code execution before or after `main` but after libc and rust runtime has been initialized (but see bellow for std::env).
 
@@ -21,7 +20,7 @@
 
  - [x] Priorities on elf plateforms (linux, bsd, etc...) and window.
 
- # Example
+# Example
  ```rust
  use static_init::{constructor,destructor,dynamic};
 
@@ -63,7 +62,7 @@
  }
  ```
 
- # Attributes
+# Attributes
 
  All functions marked with the `constructor` attribute are 
  run before `main` is started.
@@ -91,16 +90,21 @@
  - destructors without priority are the first called;
  - destructors with priority 65535 are the last called.
 
+# Supported platforms
+  
+  Any platforms where the target executable file format is ELF (unixes: linux, android, bsd, ...),
+  Windows and macos and ios. Webassembly is not supported. Priorities are not supported on macos and ios.
+
 # Safety
   
-  Use of the *functionnalities provided by this library are inherently unsafe*. During
+  *Functionnalities provided by this library are inherently unsafe*. During
   execution of a constructor, any access to variable initialized with a lower or equal priority 
   will cause undefined behavior. During execution of a destructor any access
   to variable droped with a lower or equal priority will cause undefined
   behavior.
   
-  This is actually the reason to be of the priorities: this is the coder own responsability
-  to ensure that no access is performed to lower or equal priorities.
+  This is actually the reason to be of priorities: this is the coder own responsability
+  to ensure that no access is performed to statics with lower or equal priorities.
 
  ```rust
  use static_init::dynamic;
@@ -131,28 +135,29 @@
  # fn main(){}
  ```
  
- # Comparisons against other crates
+# Comparisons against other crates
 
- ## [lazy_static][1]
+## [lazy_static][1]
   - lazy_static only provides const statics.
   - Each access to lazy_static statics costs 2ns on a x86.
   - lazy_static does not provide priorities.
   - lazy_static statics initialization is *safe*.
+  - lazy_static statics is more portable.
 
- ## [ctor][2]
+## [ctor][2]
   - ctor only provides const statics.
   - ctor does not provide priorities.
 
- # Documentation and details
+# Documentation and details
 
- ## Mac
+## Mac
    - [MACH_O specification](https://www.cnblogs.com/sunkang/archive/2011/05/24/2055635.html)
    - GCC source code gcc/config/darwin.c indicates that priorities are not supported. 
 
    Initialization functions pointers are placed in section "__DATA,__mod_init_func" and
    "__DATA,__mod_term_func"
 
- ## ELF plateforms:
+## ELF plateforms:
   - `info ld`
   - linker script: `ld --verbose`
   - [ELF specification](https://docs.oracle.com/cd/E23824_01/html/819-0690/chapter7-1.html#scrolltoc)
@@ -172,7 +177,7 @@
   Static C++ objects are usually initialized with no priority (TBC). lib-c resources are
   initialized by the C-runtime before any function in the init_array (whatever the priority) are executed.
 
- ## Windows
+## Windows
 
   - [this blog post](https://www.cnblogs.com/sunkang/archive/2011/05/24/2055635.html)
 
