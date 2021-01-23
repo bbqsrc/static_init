@@ -25,20 +25,20 @@
  use static_init::{constructor,destructor,dynamic};
 
  #[constructor]
- unsafe fn do_init(){
+ unsafe extern "C" fn do_init(){
  }
  //Care not to use priorities above 65535-100
  //as those high priorities are used by
  //the rust runtime. 
  #[constructor(200)]
- unsafe fn do_first(){
+ unsafe extern "C" fn do_first(){
  }
 
  #[destructor]
- unsafe fn finaly() {
+ unsafe extern "C" fn finaly() {
  }
  #[destructor(100)]
- unsafe fn ultimately() {
+ unsafe extern "C" fn ultimately() {
  }
 
  #[dynamic]
@@ -130,9 +130,6 @@
  //Good, V6 initialized after V5 and v4
  #[dynamic]
  static V6: i32 = unsafe {*V5+V4[1]};
-
-
- # fn main(){}
  ```
  
 # Comparisons against other crates

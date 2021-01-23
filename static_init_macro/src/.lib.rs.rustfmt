@@ -19,7 +19,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 ///
 /// ```ignore
 /// #[constructor]
-/// unsafe extern "C" fn initer () {
+/// fn initer () {
 /// // run before main start
 /// }
 /// ```
@@ -33,7 +33,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 ///
 /// # Safety
 ///
-/// Constructor functions must be unsafe. Any access to [macro@dynamic] statics with an equal or lower
+/// Constructor functions must be unsafe. Any access to [dynamic] statics with an equal or lower
 /// initialization priority will cause undefined behavior. (NB: usual static data initialized
 /// by a const expression are always in an initialized state so it is always safe to read them).
 ///
@@ -45,12 +45,12 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 ///
 /// ```ignore
 /// #[constructor(0)]
-/// unsafe extern "C" fn first () {
+/// unsafe fn first () {
 /// // run before main start
 /// }
 ///
 /// #[constructor(1)]
-/// unsafe extern "C" fn then () {
+/// unsafe fn then () {
 /// // run before main start
 /// }
 /// ```
@@ -61,15 +61,11 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 ///
 /// # Constructor signature
 ///
-/// Constructor function should have type `unsafe extern "C" fn() -> ()`. 
-///
-/// But on plateform where the program is linked
+/// Constructor function must have type `() -> ()`. But on plateform where the program is linked
 /// with the gnu variant of libc (which covers all gnu variant platforms) constructor functions
-/// can take (or not) `argc: i32, argv: **const u8, env: **const u8` arguments. 
-/// `argc` is the size of the argv
-/// sequence, `argv` and `env` both refer to null terminated contiguous sequence of pointer 
-/// to c-string (c-strings are null terminated sequence of u8). 
-/// Cf "glibc source"/csu/elf-init.c, and System V ABI.
+/// can take `argc: i32, argv: **const u8, env: **const u8` arguments. `argc` is the size of the argv
+/// sequence, `argv` and `env` both refer to null terminated sequence of pointer to c-string (c-strings
+/// are null terminated sequence of u8). Cf "glibc source"/csu/elf-init.c. 
 #[proc_macro_attribute]
 pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
     let func: ItemFn = parse_macro_input!(input);
@@ -119,8 +115,8 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 
     let mod_name = format!("__static_init_constructor_{}", func.sig.ident);
     let sp = func.sig.inputs.span();
-    let typ = if cfg!(target_env = "gnu") && cfg!(target_family = "unix") && !func.sig.inputs.is_empty() {
-        quote_spanned!(sp.span()=>unsafe extern "C" fn(i32,*const*const u8, *const *const u8))
+    let typ = if cfg!(target_env = "gnu") && cfg!(target_familly = "unixes") && !func.sig.inputs.is_empty() {
+        quote_spanned!(sp.span()=>unsafe extern "C" fn(::static_init::c_int,*const*const u8, *const *const u8))
     } else {
         quote_spanned!(sp.span()=>unsafe extern "C" fn())
     };
@@ -131,7 +127,7 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// ```ignore
 /// #[destructor]
-/// unsafe extern "C" fn droper () {
+/// unsafe fn droper () {
 /// // run after main return
 /// }
 /// ```
@@ -150,19 +146,16 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// ```ignore
 /// #[destructor(1)]
-/// unsafe extern "C" fn first () {
+/// unsafe fn first () {
 /// // run after main return
 /// }
 ///
 /// #[destructor(0)]
-/// unsafe extern "C" fn then () {
+/// unsafe fn then () {
 /// // run after main return
 /// }
 /// ```
 ///
-/// # Destructor signature
-///
-/// Destructor function should have type `unsafe extern "C" fn() -> ()`. 
 #[proc_macro_attribute]
 pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
     let func: ItemFn = parse_macro_input!(input);
@@ -575,8 +568,6 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     *stat.ty = typ;
 
     quote! {
-
-    #[allow(unused_unsafe)]
     #stat
 
     #[doc(hidden)]
