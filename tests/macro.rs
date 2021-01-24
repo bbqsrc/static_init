@@ -19,6 +19,7 @@ unsafe extern "C" fn dest_2() {
         assert_eq!(DEST, 2);
         DEST += 1;
 }
+
 static mut INI: i32 = 0;
 
 #[constructor(200)]
@@ -76,22 +77,22 @@ impl Drop for A {
 }
 
 #[dynamic]
-static mut V0: A = unsafe {A::new((*V1).0 - 5)};
+static mut V0: A = unsafe{A::new(V1.0 - 5)};
 
 #[dynamic(20)]
 static mut V2: A = unsafe{A::new(12)};
 
 #[dynamic(10)]
-static V1: A = unsafe{A::new((*V2).0 - 2)};
+static V1: A = unsafe{A::new(V2.0 - 2)};
 
 #[dynamic(init = 20)]
 static mut V3: A = unsafe{A::new(12)};
 
 #[dynamic(init = 10)]
-static V4: A = unsafe{A::new(unsafe { (*V2).0 } - 2)};
+static V4: A = unsafe{A::new(V2.0- 2)};
 
 #[dynamic(init = 5, drop)]
-static V5: A = unsafe{A::new((*V4).0 + 23)};
+static V5: A = unsafe{A::new(V4.0 + 23)};
 
 #[dynamic(drop)]
 static V6: A = unsafe{A(33)};
@@ -99,13 +100,13 @@ static V6: A = unsafe{A(33)};
 
 #[test]
 fn dynamic_init() {
-    unsafe { assert_eq!((*V0).0, 5) };
-    assert_eq!((*V1).0, 10);
-    unsafe { assert_eq!((*V2).0, 12) };
-    unsafe { (*V2).0 = 8 };
-    unsafe { assert_eq!((*V2).0, 8) };
-    assert_eq!((*V4).0, 10);
-    unsafe { assert_eq!((*V3).0, 12) };
-    assert_eq!((*V5).0, 33);
-    assert_eq!((*V6).0, 33);
+    unsafe { assert_eq!(V0.0, 5) };
+    assert_eq!(V1.0, 10);
+    unsafe { assert_eq!(V2.0, 12) };
+    unsafe { V2.0 = 8 };
+    unsafe { assert_eq!(V2.0, 8) };
+    assert_eq!(V4.0, 10);
+    unsafe { assert_eq!(V3.0, 12) };
+    assert_eq!(V5.0, 33);
+    assert_eq!(V6.0, 33);
 }

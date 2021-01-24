@@ -12,9 +12,12 @@ license = "MIT OR Apache-2.0"
 [workspace]
 members = [
       "static_init_macro",
-      "test_suite"
       ]
 
 [dependencies.static_init_macro]
 version="0.4.0"
 path="static_init_macro"
+
+[dev-dependencies]
+lazy_static = "1.4"
+

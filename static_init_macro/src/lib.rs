@@ -118,7 +118,7 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     let mod_name = format!("__static_init_constructor_{}", func.sig.ident);
-    let sp = func.sig.inputs.span();
+    let sp = func.sig.span();
     let typ = if cfg!(target_env = "gnu") && cfg!(target_family = "unix") && !func.sig.inputs.is_empty() {
         quote_spanned!(sp.span()=>unsafe extern "C" fn(i32,*const*const u8, *const *const u8))
     } else {
@@ -210,7 +210,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     let mod_name = format!("__static_init_constructor_{}", func.sig.ident);
-    let sp = func.sig.inputs.span();
+    let sp = func.sig.span();
     let typ = quote_spanned!(sp.span()=>unsafe extern "C" fn());
     gen_ctor_dtor(func, &section, &mod_name,&parse2(typ).unwrap()).into()
 }
@@ -242,6 +242,9 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// #[dynamic]
 /// static V :A = unsafe{A::new(42)};
 /// ```
+///
+/// # Execution Order
+///
 /// The execution order of "dynamic" static initializations is unspecified. Nevertheless on ELF plateform (linux,any unixes but mac) and
 /// windows plateform a priority can be specified using the syntax `dynamic(<num>)` where
 /// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1].
@@ -268,6 +271,8 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// #[dynamic(20)]
 /// static V2 :A = unsafe{A::new(V1.0 + 9)};
 /// ```
+///
+/// # Full syntax and dropped statics
 ///
 /// Finaly the full syntax is for the attribute is:
 ///
@@ -337,6 +342,26 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// // not droped
 /// #[dynamic(10)]
 /// static V6 :A = unsafe{A::new(10)};
+/// ```
+///
+/// # Actual type of "dynamic" statics
+///
+/// A mutable "dynamic" static declared to have type `T`, will have type `static_init::Static<T>`.
+///
+/// A mutable "dynamic" static declared to have type `T`, will have type `static_init::ConstStatic<T>`.
+///
+/// Those types are opaque types that implements `Deref<T>`. `static_init::Static` also implements
+/// `DerefMut`.
+///
+/// ```no_run
+///
+/// // V has type static_init::ConstStatic<i32> 
+/// #[dynamic]
+/// static V :i32 = unsafe{0};
+///
+/// // W has type static_init::Static<i32> 
+/// #[dynamic]
+/// static W :i32 = unsafe{0};
 /// ```
 
 #[proc_macro_attribute]
@@ -463,11 +488,12 @@ fn gen_ctor_dtor(func: ItemFn, section: &str, mod_name: &str, typ: &TypeBareFn) 
     let section = LitStr::new(section, Span::call_site());
     let func_name = &func.sig.ident;
 
+    let sp = func.sig.span();
     if func.sig.unsafety.is_none() {
-        quote_spanned! {func.span()=>compile_error!("Constructors and destructors must be unsafe functions as \
+        quote_spanned! {sp=>compile_error!("Constructors and destructors must be unsafe functions as \
             they may access uninitialized memory regions")}
     } else {
-        quote! {
+        quote_spanned! {sp=>
             #func
             #[doc(hidden)]
             pub mod #mod_name {
@@ -527,13 +553,16 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
             },
         )
     };
+
+    let sp=stat.expr.span();
+
     let initer = if options.init {
         let attr: Attribute = if let Some(priority) = options.init_priority {
             parse_quote!(#[constructor(#priority)])
         } else {
             parse_quote!(#[constructor])
         };
-        Some(quote! {
+        Some(quote_spanned! {sp=>
                 use ::static_init::{constructor};
                 #attr
                 unsafe extern "C" fn init() {
@@ -545,13 +574,14 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     } else {
         None
     };
+
     let droper = if options.drop {
         let attr: Attribute = if let Some(priority) = options.drop_priority {
             parse_quote!(#[destructor(#priority)])
         } else {
             parse_quote!(#[destructor])
         };
-        Some(quote! {
+        Some(quote_spanned! {sp=>
                 use ::static_init::{destructor};
                 #attr
                 unsafe extern "C" fn droper() {
@@ -562,19 +592,25 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     } else {
         None
     };
+
+
     if options.init {
         *stat.expr = parse_quote! {
             #typ::uninit()
         };
     } else {
         assert!(options.drop);
-        *stat.expr = parse_quote! {
+        let q = quote_spanned!{sp=>
             #typ::from(#expr)
-        };
+        }.into();
+        *stat.expr = match parse(q) {
+                Ok(exp) => exp,
+                Err(e) => return e.to_compile_error(),
+        }
     }
     *stat.ty = typ;
 
-    quote! {
+    quote_spanned! {sp=>
 
     #[allow(unused_unsafe)]
     #stat
