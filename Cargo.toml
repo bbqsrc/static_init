@@ -20,4 +20,5 @@ path="static_init_macro"
 
 [dev-dependencies]
 lazy_static = "1.4"
+ctor = "0.1"
 

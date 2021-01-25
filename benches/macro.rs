@@ -1,6 +1,7 @@
 #![feature(test)]
 extern crate static_init;
 use static_init::dynamic;
+use ctor::ctor;
 
 extern crate test;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -19,6 +20,10 @@ lazy_static! {
     static ref WL: AtomicI32 = AtomicI32::new(0);
 }
 
+#[ctor]
+static WCT: AtomicI32 = AtomicI32::new(0);
+
+
 #[bench]
 fn access(bench: &mut Bencher) {
     bench.iter(|| W.fetch_add(1, Ordering::Relaxed));
@@ -31,4 +36,9 @@ fn access_m(bench: &mut Bencher) {
 #[bench]
 fn lazy_static(bench: &mut Bencher) {
     bench.iter(|| WL.fetch_add(1, Ordering::Relaxed));
+}
+
+#[bench]
+fn ctor(bench: &mut Bencher) {
+    bench.iter(|| WCT.fetch_add(1, Ordering::Relaxed));
 }
