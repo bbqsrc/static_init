@@ -1,7 +1,7 @@
 #![feature(test)]
 extern crate static_init;
-use static_init::dynamic;
 use ctor::ctor;
+use static_init::dynamic;
 
 extern crate test;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -11,10 +11,10 @@ extern crate lazy_static;
 use lazy_static::lazy_static;
 
 #[dynamic(10)]
-static W: AtomicI32 = unsafe{AtomicI32::new(0)};
+static W: AtomicI32 = unsafe { AtomicI32::new(0) };
 
 #[dynamic(10)]
-static mut WM: AtomicI32 = unsafe{AtomicI32::new(0)};
+static mut WM: AtomicI32 = unsafe { AtomicI32::new(0) };
 
 lazy_static! {
     static ref WL: AtomicI32 = AtomicI32::new(0);
@@ -22,7 +22,6 @@ lazy_static! {
 
 #[ctor]
 static WCT: AtomicI32 = AtomicI32::new(0);
-
 
 #[bench]
 fn access(bench: &mut Bencher) {

@@ -37,8 +37,8 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 /// initialization priority will cause undefined behavior. (NB: usual static data initialized
 /// by a const expression are always in an initialized state so it is always safe to read them).
 ///
-/// Notably, on Elf gnu variant platforms, accesses to the program argument or environment through `std::env::*` functionalities 
-/// with a priority 65535-100 will cause undefined behavior. On windows thoses accesses `std::env::*` will never cause 
+/// Notably, on Elf gnu variant platforms, accesses to the program argument or environment through `std::env::*` functionalities
+/// with a priority 65535-100 will cause undefined behavior. On windows thoses accesses `std::env::*` will never cause
 /// undefined behavior. On other plateforms (non gnu variant of unixes and mac), any access to
 /// `std::env::*` in a constructor, whatever its priority, will cause undefined behavior. In this
 /// last case, the information may be accessible in the /proc/self directory.
@@ -61,14 +61,14 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 ///
 /// # Constructor signature
 ///
-/// Constructor function should have type `unsafe extern "C" fn() -> ()`. 
+/// Constructor function should have type `unsafe extern "C" fn() -> ()`.
 ///
 /// But on plateform where the program is linked
 /// with the gnu variant of libc (which covers all gnu variant platforms) constructor functions
-/// can take (or not) `argc: i32, argv: **const u8, env: **const u8` arguments. 
+/// can take (or not) `argc: i32, argv: **const u8, env: **const u8` arguments.
 /// `argc` is the size of the argv
-/// sequence, `argv` and `env` both refer to null terminated contiguous sequence of pointer 
-/// to c-string (c-strings are null terminated sequence of u8). 
+/// sequence, `argv` and `env` both refer to null terminated contiguous sequence of pointer
+/// to c-string (c-strings are null terminated sequence of u8).
 /// Cf "glibc source"/csu/elf-init.c, and System V ABI.
 #[proc_macro_attribute]
 pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
@@ -119,7 +119,10 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 
     let mod_name = format!("__static_init_constructor_{}", func.sig.ident);
     let sp = func.sig.span();
-    let typ = if cfg!(target_env = "gnu") && cfg!(target_family = "unix") && !func.sig.inputs.is_empty() {
+    let typ = if cfg!(target_env = "gnu")
+        && cfg!(target_family = "unix")
+        && !func.sig.inputs.is_empty()
+    {
         quote_spanned!(sp.span()=>unsafe extern "C" fn(i32,*const*const u8, *const *const u8))
     } else {
         quote_spanned!(sp.span()=>unsafe extern "C" fn())
@@ -162,7 +165,7 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// # Destructor signature
 ///
-/// Destructor function should have type `unsafe extern "C" fn() -> ()`. 
+/// Destructor function should have type `unsafe extern "C" fn() -> ()`.
 #[proc_macro_attribute]
 pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
     let func: ItemFn = parse_macro_input!(input);
@@ -212,7 +215,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
     let mod_name = format!("__static_init_constructor_{}", func.sig.ident);
     let sp = func.sig.span();
     let typ = quote_spanned!(sp.span()=>unsafe extern "C" fn());
-    gen_ctor_dtor(func, &section, &mod_name,&parse2(typ).unwrap()).into()
+    gen_ctor_dtor(func, &section, &mod_name, &parse2(typ).unwrap()).into()
 }
 
 /// Statics initialized with non const functions.
@@ -355,11 +358,11 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// ```no_run
 ///
-/// // V has type static_init::ConstStatic<i32> 
+/// // V has type static_init::ConstStatic<i32>
 /// #[dynamic]
 /// static V :i32 = unsafe{0};
 ///
-/// // W has type static_init::Static<i32> 
+/// // W has type static_init::Static<i32>
 /// #[dynamic]
 /// static W :i32 = unsafe{0};
 /// ```
@@ -491,7 +494,7 @@ fn gen_ctor_dtor(func: ItemFn, section: &str, mod_name: &str, typ: &TypeBareFn) 
     let sp = func.sig.span();
     if func.sig.unsafety.is_none() {
         quote_spanned! {sp=>compile_error!("Constructors and destructors must be unsafe functions as \
-            they may access uninitialized memory regions")}
+        they may access uninitialized memory regions")}
     } else {
         quote_spanned! {sp=>
             #func
@@ -554,7 +557,7 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         )
     };
 
-    let sp=stat.expr.span();
+    let sp = stat.expr.span();
 
     let initer = if options.init {
         let attr: Attribute = if let Some(priority) = options.init_priority {
@@ -593,19 +596,19 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         None
     };
 
-
     if options.init {
         *stat.expr = parse_quote! {
             #typ::uninit()
         };
     } else {
         assert!(options.drop);
-        let q = quote_spanned!{sp=>
+        let q = quote_spanned! {sp=>
             #typ::from(#expr)
-        }.into();
+        }
+        .into();
         *stat.expr = match parse(q) {
-                Ok(exp) => exp,
-                Err(e) => return e.to_compile_error(),
+            Ok(exp) => exp,
+            Err(e) => return e.to_compile_error(),
         }
     }
     *stat.ty = typ;

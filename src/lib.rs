@@ -219,7 +219,6 @@ pub use static_init_macro::dynamic;
 /// All associated functions are only usefull for the implementation of
 /// the [dynamic] proc macro attribute
 pub union Static<T> {
-    #[used]
     k: (),
     v: ManuallyDrop<T>,
 }
