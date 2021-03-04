@@ -18,7 +18,7 @@
 
  - [x] Zero cost access to statics.
 
- - [x] Priorities on elf plateforms (linux, bsd, etc...) and window.
+ - [x] Priorities on elf platforms (linux, bsd, etc...) and window.
 
 # Example
  ```rust
