@@ -77,6 +77,25 @@ impl Drop for A {
     }
 }
 
+#[test]
+fn inner_static() {
+    #[dynamic]
+    static IX: usize = unsafe { &IX as *const _ as usize };
+    #[dynamic]
+    static IX2: usize = unsafe { &IX2 as *const _ as usize };
+
+    static mut I: i32 = 0;
+
+    #[constructor]
+    unsafe extern "C" fn f() {
+        I = 3
+    }
+
+    assert_eq!(*IX, &IX as *const _ as usize);
+    assert_eq!(*IX2, &IX2 as *const _ as usize);
+    unsafe { assert_eq!(I, 3) };
+}
+
 #[dynamic]
 static mut V0: A = unsafe { A::new(V1.0 - 5) };
 

@@ -499,20 +499,14 @@ fn gen_ctor_dtor(func: ItemFn, section: &str, mod_name: &str, typ: &TypeBareFn) 
         quote_spanned! {sp=>
             #func
             #[doc(hidden)]
-            pub mod #mod_name {
-                #[link_section = #section]
-                #[used]
-                pub static INIT_FUNC: #typ = super::#func_name;
-            }
+            #[link_section = #section]
+            #[used]
+            pub static #mod_name: #typ = #func_name;
         }
     }
 }
 
 fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
-    let mod_name = Ident::new(
-        &format!("_static_init_of_{}", stat.ident),
-        Span::call_site(),
-    );
     let stat_name = &stat.ident;
     let expr = &*stat.expr;
     let stat_typ = &*stat.ty;
@@ -569,7 +563,6 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                 use ::static_init::{constructor};
                 #attr
                 unsafe extern "C" fn init() {
-                    use super::*;
                     let r = #expr;
                     #typ::set_to(#stat_ref,r)
                 }
@@ -588,7 +581,6 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                 use ::static_init::{destructor};
                 #attr
                 unsafe extern "C" fn droper() {
-                    use super::*;
                     #typ::drop(#stat_ref)
                 }
         })
@@ -597,13 +589,23 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     };
 
     if options.init {
-        *stat.expr = parse_quote! {
+        let q = quote_spanned! {sp=>{
+            #initer
+            #droper
             #typ::uninit()
-        };
+        }
+        }.into();
+        *stat.expr = match parse(q) {
+            Ok(exp) => exp,
+            Err(e) => return e.to_compile_error(),
+        }
     } else {
         assert!(options.drop);
-        let q = quote_spanned! {sp=>
+        let q = quote_spanned! {sp=>{
+            #initer
+            #droper
             #typ::from(#expr)
+        }
         }
         .into();
         *stat.expr = match parse(q) {
@@ -617,12 +619,5 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
 
     #[allow(unused_unsafe)]
     #stat
-
-    #[doc(hidden)]
-    #[allow(unused_unsafe)]
-    mod #mod_name {
-        #initer
-        #droper
-    }
     }
 }
