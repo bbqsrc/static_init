@@ -665,23 +665,21 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     let initer = match options.init {
         Initialization::Dynamic => {
             let attr: Attribute = if let Some(priority) = options.init_priority {
-                parse_quote!(#[constructor(#priority)])
+                parse_quote!(#[::static_init::constructor(#priority)])
             } else {
-                parse_quote!(#[constructor])
+                parse_quote!(#[::static_init::constructor])
             };
             Some(quote_spanned! {sp=>
-                    use ::static_init::{constructor};
                     #attr
-                    unsafe extern "C" fn init() {
+                    unsafe extern "C" fn __static_init_initializer() {
                         let r = #expr;
                         #typ::set_to(#stat_ref,r)
                     }
             })
         }
         Initialization::Lazy => Some(quote_spanned! {sp=>
-                use ::static_init::{constructor};
-                #[constructor(__lazy_init)]
-                unsafe extern "C" fn init() {
+                #[::static_init::constructor(__lazy_init)]
+                unsafe extern "C" fn __static_init_initializer() {
                     ::static_init::Lazy::do_init(#stat_ref);
                 }
         }),
@@ -690,14 +688,13 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
 
     let droper = if options.drop && options.init != Initialization::Lazy {
         let attr: Attribute = if let Some(priority) = options.drop_priority {
-            parse_quote!(#[destructor(#priority)])
+            parse_quote!(#[::static_init::destructor(#priority)])
         } else {
-            parse_quote!(#[destructor])
+            parse_quote!(#[::static_init::destructor])
         };
         Some(quote_spanned! {sp=>
-                use ::static_init::{destructor};
                 #attr
-                unsafe extern "C" fn droper() {
+                unsafe extern "C" fn __static_init_droper() {
                     #typ::drop(#stat_ref)
                 }
         })
@@ -733,13 +730,13 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         }
         Initialization::Lazy => {
             let q = quote_spanned! {sp=>{
-                extern "C" fn dropper() {
+                extern "C" fn __static_init_dropper() {
                     unsafe{::core::ptr::drop_in_place(::static_init::Lazy::as_mut_ptr(#stat_ref))}
                 }
                 #initer
                 unsafe{::static_init::Lazy::new(|| {
                     let v = #expr;
-                    unsafe{::libc::atexit(dropper)};
+                    unsafe{::libc::atexit(__static_init_dropper)};
                     v
                     })}
             }
