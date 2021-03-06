@@ -1,17 +1,17 @@
-#![no_std]
+#![cfg_attr(not(feature="lazy"),no_std)]
 #![allow(clippy::missing_safety_doc)]
 //! Module initialization termination function with priorities and (mutable) statics initialization with
 //! non const functions.
 //!
 //!
 //! # Functionalities
-//!
+//! - Optimized version of lazy statics that does not undergoes access penalty (needs std support).
 //! - Code execution before or after `main` but after libc and rust runtime has been initialized
-//! (but not alway std::env see doc bellow)
-//! - Mutable and const statics with non const initialization.
-//! - Statics dropable after `main` exits.
-//! - Zero cost access to statics.
-//! - Priorities on elf plateforms (linux, bsd, etc...) and window.
+//! (but not alway std::env see doc bellow, no_std)
+//! - Mutable and const statics with non const initialization (no_std).
+//! - Statics dropable after `main` exits (no_std).
+//! - Zero cost access to statics (no_std).
+//! - Priorities on elf plateforms (linux, bsd, etc...) and window (no_std).
 //!
 //! # Example
 //! ```rust
@@ -34,11 +34,17 @@
 //! unsafe extern "C" fn ultimately() {
 //! }
 //!
+//! #[dynamic(lazy)]
+//! static L1: Vec<i32> = vec![1,2,3];
+//!
+//! #[dynamic(lazy,drop)]
+//! static mut L2: Vec<i32> = L1.clone();
+//!
 //! #[dynamic]
-//! static V: Vec<i32> = unsafe {vec![1,2,3]};
+//! static V1: Vec<i32> = unsafe {vec![1,2,3]};
 //!
 //! #[dynamic(init,drop)]
-//! static mut V1: Vec<i32> = unsafe {vec![1,2,3]};
+//! static mut V2: Vec<i32> = unsafe {vec![1,2,3]};
 //!
 //! //Initialized before V1
 //! //then destroyed after V1
@@ -46,16 +52,32 @@
 //! static mut INIT_AND_DROP: Vec<i32> = unsafe {vec![1,2,3]};
 //!
 //! fn main(){
-//!     assert_eq!(V[0],1);
+//!     assert_eq!(V1[0],1);
 //!     unsafe{
-//!     assert_eq!(V1[2],3);
-//!     V1[2] = 42;
-//!     assert_eq!(V1[2], 42);
+//!     assert_eq!(V2[2],3);
+//!     V2[2] = 42;
+//!     assert_eq!(V2[2], 42);
+//!
+//!     assert_eq!(L1[0],1);
+//!     unsafe{
+//!     assert_eq!(L2[2],3);
+//!     L2[2] = 42;
+//!     assert_eq!(L2[2], 42);
+//!     }
 //!     }
 //! }
 //! ```
 //!
 //! # Attributes
+//!
+//! Static variables marked with the [dynamic(lazy)] are initialized
+//! on first use or just befor main start on unixes and windows. On
+//! those plateforms access to those statics will be as fast as regular statics.
+//! On other plateforms they fall back to equivalent of `std::lazy::SyncLazy`.
+//!
+//! Lazy statics requires std support and can be desabled by disabling "lazy" feature.
+//! All other attributes does not requires std support but are only supported on unixes, mac and
+//! windows.
 //!
 //! All functions marked with the [constructor] attribute are
 //! run before `main` is started.
@@ -212,27 +234,49 @@ pub use static_init_macro::destructor;
 #[doc(inline)]
 pub use static_init_macro::dynamic;
 
+union StaticBase<T> {
+    k: (),
+    v: ManuallyDrop<T>,
+}
+
 /// The actual type of "dynamic" mutable statics.
 ///
 /// It implements `Deref<Target=T>` and `DerefMut`.
 ///
 /// All associated functions are only usefull for the implementation of
 /// the [dynamic] proc macro attribute
-pub union Static<T> {
-    k: (),
-    v: ManuallyDrop<T>,
-}
+pub struct Static<T>(
+    StaticBase<T>,
+    //#[cfg(debug_assertions)] Location<'static>, #[cfg(debug_assertions)] u32
+);
 
 //As a trait in order to avoid noise;
 impl<T> Static<T> {
     #[inline]
     pub const fn uninit() -> Self {
-        Self { k: () }
+        //#[cfg(debug_assertions)]
+        //{
+        //Self (StaticBase{k: ()}, loc, priority)
+        //}
+        //#[cfg(not(debug_assertions))]
+        {
+            Self(StaticBase { k: () })
+        }
     }
     #[inline]
     pub const fn from(v: T) -> Self {
-        Static {
-            v: ManuallyDrop::new(v),
+        //#[cfg(debug_assertions)]
+        //{
+        //Static (StaticBase{
+        //    v: ManuallyDrop::new(v),
+        //}, Location::caller(), 0
+        //)
+        //}
+        //#[cfg(not(debug_assertions))]
+        {
+            Static(StaticBase {
+                v: ManuallyDrop::new(v),
+            })
         }
     }
     #[inline]
@@ -241,20 +285,20 @@ impl<T> Static<T> {
     }
     #[inline]
     pub unsafe fn drop(this: &mut Self) {
-        ManuallyDrop::drop(&mut this.v);
+        ManuallyDrop::drop(&mut this.0.v);
     }
 }
 impl<T> Deref for Static<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
-        unsafe { &*self.v }
+        unsafe { &*self.0.v }
     }
 }
 impl<T> DerefMut for Static<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.v }
+        unsafe { &mut *self.0.v }
     }
 }
 
@@ -295,3 +339,174 @@ impl<T> Deref for ConstStatic<T> {
         unsafe { &**self.0.get() }
     }
 }
+
+#[cfg(feature="lazy")]
+mod global_lazy {
+    use core::cell::Cell;
+    use core::cell::UnsafeCell;
+    use core::hint::unreachable_unchecked;
+    use core::mem::MaybeUninit;
+    use core::ops::{Deref, DerefMut};
+    use core::sync::atomic::Ordering;
+    use std::sync::Once;
+    use core::fmt;
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "solaris",
+        target_os = "illumos",
+        target_os = "emscripten",
+        target_os = "haiku",
+        target_os = "l4re",
+        target_os = "fuchsia",
+        target_os = "redox",
+        target_os = "vxworks",
+        target_os = "windows"
+    ))]
+    mod inited {
+
+        use core::sync::atomic::{AtomicBool, Ordering};
+
+        pub static LAZY_INIT_ENSURED: AtomicBool = AtomicBool::new(false);
+
+        #[static_init_macro::constructor(__lazy_init_finished)]
+        unsafe extern "C" fn mark_inited() {
+            LAZY_INIT_ENSURED.store(true, Ordering::Release);
+        }
+
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "solaris",
+        target_os = "illumos",
+        target_os = "emscripten",
+        target_os = "haiku",
+        target_os = "l4re",
+        target_os = "fuchsia",
+        target_os = "redox",
+        target_os = "vxworks",
+        target_os = "windows"
+    ))]
+    use inited::LAZY_INIT_ENSURED;
+
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "solaris",
+        target_os = "illumos",
+        target_os = "emscripten",
+        target_os = "haiku",
+        target_os = "l4re",
+        target_os = "fuchsia",
+        target_os = "redox",
+        target_os = "vxworks",
+        target_os = "windows"
+    )))]
+    const LAZY_INIT_ENSURED: bool = false;
+
+    /// A lazy static that is ensured to be initialized after program startup
+    /// initialization phase.
+    pub struct Lazy<T, F=fn()->T> {
+        value:    UnsafeCell<MaybeUninit<T>>,
+        initer:   Once,
+        init_exp: Cell<Option<F>>,
+    }
+
+    impl <T:fmt::Debug, F> fmt::Debug for Lazy<T,F> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("Lazy").field("cell",&self.value).field("init", &"..").finish()
+        }
+    }
+
+    impl<T: Default> Default for Lazy<T> {
+        fn default() -> Self {
+            Self::new(Default::default)
+        }
+    }
+
+    impl<T, F> Lazy<T, F> {
+        /// #Safety
+        /// The static shall be initialized only when used
+        /// in conjunction with the dynamic(lazy) attribute
+        pub const fn new(f: F) -> Self {
+            Self {
+                value:    UnsafeCell::new(MaybeUninit::uninit()),
+                initer:   Once::new(),
+                init_exp: Cell::new(Some(f)),
+            }
+        }
+        #[inline(always)]
+        pub fn as_mut_ptr(this: &Self) -> *mut T {
+            this.value.get() as *mut T
+        }
+        #[inline(always)]
+        pub fn do_init(this: &Self)
+        where
+            F: FnOnce() -> T,
+        {
+            this.initer.call_once(|| unsafe{
+                (&mut *this.value.get()).as_mut_ptr().write(this
+                    .init_exp
+                    .take()
+                    .unwrap_or_else(|| unreachable_unchecked())(
+                ))
+            });
+        }
+        #[inline(always)]
+        fn ensure_init(this: &Self)
+        where
+            F: FnOnce() -> T,
+        {
+            if !LAZY_INIT_ENSURED.load(Ordering::Acquire) {
+                Self::do_init(this);
+            }
+        }
+    }
+
+    unsafe impl<F, T: Send + Sync> Send for Lazy<T, F> {}
+
+    unsafe impl<F, T: Sync> Sync for Lazy<T, F> {}
+
+    impl<T, F> Deref for Lazy<T, F>
+    where
+        F: FnOnce() -> T,
+    {
+        type Target = T;
+        #[inline(always)]
+        fn deref(&self) -> &T {
+            unsafe {
+                Lazy::ensure_init(self);
+                &*(*self.value.get()).as_ptr()
+            }
+        }
+    }
+    impl<T, F> DerefMut for Lazy<T, F>
+    where
+        F: FnOnce() -> T,
+    {
+        #[inline(always)]
+        fn deref_mut(&mut self) -> &mut T {
+            unsafe {
+                Lazy::ensure_init(self);
+                &mut *(*self.value.get()).as_mut_ptr()
+            }
+        }
+    }
+}
+
+pub use global_lazy::Lazy;

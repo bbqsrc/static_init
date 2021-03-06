@@ -18,10 +18,16 @@ static mut WM: AtomicI32 = unsafe { AtomicI32::new(0) };
 
 lazy_static! {
     static ref WL: AtomicI32 = AtomicI32::new(0);
+    static ref WL1: AtomicI32 = AtomicI32::new(WL2.load(Ordering::Relaxed));
+    static ref WL2: AtomicI32 = AtomicI32::new(WL1.load(Ordering::Relaxed));
 }
 
 #[ctor]
 static WCT: AtomicI32 = AtomicI32::new(0);
+
+#[dynamic(lazy)]
+static L: AtomicI32 = AtomicI32::new(0);
+
 
 #[bench]
 fn access(bench: &mut Bencher) {
@@ -30,6 +36,10 @@ fn access(bench: &mut Bencher) {
 #[bench]
 fn access_m(bench: &mut Bencher) {
     bench.iter(|| unsafe { WM.fetch_add(1, Ordering::Relaxed) });
+}
+#[bench]
+fn access_l(bench: &mut Bencher) {
+    bench.iter(|| L.fetch_add(1, Ordering::Relaxed));
 }
 //access to lazy static cost 2ns
 #[bench]

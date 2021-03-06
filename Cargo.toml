@@ -14,6 +14,15 @@ members = [
       "static_init_macro",
       ]
 
+[features]
+lazy = ["static_init_macro/lazy"]
+lazy_drop = ["lazy","libc","static_init_macro/lazy_drop"]
+
+default = ["lazy","lazy_drop"]
+
+[dependencies]
+libc = {version = "0.2", optional=true}
+
 [dependencies.static_init_macro]
 version="0.4.0"
 path="static_init_macro"
