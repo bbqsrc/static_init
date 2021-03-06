@@ -22,6 +22,8 @@
 
  - [x] Priorities on elf platforms (linux, bsd, etc...) and window.
 
+ - [x] Access to uninitialized statics detected in debug mode with detailed message.
+
 # Example
 ```rust
 use static_init::{constructor,destructor,dynamic};
@@ -114,13 +116,19 @@ During program termination, the order is reversed:
 - destructors without priority are the first called;
 - destructors with priority 65535 are the last called.
 
+# Panics
+
+If `debug-assertions` is enabled or feature `debug_order` is passed:
+- accesses to statics from a point not sequenced after its initialization
+ - accesses to statics from a point not sequenced before its drop will cause a panic.
+ - lazy static initialization that cylicly depends on themself will cause a panic.(without
+  debug assertion the program will enter an infinite loop, this is also the case of types
+  declared `std::lazy::*` or lazy_static crate)
+
+
 # Safety
 
   Any access to lazy statics are safe. 
-
-  If `debug-assertions` is enabled or feature `debug_order` is passed accesses to
-  statics from a point not sequenced after its initialization or before its drop
-  will cause a panic.
 
   If neither `debug-assertions` nor feature `debug_order` are enabled accesses to
   statics that are not initialized will cause undefined behavior (Unless this access happen

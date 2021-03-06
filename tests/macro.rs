@@ -117,15 +117,6 @@ static V5: A = unsafe { A::new(V4.0 + 23) };
 #[dynamic(drop)]
 static V6: A = unsafe { A(33) };
 
-#[dynamic(lazy)]
-static L1: A = A::new(unsafe{L0.0+1});
-
-#[dynamic(lazy)]
-static mut L0: A = A::new(10);
-
-#[dynamic(lazy,drop)]
-static mut L2: A = A::new(33);
-
 #[test]
 fn dynamic_init() {
     unsafe { assert_eq!(V0.0, 5) };
@@ -137,6 +128,25 @@ fn dynamic_init() {
     unsafe { assert_eq!(V3.0, 12) };
     assert_eq!(V5.0, 33);
     assert_eq!(V6.0, 33);
-    unsafe{assert_eq!(L0.0, 10)};
-    assert_eq!(L1.0, 11);
+}
+
+#[cfg(feature = "lazy")]
+mod lazy {
+    use super::A;
+    use static_init::dynamic;
+    #[dynamic(lazy)]
+    static L1: A = A::new(unsafe { L0.0 + 1 });
+
+    #[dynamic(lazy)]
+    static mut L0: A = A::new(10);
+
+    #[cfg(feature = "lazy_drop")]
+    #[dynamic(lazy, drop)]
+    static mut L2: A = A::new(33);
+
+    #[test]
+    fn lazy_init() {
+        unsafe { assert_eq!(L0.0, 10) };
+        assert_eq!(L1.0, 11);
+    }
 }

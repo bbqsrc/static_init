@@ -10,6 +10,8 @@ use test::Bencher;
 extern crate lazy_static;
 use lazy_static::lazy_static;
 
+static O: AtomicI32 = AtomicI32::new(0);
+
 #[dynamic(10)]
 static W: AtomicI32 = unsafe { AtomicI32::new(0) };
 
@@ -28,6 +30,10 @@ static WCT: AtomicI32 = AtomicI32::new(0);
 #[dynamic(lazy)]
 static L: AtomicI32 = AtomicI32::new(0);
 
+#[bench]
+fn access_regular(bench: &mut Bencher) {
+    bench.iter(|| O.fetch_add(1, Ordering::Relaxed));
+}
 
 #[bench]
 fn access(bench: &mut Bencher) {

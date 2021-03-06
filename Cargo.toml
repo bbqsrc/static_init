@@ -31,6 +31,10 @@ path="static_init_macro"
 [dev-dependencies]
 lazy_static = "1.4"
 ctor = "0.1"
+libc = "0.2"
 
 [profile.bench]
 lto = true
+
+[profile.dev]
+panic="abort"

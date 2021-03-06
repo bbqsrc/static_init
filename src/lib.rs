@@ -105,13 +105,20 @@
 //! - destructors without priority are the first called;
 //! - destructors with priority 65535 are the last called.
 //!
+//! # Panics
+//!
+//!  If `debug-assertions` is enabled or feature `debug_order` is passed:
+//!     - accesses to statics from a point not sequenced after its initialization
+//!     - accesses to statics from a point not sequenced before its drop will cause a panic.
+//!     - lazy static initialization that cylicly depends on themself will cause a panic.(without
+//!     debug assertion the program will enter an infinite loop, this is also the case of types
+//!     declared std::lazy::* or lazy_static crate)
+//!
+//! In all case, the message will indicate which static caused the panic.
+//!
 //! # Safety
 //!
-//!  Any access to lazy statics are safe.
-//!
-//!  If `debug-assertions` is enabled or feature `debug_order` is passed accesses to
-//!  statics from a point not sequenced after its initialization or before its drop
-//!  will cause a panic.
+//!  Any access to lazy statics are safe, though they may cause infinite loop.
 //!
 //!  If neither `debug-assertions` nor feature `debug_order` are enabled accesses to
 //!  statics that are not initialized will cause undefined behavior (Unless this access happen
@@ -402,7 +409,7 @@ fn check_access(info: &StaticInfo, status: i32) {
 
 impl<T> Deref for Static<T> {
     type Target = T;
-    #[inline]
+    #[inline(always)]
     fn deref(&self) -> &T {
         #[cfg(any(feature = "debug_order", debug_assertions))]
         check_access(&self.1, self.2.load(Ordering::Relaxed));
@@ -410,7 +417,7 @@ impl<T> Deref for Static<T> {
     }
 }
 impl<T> DerefMut for Static<T> {
-    #[inline]
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut T {
         #[cfg(any(feature = "debug_order", debug_assertions))]
         check_access(&self.1, self.2.load(Ordering::Relaxed));
@@ -450,7 +457,7 @@ unsafe impl<T: Sync> Sync for ConstStatic<T> {}
 
 impl<T> Deref for ConstStatic<T> {
     type Target = T;
-    #[inline]
+    #[inline(always)]
     fn deref(&self) -> &T {
         unsafe { &**self.0.get() }
     }
@@ -466,6 +473,9 @@ mod global_lazy {
     use core::ops::{Deref, DerefMut};
     use core::sync::atomic::Ordering;
     use std::sync::Once;
+    #[cfg(any(feature = "debug_order", debug_assertions))]
+    use core::sync::atomic::{AtomicBool};
+    use super::StaticInfo;
 
     #[cfg(any(
         target_os = "linux",
@@ -540,6 +550,10 @@ mod global_lazy {
         value:    UnsafeCell<MaybeUninit<T>>,
         initer:   Once,
         init_exp: Cell<Option<F>>,
+        #[cfg(any(feature = "debug_order", debug_assertions))]
+        in_init: AtomicBool,
+        #[cfg(any(feature = "debug_order", debug_assertions))]
+        info: Option<StaticInfo>,
     }
 
     impl<T: fmt::Debug, F> fmt::Debug for Lazy<T, F> {
@@ -566,6 +580,25 @@ mod global_lazy {
                 value:    UnsafeCell::new(MaybeUninit::uninit()),
                 initer:   Once::new(),
                 init_exp: Cell::new(Some(f)),
+                #[cfg(any(feature = "debug_order", debug_assertions))]
+                in_init: AtomicBool::new(false),
+                #[cfg(any(feature = "debug_order", debug_assertions))]
+                info: None,
+            }
+        }
+
+        /// #Safety
+        /// The static shall be initialized only when used
+        /// in conjunction with the dynamic(lazy) attribute
+        pub const fn new_with_info(f: F, _info: StaticInfo) -> Self {
+            Self {
+                value:    UnsafeCell::new(MaybeUninit::uninit()),
+                initer:   Once::new(),
+                init_exp: Cell::new(Some(f)),
+                #[cfg(any(feature = "debug_order", debug_assertions))]
+                in_init: AtomicBool::new(false),
+                #[cfg(any(feature = "debug_order", debug_assertions))]
+                info: Some(_info),
             }
         }
         #[inline(always)]
@@ -577,12 +610,22 @@ mod global_lazy {
         where
             F: FnOnce() -> T,
         {
+             #[cfg(any(feature = "debug_order", debug_assertions))]
+             if this.in_init.load(Ordering::Relaxed) {
+                 match &this.info {
+                     None => core::panic!("Cyclic lazy initialization detected"),
+                     Some(info) =>core::panic!("Cyclic lazy initialization: Initialization of {:#?} depend on itself.", info),
+                 }
+             }
             this.initer.call_once(|| unsafe {
-                (&mut *this.value.get()).as_mut_ptr().write(this
-                    .init_exp
-                    .take()
-                    .unwrap_or_else(|| unreachable_unchecked())(
-                ))
+                #[cfg(any(feature = "debug_order", debug_assertions))]
+                this.in_init.store(true,Ordering::Relaxed);
+                (&mut *this.value.get())
+                    .as_mut_ptr()
+                    .write(this.init_exp.take().unwrap_or_else(|| unreachable_unchecked()
+                    )());
+                #[cfg(any(feature = "debug_order", debug_assertions))]
+                this.in_init.store(false,Ordering::Relaxed);
             });
         }
         #[inline(always)]
@@ -627,4 +670,5 @@ mod global_lazy {
     }
 }
 
+#[cfg(feature = "lazy")]
 pub use global_lazy::Lazy;

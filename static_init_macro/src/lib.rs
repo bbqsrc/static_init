@@ -732,7 +732,16 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         Initialization::Lazy if !options.drop => {
             let q = quote_spanned! {sp=>{
                 #initer
-                unsafe{::static_init::Lazy::new(|| {#expr})}
+                unsafe{::static_init::Lazy::new_with_info(|| {#expr},
+                ::static_init::StaticInfo{
+                    variable_name: ::core::stringify!(#statid),
+                    file_name: ::core::file!(),
+                    line: ::core::line!(),
+                    column: ::core::column!(),
+                    init_priority: #init_priority,
+                    drop_priority: #drop_priority
+                    }
+                )}
             }
             }
             .into();
@@ -747,11 +756,20 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                     unsafe{::core::ptr::drop_in_place(::static_init::Lazy::as_mut_ptr(#stat_ref))}
                 }
                 #initer
-                unsafe{::static_init::Lazy::new(|| {
+                unsafe{::static_init::Lazy::new_with_info(|| {
                     let v = #expr;
                     unsafe{::libc::atexit(__static_init_dropper)};
                     v
-                    })}
+                    },
+                    ::static_init::StaticInfo{
+                        variable_name: ::core::stringify!(#statid),
+                        file_name: ::core::file!(),
+                        line: ::core::line!(),
+                        column: ::core::column!(),
+                        init_priority: #init_priority,
+                        drop_priority: #drop_priority
+                        }
+                   )}
             }
             }
             .into();
