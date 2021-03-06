@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature="lazy"),no_std)]
+#![cfg_attr(not(feature = "lazy"), no_std)]
 #![allow(clippy::missing_safety_doc)]
 //! Module initialization termination function with priorities and (mutable) statics initialization with
 //! non const functions.
@@ -106,15 +106,20 @@
 //! - destructors with priority 65535 are the last called.
 //!
 //! # Safety
-//!   
-//!   Use of the *functionnalities provided by this library are inherently unsafe*. During
-//!   execution of a constructor, any access to variable initialized with a lower or equal priority
-//!   will cause undefined behavior. During execution of a destructor any access
-//!   to variable droped with a lower or equal priority will cause undefined
-//!   behavior.
-//!   
-//!   This is actually the reason to be of the priorities: this is the coder own responsability
-//!   to ensure that no access is performed to lower or equal priorities.
+//!
+//!  Any access to lazy statics are safe. 
+//!
+//!  If `debug-assertions` is enabled or feature `debug_order` is passed accesses to
+//!  statics not yet initialized will cause a panic.
+//!
+//!  If neither `debug-assertions` nor feature `debug_order` are enabled accesses to
+//!  statics that are not initialized will cause undefined behavior (Unless this access happen
+//!  during initialization phase a zero initialized memory is a valid memory
+//!  representation for the type of the static).
+//!
+//!  Accesses to uninitialized dynamic may happen when a constructor access a dynamic static
+//!  that as a lower or equal initialization priority or when a destructor access a dynamic static dropped
+//!  with a lower or equal drop priority
 //!
 //! ```no_run
 //! use static_init::dynamic;
@@ -239,6 +244,25 @@ union StaticBase<T> {
     v: ManuallyDrop<T>,
 }
 
+#[derive(Debug)]
+pub struct StaticInfo {
+    pub variable_name: &'static str,
+    pub file_name:     &'static str,
+    pub line:          u32,
+    pub column:        u32,
+    pub init_priority: i32,
+    pub drop_priority: i32,
+}
+
+#[cfg(any(feature = "debug_order", debug_assertions))]
+use core::sync::atomic::{AtomicI32, Ordering};
+
+#[cfg(any(feature = "debug_order", debug_assertions))]
+static CUR_INIT_PRIO: AtomicI32 = AtomicI32::new(65537);
+
+#[cfg(any(feature = "debug_order", debug_assertions))]
+static CUR_DROP_PRIO: AtomicI32 = AtomicI32::new(65537);
+
 /// The actual type of "dynamic" mutable statics.
 ///
 /// It implements `Deref<Target=T>` and `DerefMut`.
@@ -247,57 +271,130 @@ union StaticBase<T> {
 /// the [dynamic] proc macro attribute
 pub struct Static<T>(
     StaticBase<T>,
-    //#[cfg(debug_assertions)] Location<'static>, #[cfg(debug_assertions)] u32
+    #[cfg(any(feature = "debug_order", debug_assertions))] StaticInfo,
+    #[cfg(any(feature = "debug_order", debug_assertions))] AtomicI32,
 );
+
+#[cfg(any(feature = "debug_order", debug_assertions))]
+#[inline]
+pub fn __set_init_prio(v: i32) {
+    CUR_INIT_PRIO.store(v, Ordering::Relaxed);
+}
+#[cfg(not(any(feature = "debug_order", debug_assertions)))]
+#[inline(always)]
+pub fn __set_init_prio(_: i32) {}
 
 //As a trait in order to avoid noise;
 impl<T> Static<T> {
     #[inline]
-    pub const fn uninit() -> Self {
-        //#[cfg(debug_assertions)]
-        //{
-        //Self (StaticBase{k: ()}, loc, priority)
-        //}
-        //#[cfg(not(debug_assertions))]
+    pub const fn uninit(_info: StaticInfo) -> Self {
+        #[cfg(any(feature = "debug_order", debug_assertions))]
+        {
+            Self(StaticBase { k: () }, _info, AtomicI32::new(0))
+        }
+        #[cfg(not(any(feature = "debug_order", debug_assertions)))]
         {
             Self(StaticBase { k: () })
         }
     }
     #[inline]
-    pub const fn from(v: T) -> Self {
-        //#[cfg(debug_assertions)]
-        //{
-        //Static (StaticBase{
-        //    v: ManuallyDrop::new(v),
-        //}, Location::caller(), 0
-        //)
-        //}
-        //#[cfg(not(debug_assertions))]
+    pub const fn from(v: T, _info: StaticInfo) -> Self {
+        #[cfg(any(feature = "debug_order", debug_assertions))]
+        {
+            Static(
+                StaticBase {
+                    v: ManuallyDrop::new(v),
+                },
+                _info,
+                AtomicI32::new(1),
+            )
+        }
+        #[cfg(not(any(feature = "debug_order", debug_assertions)))]
         {
             Static(StaticBase {
                 v: ManuallyDrop::new(v),
             })
         }
     }
+
     #[inline]
     pub unsafe fn set_to(this: &mut Self, v: T) {
-        *this = Self::from(v);
+        #[cfg(any(feature = "debug_order", debug_assertions))]
+        {
+            this.0.v = ManuallyDrop::new(v);
+            this.2.store(1, Ordering::Relaxed);
+        }
+        #[cfg(not(any(feature = "debug_order", debug_assertions)))]
+        {
+            this.0.v = ManuallyDrop::new(v);
+        }
     }
+
     #[inline]
     pub unsafe fn drop(this: &mut Self) {
-        ManuallyDrop::drop(&mut this.0.v);
+        #[cfg(any(feature = "debug_order", debug_assertions))]
+        {
+            CUR_DROP_PRIO.store(this.1.drop_priority, Ordering::Relaxed);
+            ManuallyDrop::drop(&mut this.0.v);
+            this.2.store(2, Ordering::Relaxed);
+        }
+        #[cfg(not(any(feature = "debug_order", debug_assertions)))]
+        {
+            ManuallyDrop::drop(&mut this.0.v);
+        }
     }
 }
 impl<T> Deref for Static<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
+        #[cfg(any(feature = "debug_order", debug_assertions))]
+        {
+            let status = self.2.load(Ordering::Relaxed);
+            if status == 0 {
+                core::panic!(
+                    "Attempt to access variable {:#?} before it is initialized during \
+                     initialization priority {}",
+                    self.1,
+                    CUR_INIT_PRIO.load(Ordering::Relaxed)
+                )
+            }
+            if status == 2 {
+                core::panic!(
+                    "Attempt to access variable {:#?} after it was destroyed during destruction \
+                     priority {}",
+                    self.1,
+                    CUR_DROP_PRIO.load(Ordering::Relaxed)
+                )
+            }
+        }
         unsafe { &*self.0.v }
     }
 }
 impl<T> DerefMut for Static<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
+        #[cfg(any(feature = "debug_order", debug_assertions))]
+        {
+            let status = self.2.load(Ordering::Relaxed);
+            if status == 0 {
+                core::panic!(
+                    "Attempt to access variable {:#?} before it is initialized during \
+                     initialization
+                priority {}",
+                    self.1,
+                    CUR_INIT_PRIO.load(Ordering::Relaxed)
+                )
+            }
+            if status == 2 {
+                core::panic!(
+                    "Attempt to access variable {:#?} after it was destroyed during destruction
+                priority {}",
+                    self.1,
+                    CUR_DROP_PRIO.load(Ordering::Relaxed)
+                )
+            }
+        }
         unsafe { &mut *self.0.v }
     }
 }
@@ -312,16 +409,16 @@ pub struct ConstStatic<T>(UnsafeCell<Static<T>>);
 
 impl<T> ConstStatic<T> {
     #[inline]
-    pub const fn uninit() -> Self {
-        Self(UnsafeCell::new(Static::uninit()))
+    pub const fn uninit(info: StaticInfo) -> Self {
+        Self(UnsafeCell::new(Static::uninit(info)))
     }
     #[inline]
-    pub const fn from(v: T) -> Self {
-        Self(UnsafeCell::new(Static::from(v)))
+    pub const fn from(v: T, info: StaticInfo) -> Self {
+        Self(UnsafeCell::new(Static::from(v, info)))
     }
     #[inline]
     pub unsafe fn set_to(this: &Self, v: T) {
-        *this.0.get() = Static::from(v)
+        Static::set_to(&mut (*this.0.get()), v)
     }
     #[inline]
     pub unsafe fn drop(this: &Self) {
@@ -340,16 +437,16 @@ impl<T> Deref for ConstStatic<T> {
     }
 }
 
-#[cfg(feature="lazy")]
+#[cfg(feature = "lazy")]
 mod global_lazy {
     use core::cell::Cell;
     use core::cell::UnsafeCell;
+    use core::fmt;
     use core::hint::unreachable_unchecked;
     use core::mem::MaybeUninit;
     use core::ops::{Deref, DerefMut};
     use core::sync::atomic::Ordering;
     use std::sync::Once;
-    use core::fmt;
 
     #[cfg(any(
         target_os = "linux",
@@ -378,7 +475,6 @@ mod global_lazy {
         unsafe extern "C" fn mark_inited() {
             LAZY_INIT_ENSURED.store(true, Ordering::Release);
         }
-
     }
 
     #[cfg(any(
@@ -421,15 +517,18 @@ mod global_lazy {
 
     /// A lazy static that is ensured to be initialized after program startup
     /// initialization phase.
-    pub struct Lazy<T, F=fn()->T> {
+    pub struct Lazy<T, F = fn() -> T> {
         value:    UnsafeCell<MaybeUninit<T>>,
         initer:   Once,
         init_exp: Cell<Option<F>>,
     }
 
-    impl <T:fmt::Debug, F> fmt::Debug for Lazy<T,F> {
+    impl<T: fmt::Debug, F> fmt::Debug for Lazy<T, F> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("Lazy").field("cell",&self.value).field("init", &"..").finish()
+            f.debug_struct("Lazy")
+                .field("cell", &self.value)
+                .field("init", &"..")
+                .finish()
         }
     }
 
@@ -459,7 +558,7 @@ mod global_lazy {
         where
             F: FnOnce() -> T,
         {
-            this.initer.call_once(|| unsafe{
+            this.initer.call_once(|| unsafe {
                 (&mut *this.value.get()).as_mut_ptr().write(this
                     .init_exp
                     .take()

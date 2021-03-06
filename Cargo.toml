@@ -17,6 +17,7 @@ members = [
 [features]
 lazy = ["static_init_macro/lazy"]
 lazy_drop = ["lazy","libc","static_init_macro/lazy_drop"]
+debug_order = []
 
 default = ["lazy","lazy_drop"]
 

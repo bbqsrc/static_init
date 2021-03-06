@@ -255,7 +255,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// Optionnaly, if the default feature "lazy_drop" is enabled, lazy dynamic statics declared with
 /// `[dynamic(lazy,drop)]` will be dropped at program exit. Dropped lazy dynamic statics ared
 /// dropped in the reverse order of their initialization. This feature is implemented thanks to
-/// [libc::atexit].
+/// `libc::atexit`.
 ///
 /// ```ignore
 /// struct A(i32);
@@ -662,6 +662,9 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
 
     let sp = stat.expr.span();
 
+    let init_priority = options.init_priority.map_or(-1,|p| p as i32);
+    let drop_priority = options.drop_priority.map_or(-1,|p| p as i32);
+
     let initer = match options.init {
         Initialization::Dynamic => {
             let attr: Attribute = if let Some(priority) = options.init_priority {
@@ -672,8 +675,8 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
             Some(quote_spanned! {sp=>
                     #attr
                     unsafe extern "C" fn __static_init_initializer() {
-                        let r = #expr;
-                        #typ::set_to(#stat_ref,r)
+                        ::static_init::__set_init_prio(#init_priority);
+                        #typ::set_to(#stat_ref,#expr)
                     }
             })
         }
@@ -702,12 +705,21 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         None
     };
 
+    let statid = &stat.ident;
+
     match options.init {
         Initialization::Dynamic => {
             let q = quote_spanned! {sp=>{
                 #initer
                 #droper
-                #typ::uninit()
+                #typ::uninit(::static_init::StaticInfo{
+                    variable_name: ::core::stringify!(#statid),
+                    file_name: ::core::file!(),
+                    line: ::core::line!(),
+                    column: ::core::line!(),
+                    init_priority: #init_priority,
+                    drop_priority: #drop_priority
+                    })
             }
             }
             .into();
@@ -752,7 +764,14 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
             let q = quote_spanned! {sp=>{
                 #initer
                 #droper
-                #typ::from(#expr)
+                #typ::from(#expr,::static_init::StaticInfo{
+                    variable_name: ::core::stringify!(#statid),
+                    file_name: ::core::file!(),
+                    line: ::core::line!(),
+                    column: ::core::line!(),
+                    init_priority: #init_priority,
+                    drop_priority: #drop_priority
+                    })
             }
             }
             .into();
