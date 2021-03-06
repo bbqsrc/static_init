@@ -119,7 +119,8 @@ During program termination, the order is reversed:
   Any access to lazy statics are safe. 
 
   If `debug-assertions` is enabled or feature `debug_order` is passed accesses to
-  statics not yet initialized will cause a panic.
+  statics from a point not sequenced after its initialization or before its drop
+  will cause a panic.
 
   If neither `debug-assertions` nor feature `debug_order` are enabled accesses to
   statics that are not initialized will cause undefined behavior (Unless this access happen

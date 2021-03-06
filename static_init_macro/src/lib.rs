@@ -676,7 +676,8 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                     #attr
                     unsafe extern "C" fn __static_init_initializer() {
                         ::static_init::__set_init_prio(#init_priority);
-                        #typ::set_to(#stat_ref,#expr)
+                        #typ::set_to(#stat_ref,#expr);
+                        ::static_init::__set_init_prio(i32::MIN);
                     }
             })
         }
@@ -716,7 +717,7 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                     variable_name: ::core::stringify!(#statid),
                     file_name: ::core::file!(),
                     line: ::core::line!(),
-                    column: ::core::line!(),
+                    column: ::core::column!(),
                     init_priority: #init_priority,
                     drop_priority: #drop_priority
                     })

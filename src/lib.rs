@@ -107,10 +107,11 @@
 //!
 //! # Safety
 //!
-//!  Any access to lazy statics are safe. 
+//!  Any access to lazy statics are safe.
 //!
 //!  If `debug-assertions` is enabled or feature `debug_order` is passed accesses to
-//!  statics not yet initialized will cause a panic.
+//!  statics from a point not sequenced after its initialization or before its drop
+//!  will cause a panic.
 //!
 //!  If neither `debug-assertions` nor feature `debug_order` are enabled accesses to
 //!  statics that are not initialized will cause undefined behavior (Unless this access happen
@@ -258,10 +259,10 @@ pub struct StaticInfo {
 use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(any(feature = "debug_order", debug_assertions))]
-static CUR_INIT_PRIO: AtomicI32 = AtomicI32::new(65537);
+static CUR_INIT_PRIO: AtomicI32 = AtomicI32::new(i32::MIN);
 
 #[cfg(any(feature = "debug_order", debug_assertions))]
-static CUR_DROP_PRIO: AtomicI32 = AtomicI32::new(65537);
+static CUR_DROP_PRIO: AtomicI32 = AtomicI32::new(i32::MIN);
 
 /// The actual type of "dynamic" mutable statics.
 ///
@@ -336,6 +337,7 @@ impl<T> Static<T> {
         {
             CUR_DROP_PRIO.store(this.1.drop_priority, Ordering::Relaxed);
             ManuallyDrop::drop(&mut this.0.v);
+            CUR_DROP_PRIO.store(i32::MIN, Ordering::Relaxed);
             this.2.store(2, Ordering::Relaxed);
         }
         #[cfg(not(any(feature = "debug_order", debug_assertions)))]
@@ -344,30 +346,66 @@ impl<T> Static<T> {
         }
     }
 }
+
+#[cfg(any(feature = "debug_order", debug_assertions))]
+#[inline]
+fn check_access(info: &StaticInfo, status: i32) {
+    if status == 0 {
+        core::panic!(
+            "Attempt to access variable {:#?} before it is initialized during initialization \
+             priority {}. Tip: increase init priority of this static to a value larger than \
+             {prio} (attribute syntax: `#[dynamic(init=<prio>)]`)",
+            info,
+            prio = CUR_INIT_PRIO.load(Ordering::Relaxed)
+        )
+    }
+    if status == 2 {
+        core::panic!(
+            "Attempt to access variable {:#?} after it was destroyed during destruction priority \
+             {prio}. Tip increase drop priority of this static to a value larger than {prio} \
+             (attribute syntax: `#[dynamic(drop=<prio>)]`)",
+            info,
+            prio = CUR_DROP_PRIO.load(Ordering::Relaxed)
+        )
+    }
+    let init_prio = CUR_INIT_PRIO.load(Ordering::Relaxed);
+    let drop_prio = CUR_DROP_PRIO.load(Ordering::Relaxed);
+    if init_prio == info.init_priority {
+        core::panic!(
+            "This access to variable {:#?} is not sequenced after construction of this static. \
+             Tip increase init priority of this static to a value larger than {prio} (attribute \
+             syntax: `#[dynamic(init=<prio>)]`)",
+            info,
+            prio = init_prio
+        )
+    }
+    if drop_prio == info.drop_priority {
+        core::panic!(
+            "This access to variable {:#?} is not sequenced before to its drop. Tip increase drop \
+             priority of this static to a value larger than {prio} (attribute syntax: \
+             `#[dynamic(drop=<prio>)]`)",
+            info,
+            prio = drop_prio
+        )
+    }
+    if !(drop_prio < info.drop_priority || init_prio < info.init_priority) {
+        core::panic!(
+            "Unexpected initialization order while accessing {:#?} from init priority {} and drop \
+             priority {}. This is a bug of `static_init` library, please report \"
+           the issue inside `static_init` repository.",
+            info,
+            init_prio,
+            drop_prio
+        )
+    }
+}
+
 impl<T> Deref for Static<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
         #[cfg(any(feature = "debug_order", debug_assertions))]
-        {
-            let status = self.2.load(Ordering::Relaxed);
-            if status == 0 {
-                core::panic!(
-                    "Attempt to access variable {:#?} before it is initialized during \
-                     initialization priority {}",
-                    self.1,
-                    CUR_INIT_PRIO.load(Ordering::Relaxed)
-                )
-            }
-            if status == 2 {
-                core::panic!(
-                    "Attempt to access variable {:#?} after it was destroyed during destruction \
-                     priority {}",
-                    self.1,
-                    CUR_DROP_PRIO.load(Ordering::Relaxed)
-                )
-            }
-        }
+        check_access(&self.1, self.2.load(Ordering::Relaxed));
         unsafe { &*self.0.v }
     }
 }
@@ -375,26 +413,7 @@ impl<T> DerefMut for Static<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         #[cfg(any(feature = "debug_order", debug_assertions))]
-        {
-            let status = self.2.load(Ordering::Relaxed);
-            if status == 0 {
-                core::panic!(
-                    "Attempt to access variable {:#?} before it is initialized during \
-                     initialization
-                priority {}",
-                    self.1,
-                    CUR_INIT_PRIO.load(Ordering::Relaxed)
-                )
-            }
-            if status == 2 {
-                core::panic!(
-                    "Attempt to access variable {:#?} after it was destroyed during destruction
-                priority {}",
-                    self.1,
-                    CUR_DROP_PRIO.load(Ordering::Relaxed)
-                )
-            }
-        }
+        check_access(&self.1, self.2.load(Ordering::Relaxed));
         unsafe { &mut *self.0.v }
     }
 }
