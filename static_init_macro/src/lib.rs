@@ -317,7 +317,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// }
 ///
 /// #[dynamic]
-/// static V :A = unsafe{A::new(42)};
+/// static V :A = A::new(42);
 /// ```
 ///
 /// ## Execution Order
@@ -343,7 +343,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// //V1 must be initialized first
 /// //because V2 uses the value of V1.
 /// #[dynamic(10)]
-/// static mut V1 :A = unsafe{A::new(33)};
+/// static mut V1 :A = A::new(33);
 ///
 /// #[dynamic(20)]
 /// static V2 :A = unsafe{A::new(V1.0 + 9)};
@@ -402,29 +402,29 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// //const initialized droped after main exit
 /// #[dynamic(drop)]
-/// static mut V1 :A = unsafe{A::new_const(33)};
+/// static mut V1 :A = A::new_const(33);
 ///
 /// //initialized before V1 and droped after V1
 /// #[dynamic(20,drop=10)]
-/// static V2 :A = unsafe{A::new(10)};
+/// static V2 :A = A::new(10);
 ///
 /// // if a drop priority is not specified, it equals the
 /// // init priority so the attribute bellow is equivalent to
 /// // #[dynamic(init=20, drop=20)
 /// #[dynamic(init=20,drop)]
-/// static V3 :A = unsafe{A::new(10)};
+/// static V3 :A = A::new(10);
 ///
 /// // not droped
 /// #[dynamic(init)]
-/// static V4 :A = unsafe{A::new(10)};
+/// static V4 :A = A::new(10);
 ///
 /// // not droped
 /// #[dynamic]
-/// static V5 :A = unsafe{A::new(10)};
+/// static V5 :A = A::new(10);
 ///
 /// // not droped
 /// #[dynamic(10)]
-/// static V6 :A = unsafe{A::new(10)};
+/// static V6 :A = A::new(10);
 /// ```
 ///
 /// # Actual type of "dynamic" statics
@@ -440,11 +440,11 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// // V has type static_init::ConstStatic<i32>
 /// #[dynamic]
-/// static V :i32 = unsafe{0};
+/// static V :i32 = 0;
 ///
 /// // W has type static_init::Static<i32>
 /// #[dynamic]
-/// static W :i32 = unsafe{0};
+/// static W :i32 = 0;
 /// ```
 
 #[proc_macro_attribute]
@@ -646,16 +646,16 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     let expr = &*stat.expr;
     let stat_typ = &*stat.ty;
 
-    if !(options.init == Initialization::Lazy) && !matches!(*stat.expr, syn::Expr::Unsafe(_)) {
-        let sp = stat.expr.span();
-        if options.init == Initialization::Dynamic {
-            return quote_spanned!(sp=>compile_error!("Initializer expression must be an unsafe block \
-            because this expression may access uninitialized data"));
-        } else {
-            return quote_spanned!(sp=>compile_error!("Although the initialization of this \"dynamic\" static is safe \
-            an unsafe block is required for this initialization as a reminder that the drop phase may lead to undefined behavior"));
-        }
-    }
+    //if !(options.init == Initialization::Lazy) && !matches!(*stat.expr, syn::Expr::Unsafe(_)) {
+    //    let sp = stat.expr.span();
+    //    if options.init == Initialization::Dynamic {
+    //        return quote_spanned!(sp=>compile_error!("Initializer expression must be an unsafe block \
+    //        because this expression may access uninitialized data"));
+    //    } else {
+    //        return quote_spanned!(sp=>compile_error!("Although the initialization of this \"dynamic\" static is safe \
+    //        an unsafe block is required for this initialization as a reminder that the drop phase may lead to undefined behavior"));
+    //    }
+    //}
 
     //fix drop priority, if not specified, drop priority equal
     //that of initialization priority
@@ -674,54 +674,55 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         };
     }
 
-    let lazy_type: Type = if has_thread_local(&stat.attrs) {
-        if stat.mutability.is_none() && options.drop {
+    let stat_ref: Expr = if options.init != Initialization::Lazy && stat.mutability.is_some() {
+                parse_quote! {
+                    &mut #stat_name
+                }
+    } else {
+                parse_quote! {
+                    &#stat_name
+                }
+    };
+
+    let typ: Type = if options.init != Initialization::Lazy {
+        if stat.mutability.is_some() {
+                parse_quote! {
+                    ::static_init::Static::<#stat_typ>
+                }
+        } else {
             stat.mutability = Some(token::Mut {
                 span: stat.ty.span(),
             });
             parse_quote! {
-                ConstLazy
-            }
-        } else {
-            parse_quote! {
-                Lazy
+                ::static_init::ConstStatic::<#stat_typ>
             }
         }
-    } else {
-        parse_quote! {
-            GlobalLazy
-        }
-    };
-
-    let (typ, stat_ref): (Type, Expr) = if options.init != Initialization::Lazy {
+    } else if is_thread_local {
         if stat.mutability.is_some() {
-            (
-                parse_quote! {
-                    ::static_init::Static::<#stat_typ>
-                },
-                parse_quote! {
-                    &mut #stat_name
-                },
-            )
+            parse_quote! {
+                ::static_init::Lazy::<#stat_typ>
+            }
         } else {
-            (
-                parse_quote! {
-                    ::static_init::ConstStatic::<#stat_typ>
-                },
-                parse_quote! {
-                    &#stat_name
-                },
-            )
+            stat.mutability = Some(token::Mut {
+                span: stat.ty.span(),
+            });
+            parse_quote! {
+                ::static_init::ConstLazy::<#stat_typ>
+            }
         }
     } else {
-        (
+        if !stat.mutability.is_some() && options.drop {
+            stat.mutability = Some(token::Mut {
+                span: stat.ty.span(),
+            });
             parse_quote! {
-                ::static_init::#lazy_type::<#stat_typ>
-            },
+                ::static_init::ConstGlobalLazy::<#stat_typ>
+            }
+        } else {
             parse_quote! {
-                &#stat_name
-            },
-        )
+                ::static_init::GlobalLazy::<#stat_typ>
+            }
+        }
     };
 
     let sp = stat.expr.span();
@@ -743,8 +744,12 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                     #attr
                     unsafe extern "C" fn __static_init_initializer() {
                         ::static_init::__set_init_prio(#init_priority);
-                        #typ::set_to(#stat_ref,#expr);
-                        unsafe{::libc::atexit(__static_init_dropper)};
+                        //opt out unsafe
+                        fn __static_init_do_init() -> #stat_typ {
+                            #expr
+                        }
+                        #typ::set_to(#stat_ref,__static_init_do_init());
+                        ::libc::atexit(__static_init_dropper);
                         ::static_init::__set_init_prio(i32::MIN);
                     }
             })
@@ -759,7 +764,11 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                     #attr
                     unsafe extern "C" fn __static_init_initializer() {
                         ::static_init::__set_init_prio(#init_priority);
-                        #typ::set_to(#stat_ref,#expr);
+                        //opt out unsafe
+                        fn __static_init_do_init() -> #stat_typ {
+                            #expr
+                        }
+                        #typ::set_to(#stat_ref,__static_init_do_init());
                         ::static_init::__set_init_prio(i32::MIN);
                     }
             })
@@ -767,7 +776,7 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         Initialization::Lazy => Some(quote_spanned! {sp=>
                 #[::static_init::constructor(__lazy_init)]
                 unsafe extern "C" fn __static_init_initializer() {
-                    ::static_init::#lazy_type::__do_init(#stat_ref);
+                    #typ::__do_init(#stat_ref);
                 }
         }),
         Initialization::None => None,
@@ -816,7 +825,7 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         Initialization::Lazy if !options.drop => {
             let q = quote_spanned! {sp=>{
                 #initer
-                unsafe{::static_init::#lazy_type::new_with_info(|| {#expr},
+                #typ::new_with_info(|| {#expr},
                     ::static_init::StaticInfo{
                         variable_name: ::core::stringify!(#statid),
                         file_name: ::core::file!(),
@@ -825,7 +834,7 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                         init_priority: -2,
                         drop_priority: -2
                         }
-                )}
+                )
             }
             }
             .into();
@@ -837,11 +846,11 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         Initialization::Lazy if !is_thread_local=> {
             let q = quote_spanned! {sp=>{
                 extern "C" fn __static_init_dropper() {
-                    unsafe{::core::ptr::drop_in_place(::static_init::#lazy_type::as_mut_ptr(#stat_ref))}
+                    unsafe{::core::ptr::drop_in_place(#typ::as_mut_ptr(#stat_ref))}
                 }
                 #initer
-                unsafe{::static_init::#lazy_type::new_with_info(|| {
-                    let v = #expr;
+                #typ::new_with_info(|| {
+                    let v = (|| {#expr})();
                     unsafe{::libc::atexit(__static_init_dropper)};
                     v
                     },
@@ -854,9 +863,8 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                         drop_priority: -2
                         }
 
-                    )}
-            }
-            }
+                    )
+            }}
             .into();
             *stat.expr = match parse(q) {
                 Ok(exp) => exp,
@@ -866,12 +874,12 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         Initialization::Lazy => {//thread local drop
             let q = quote_spanned! {sp=>{
                 fn __static_init_dropper() {
-                    unsafe{::core::ptr::drop_in_place(::static_init::#lazy_type::as_mut_ptr(#stat_ref))}
+                    unsafe{::core::ptr::drop_in_place(#typ::as_mut_ptr(#stat_ref))}
                 }
                 #initer
-                unsafe{::static_init::#lazy_type::new_with_info(|| {
+                #typ::new_with_info(|| {
                     unsafe{::static_init::__touch_tls_destructors()};
-                    let v = #expr;
+                    let v = (|| {#expr})();
                     unsafe{::static_init::__push_tls_destructor(__static_init_dropper)};
                     v
                     },
@@ -884,7 +892,7 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                         drop_priority: -2
                         }
 
-                    )}
+                    )
             }
             }
             .into();
@@ -920,7 +928,6 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
 
     quote_spanned! {sp=>
 
-    #[allow(unused_unsafe)]
     #stat
     }
 }

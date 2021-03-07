@@ -9,7 +9,6 @@
 extern crate static_init;
 use ctor::ctor;
 use static_init::dynamic;
-use core::cell::UnsafeCell;
 
 extern crate test;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -23,13 +22,13 @@ static O: AtomicI32 = AtomicI32::new(0);
 static mut O_: i32 = 0;
 
 #[dynamic(10)]
-static W: AtomicI32 = unsafe { AtomicI32::new(0) };
+static W: AtomicI32 = AtomicI32::new(0);
 
 #[dynamic(10)]
-static mut W_: i32 = unsafe { 0 };
+static mut W_: i32 = 0;
 
 #[dynamic(10)]
-static mut WM: AtomicI32 = unsafe { AtomicI32::new(0) };
+static mut WM: AtomicI32 = AtomicI32::new(0);
 
 lazy_static! {
     static ref WL: AtomicI32 = AtomicI32::new(0);
@@ -52,7 +51,7 @@ fn atomic_regular(bench: &mut Bencher) {
 }
 #[bench]
 fn atomic_dynamic_static(bench: &mut Bencher) {
-    bench.iter(|| W.fetch_add(1, Ordering::Relaxed));
+    bench.iter(|| unsafe{W.fetch_add(1, Ordering::Relaxed)});
 }
 #[bench]
 fn atomic_lesser_lazy_static(bench: &mut Bencher) {

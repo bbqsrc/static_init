@@ -10,7 +10,7 @@ mod test {
     use static_init::{constructor, dynamic};
 
     #[dynamic]
-    static mut V0: i32 = unsafe { 12 };
+    static mut V0: i32 = 12;
 
     #[dynamic(10)]
     static mut V1: i32 = unsafe { *V0 };

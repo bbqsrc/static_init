@@ -90,9 +90,9 @@ impl Drop for A {
 #[test]
 fn inner_static() {
     #[dynamic]
-    static IX: usize = unsafe { &IX as *const _ as usize };
+    static IX: usize = unsafe{&IX as *const _ as usize};
     #[dynamic]
-    static IX2: usize = unsafe { &IX2 as *const _ as usize };
+    static IX2: usize = unsafe{&IX2 as *const _ as usize};
 
     static mut I: i32 = 0;
 
@@ -101,31 +101,32 @@ fn inner_static() {
         I = 3
     }
 
+    unsafe {
     assert_eq!(*IX, &IX as *const _ as usize);
     assert_eq!(*IX2, &IX2 as *const _ as usize);
-    unsafe { assert_eq!(I, 3) };
+    assert_eq!(I, 3) };
 }
 
 #[dynamic]
-static mut V0: A = unsafe { A::new(V1.0 - 5) };
+static mut V0: A = A::new(unsafe{V1.0} - 5);
 
 #[dynamic(20)]
-static mut V2: A = unsafe { A::new(12) };
+static mut V2: A = A::new(12);
 
 #[dynamic(10)]
-static V1: A = unsafe { A::new(V2.0 - 2) };
+static V1: A = A::new(unsafe{V2.0} - 2);
 
 #[dynamic(init = 20)]
-static mut V3: A = unsafe { A::new(12) };
+static mut V3: A = A::new(12);
 
 #[dynamic(init = 10)]
-static V4: A = unsafe { A::new(V2.0 - 2) };
+static V4: A = A::new(unsafe{V2.0} - 2);
 
 #[dynamic(init = 5, drop)]
-static V5: A = unsafe { A::new(V4.0 + 23) };
+static V5: A = A::new(unsafe{V4.0} + 23);
 
 #[dynamic(drop)]
-static V6: A = unsafe { A(33) };
+static V6: A = A(33);
 
 static mut DROP_V: i32 = 0;
 
@@ -141,13 +142,13 @@ impl Drop for C {
 }
 
 #[dynamic(init,drop_reverse)]
-static C3: C = unsafe { C(0) };
+static C3: C = C(0);
 
 #[dynamic(10,drop_reverse)]
-static C2: C = unsafe { C(1) };
+static C2: C = C(1);
 
 #[dynamic(20,drop_reverse)]
-static C1: C = unsafe { C(2)};
+static C1: C = C(2);
 
 #[destructor]
 unsafe extern "C" fn check_drop_v() {
@@ -156,15 +157,17 @@ unsafe extern "C" fn check_drop_v() {
 
 #[test]
 fn dynamic_init() {
-    unsafe { assert_eq!(V0.0, 5) };
+    unsafe{
+    assert_eq!(V0.0, 5);
     assert_eq!(V1.0, 10);
-    unsafe { assert_eq!(V2.0, 12) };
-    unsafe { V2.0 = 8 };
-    unsafe { assert_eq!(V2.0, 8) };
+    assert_eq!(V2.0, 12);
+    V2.0 = 8;
+    assert_eq!(V2.0, 8);
     assert_eq!(V4.0, 10);
-    unsafe { assert_eq!(V3.0, 12) };
+    assert_eq!(V3.0, 12);
     assert_eq!(V5.0, 33);
     assert_eq!(V6.0, 33);
+    }
 }
 
 #[cfg(feature = "lazy")]
@@ -220,14 +223,18 @@ mod lazy {
     use super::A;
     use static_init::dynamic;
     #[dynamic(lazy)]
-    static L1: A = A::new(unsafe { L0.0 + 1 });
+    static L1: A = A::new( unsafe{L0.0} + 1);
 
     #[dynamic(lazy)]
     static mut L0: A = A::new(10);
 
     #[cfg(feature = "lazy_drop")]
     #[dynamic(lazy, drop)]
-    static mut L2: A = A::new(33);
+    static L3: A = A::new(33);
+
+    #[cfg(feature = "lazy_drop")]
+    #[dynamic(lazy, drop)]
+    static mut L2: A = A::new(unsafe{L3.0});
 
     #[test]
     fn lazy_init() {

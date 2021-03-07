@@ -13,15 +13,15 @@ mod test {
     use static_init::{destructor, dynamic};
 
     #[dynamic(drop = 10)]
-    static V0: A = unsafe { A(false) };
+    static V0: A = A(false);
 
     #[dynamic(drop = 10)]
-    static V1: A = unsafe { A(true) };
+    static V1: A = A(true);
 
     impl Drop for A {
         fn drop(&mut self) {
             if self.0 {
-                &*V0;
+                unsafe{&*V0};
             }
         }
     }
