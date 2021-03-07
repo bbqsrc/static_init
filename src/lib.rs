@@ -23,7 +23,7 @@
 //! (after main exit but before the program stops).
 //!
 //! *Lesser lazy statics* require the standard library and are enabled by default
-//! crate features `lazy` and `lazy_drop`.
+//! crate features `lazy` and `atexit`.
 //! ```rust
 //! use static_init::{dynamic};
 //!
@@ -99,6 +99,29 @@
 //! ```
 //! The priority act on drop in reverse order. *Dynamic statics* drops with a lower priority are
 //! sequenced before *dynamic statics* drops with higher priority.
+//!
+//! Finally, if the feature `atexit` is enabled, *dynamic statics* drop can be registered with
+//! `libc::atexit`. *lazy dynamic statics* and *dynamic statics* with `drop_reverse` attribute
+//! argument are destroyed in the reverse order of their construction. Functions registered with
+//! `atexit` are executed before program destructors and drop of *dynamic statics* that use the
+//! `drop` attribute argument.
+//!
+//! ```rust
+//! use static_init::{dynamic};
+//!
+//! //D1 is dropped before D2 because
+//! //it is initialized before D2
+//! #[dynamic(lazy,drop)]
+//! static D1: Vec<i32> = vec![0,1,2];
+//!
+//! #[dynamic(10,drop_reverse)]
+//! static D2: Vec<i32> = unsafe{D1.clone()};
+//!
+//! //D3 is initilized after D1 and D2 initializations
+//! //and it is dropped after D1 and D2 drops
+//! #[dynamic(5,drop)]
+//! static D3: Vec<i32> = unsafe{D1.clone()};
+//! ```
 //!
 //! # Constructor and Destructor
 //!

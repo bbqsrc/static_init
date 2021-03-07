@@ -260,7 +260,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// static V :A = A::new(42);
 /// ```
 ///
-/// Optionnaly, if the default feature "lazy_drop" is enabled, lazy dynamic statics declared with
+/// Optionnaly, if the default feature "atexit" is enabled, lazy dynamic statics declared with
 /// `[dynamic(lazy,drop)]` will be dropped at program exit. Dropped lazy dynamic statics ared
 /// dropped in the reverse order of their initialization. This feature is implemented thanks to
 /// `libc::atexit`. See also `drop_reverse` attribute argument. 
@@ -516,16 +516,16 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynOptions, Tok
                         opt.init = Initialization::Dynamic;
                     } else if id == "drop" {
                         opt.drop = true;
-                        if opt.init == Initialization::Lazy && !cfg!(feature = "lazy_drop") {
+                        if opt.init == Initialization::Lazy && !cfg!(feature = "atexit") {
                             return Err(
-                                quote_spanned!(id.span()=>compile_error!("feature lazy_drop must be enabled")),
+                                quote_spanned!(id.span()=>compile_error!("feature `atexit` must be enabled")),
                             );
                         }
                     } else if id == "drop_reverse" {
                         opt.drop = true;
-                        if !cfg!(feature = "lazy_drop") {
+                        if !cfg!(feature = "atexit") {
                             return Err(
-                                quote_spanned!(id.span()=>compile_error!("feature lazy_drop must be enabled")),
+                                quote_spanned!(id.span()=>compile_error!("feature `atexit` must be enabled")),
                             );
                         } else if opt.init == Initialization::None {
                             return Err(
@@ -536,9 +536,9 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynOptions, Tok
                     } else if id == "lazy" {
                         if cfg!(feature = "lazy") {
                             opt.init = Initialization::Lazy;
-                            if opt.drop && !cfg!(feature = "lazy_drop") {
+                            if opt.drop && !cfg!(feature = "atexit") {
                                 return Err(
-                                    quote_spanned!(id.span()=>compile_error!("feature lazy_drop must be enabled")),
+                                    quote_spanned!(id.span()=>compile_error!("feature atexit must be enabled")),
                                 );
                             }
                         } else {

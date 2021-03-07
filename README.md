@@ -16,17 +16,25 @@ statics. Benches sho that usual lazy statics, as those provided by `std::lazy::*
 [lazy_static][1] crate, suffer from a 2ns access penalty.
 
 *Lesser lazy statics* can optionaly be dropped at program destruction
-(after main exit but before the program stops). 
+(after main exit but before the program stops).
 
 *Lesser lazy statics* require the standard library and are enabled by default
-crate features `lazy` and `lazy_drop`.
-
+crate features `lazy`. Drop of lazy requires the  `atexit` feature.
 ```rust
 use static_init::{dynamic};
 
 #[dynamic(lazy)]
-static L1: Vec<i32> = vec![1,2,3];
+static L1: Vec<i32> = unsafe{L0.clone()};
+
+#[dynamic(lazy, drop)]
+static L0: Vec<i32> = vec![1,2,3];
+
+#[dynamic(lazy,drop)]
+static mut L2: Vec<i32> = L1.clone();
 ```
+As can be seen above accesses to *lazy static* that are dropped must be within unsafe
+blocks. The reason is that it is possible at program destruction to access already dropped
+lazy statics.
 
 # Dynamic statics: statics initialized at program startup
 
@@ -37,10 +45,12 @@ initialized at program startup. This feature is `no_std`.
 use static_init::{dynamic};
 
 #[dynamic]
-static D1: Vec<i32> = unsafe {vec![1,2,3]};
+static D1: Vec<i32> = vec![1,2,3];
+
+assert_eq!(unsafe{D1[0]}, 1);
 ```
-As can be seen above, the initializer expression of those statics must be an unsafe
-block. The reason is that during startup phase, accesses to *dynamic statics* may cause
+As can be seen above, even if D1 is not mutable, access to it must be performed in unsafe
+blocks. The reason is that during startup phase, accesses to *dynamic statics* may cause
 *undefined behavior*: *dynamic statics* may be in a zero initialized state.
 
 To prevent such hazardeous accesses, on unixes and window plateforms, a priority can be
@@ -53,10 +63,10 @@ use static_init::{dynamic};
 
 // D2 initialization is sequenced before D1 initialization
 #[dynamic]
-static mut D1: Vec<i32> = unsafe {D2.clone()};
+static mut D1: Vec<i32> = unsafe{D2.clone()};
 
 #[dynamic(10)]
-static D2: Vec<i32> = unsafe {vec![1,2,3]};
+static D2: Vec<i32> = vec![1,2,3];
 ```
 
 *Dynamic statics* can be dropped at program destruction phase: they are dropped after main
@@ -71,12 +81,35 @@ use static_init::{dynamic};
 static mut D1: Vec<i32> = unsafe {D2.clone()};
 
 #[dynamic(10,drop)]
-static D2: Vec<i32> = unsafe {vec![1,2,3]};
+static D2: Vec<i32> = vec![1,2,3];
 ```
 The priority act on drop in reverse order. *Dynamic statics* drops with a lower priority are
 sequenced before *dynamic statics* drops with higher priority.
 
-# Constructor and Destructor 
+Finally, if the feature `atexit` is enabled, *dynamic statics* drop can be registered with
+`libc::atexit`. *lazy dynamic statics* and *dynamic statics* with `drop_reverse` attribute
+argument are destroyed in the reverse order of their construction. Functions registered with
+`atexit` are executed before program destructors and drop of *dynamic statics* that use the
+`drop` attribute argument.
+
+```rust
+use static_init::{dynamic};
+
+//D1 is dropped before D2 because
+//it is initialized before D2
+#[dynamic(lazy,drop)]
+static D1: Vec<i32> = vec![0,1,2];
+
+#[dynamic(10,drop_reverse)]
+static D2: i32 = unsafe{D1.clone()};
+
+//D3 is initilized after D1 and D2 initializations
+//and it is dropped after D1 and D2 drops
+#[dynamic(5,drop)]
+static D3: i32 = unsafe{D1.clone()};
+```
+
+# Constructor and Destructor
 
 On plateforms that support it (unixes, mac, windows), this crate provides a way to declare
 *constructors*: a function called before main is called. This feature is `no_std`.
@@ -116,7 +149,7 @@ unsafe extern "C" fn last_destructor() {}
 
 # Debuging initialization order
 
-If the feature `debug_order` or `debug_core` is enabled or when the crate is compiled with `debug_assertions`, 
+If the feature `debug_order` or `debug_core` is enabled or when the crate is compiled with `debug_assertions`,
 attempts to access `dynamic statics` that are uninitialized or whose initialization is
 undeterminately sequenced with the access will cause a panic with a message specifying which
 statics was tentatively accessed and how to change this *dynamic static* priority to fix this
@@ -125,8 +158,31 @@ issue.
 Run `cargo test` in this crate directory to see message examples.
 
 All implementations of lazy statics may suffer from circular initialization dependencies. Those
-circular dependencies will cause either a dead lock or an infinite loop. If the feature `debug_lazy` or `debug_order` is 
+circular dependencies will cause either a dead lock or an infinite loop. If the feature `debug_lazy` or `debug_order` is
 enabled, atemp are made to detect those circular dependencies. In most case they will be detected.
+
+# Thread Local Support
+
+Variable declared with `#[dynamic(lazy)]` can also be declared `#[thread_local]`. These
+variable will behave as regular *lazy statics*.
+```ignore
+#[thread_local]
+#[dynamic(lazy)]
+static mut X: Vec<i32> = vec![1,2,3];
+```
+These variables can also be droped on thread exit.
+```ignore
+#[thread_local]
+#[dynamic(lazy,drop)]
+static X: Vec<i32> = vec![1,2,3];
+
+assert!(unsafe{X[1] == 2});
+```
+
+Accessing a thread local *lazy statics* that should drop during the phase where thread_locals are
+droped may cause *undefined behavior*. For this reason any access to a thread local lazy static
+that is dropped will require an unsafe block, even if the static is const.
+
 
 # Comparisons with other crates
 

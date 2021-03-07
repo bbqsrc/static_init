@@ -228,11 +228,11 @@ mod lazy {
     #[dynamic(lazy)]
     static mut L0: A = A::new(10);
 
-    #[cfg(feature = "lazy_drop")]
+    #[cfg(feature = "atexit")]
     #[dynamic(lazy, drop)]
     static L3: A = A::new(33);
 
-    #[cfg(feature = "lazy_drop")]
+    #[cfg(feature = "atexit")]
     #[dynamic(lazy, drop)]
     static mut L2: A = A::new(unsafe{L3.0});
 
