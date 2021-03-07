@@ -1,6 +1,6 @@
 [package]
 name = "static_init"
-version = "0.4.1"
+version = "0.4.2"
 authors = ["Olivier Kannengieser <okannen@gmail.com>"]
 edition = "2018"
 description = "Code execution during program initialization/termination phases and non const static initialization (and drop)"
@@ -27,7 +27,7 @@ libc = {version = "0.2", optional=true}
 parking_lot = {version = "0.11", optional=true}
 
 [dependencies.static_init_macro]
-version="0.4.0"
+version="0.4.2"
 path="static_init_macro"
 
 [dev-dependencies]

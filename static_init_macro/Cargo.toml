@@ -1,6 +1,6 @@
 [package]
 name = "static_init_macro"
-version = "0.4.0"
+version = "0.4.2"
 authors = ["Olivier Kannengieser <okannen@gmail.com>"]
 edition = "2018"
 description = "Attribute macros for static_init crate"
