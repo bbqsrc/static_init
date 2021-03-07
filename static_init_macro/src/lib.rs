@@ -112,7 +112,7 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
         if let Some(p) = priority {
             format!(".CRT$XCTZ{:05}", p)
         } else {
-            format!(".CRT$XCTZ65536")
+            ".CRT$XCTZ65536".to_string()
         }
     } else {
         return quote!(compile_error!("Target not supported")).into();
@@ -662,8 +662,8 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
 
     let sp = stat.expr.span();
 
-    let init_priority = options.init_priority.map_or(-1,|p| p as i32);
-    let drop_priority = options.drop_priority.map_or(-1,|p| p as i32);
+    let init_priority = options.init_priority.map_or(-1, |p| p as i32);
+    let drop_priority = options.drop_priority.map_or(-1, |p| p as i32);
 
     let initer = match options.init {
         Initialization::Dynamic => {
@@ -713,7 +713,8 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
             let q = quote_spanned! {sp=>{
                 #initer
                 #droper
-                #typ::uninit(::static_init::StaticInfo{
+                #typ::uninit(
+                ::static_init::StaticInfo{
                     variable_name: ::core::stringify!(#statid),
                     file_name: ::core::file!(),
                     line: ::core::line!(),
@@ -733,14 +734,14 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
             let q = quote_spanned! {sp=>{
                 #initer
                 unsafe{::static_init::Lazy::new_with_info(|| {#expr},
-                ::static_init::StaticInfo{
-                    variable_name: ::core::stringify!(#statid),
-                    file_name: ::core::file!(),
-                    line: ::core::line!(),
-                    column: ::core::column!(),
-                    init_priority: #init_priority,
-                    drop_priority: #drop_priority
-                    }
+                    ::static_init::StaticInfo{
+                        variable_name: ::core::stringify!(#statid),
+                        file_name: ::core::file!(),
+                        line: ::core::line!(),
+                        column: ::core::column!(),
+                        init_priority: -2,
+                        drop_priority: -2 
+                        }
                 )}
             }
             }
@@ -766,10 +767,11 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                         file_name: ::core::file!(),
                         line: ::core::line!(),
                         column: ::core::column!(),
-                        init_priority: #init_priority,
-                        drop_priority: #drop_priority
+                        init_priority: -2,
+                        drop_priority: -2 
                         }
-                   )}
+
+                    )}
             }
             }
             .into();

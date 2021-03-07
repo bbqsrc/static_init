@@ -1,4 +1,4 @@
-#[cfg(all(any(feature = "debug_order", debug_assertions),feature="lazy"))]
+#[cfg(feature = "debug_lazy")]
 mod test {
     use static_init::{constructor, dynamic};
 
@@ -18,5 +18,5 @@ mod test {
 
 #[test]
 fn bad_init_order() {
-    assert!(!cfg!(all(any(feature = "debug_order", debug_assertions),feature="lazy")));
+    assert!(!cfg!(feature = "debug_lazy"));
 }

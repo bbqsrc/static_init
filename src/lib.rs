@@ -262,13 +262,13 @@ pub struct StaticInfo {
     pub drop_priority: i32,
 }
 
-#[cfg(any(feature = "debug_order", debug_assertions))]
+#[cfg(any(feature = "debug_core", debug_assertions))]
 use core::sync::atomic::{AtomicI32, Ordering};
 
-#[cfg(any(feature = "debug_order", debug_assertions))]
+#[cfg(any(feature = "debug_core", debug_assertions))]
 static CUR_INIT_PRIO: AtomicI32 = AtomicI32::new(i32::MIN);
 
-#[cfg(any(feature = "debug_order", debug_assertions))]
+#[cfg(any(feature = "debug_core", debug_assertions))]
 static CUR_DROP_PRIO: AtomicI32 = AtomicI32::new(i32::MIN);
 
 /// The actual type of "dynamic" mutable statics.
@@ -279,16 +279,16 @@ static CUR_DROP_PRIO: AtomicI32 = AtomicI32::new(i32::MIN);
 /// the [dynamic] proc macro attribute
 pub struct Static<T>(
     StaticBase<T>,
-    #[cfg(any(feature = "debug_order", debug_assertions))] StaticInfo,
-    #[cfg(any(feature = "debug_order", debug_assertions))] AtomicI32,
+    #[cfg(any(feature = "debug_core", debug_assertions))] StaticInfo,
+    #[cfg(any(feature = "debug_core", debug_assertions))] AtomicI32,
 );
 
-#[cfg(any(feature = "debug_order", debug_assertions))]
+#[cfg(any(feature = "debug_core", debug_assertions))]
 #[inline]
 pub fn __set_init_prio(v: i32) {
     CUR_INIT_PRIO.store(v, Ordering::Relaxed);
 }
-#[cfg(not(any(feature = "debug_order", debug_assertions)))]
+#[cfg(not(any(feature = "debug_core", debug_assertions)))]
 #[inline(always)]
 pub fn __set_init_prio(_: i32) {}
 
@@ -296,18 +296,18 @@ pub fn __set_init_prio(_: i32) {}
 impl<T> Static<T> {
     #[inline]
     pub const fn uninit(_info: StaticInfo) -> Self {
-        #[cfg(any(feature = "debug_order", debug_assertions))]
+        #[cfg(any(feature = "debug_core", debug_assertions))]
         {
             Self(StaticBase { k: () }, _info, AtomicI32::new(0))
         }
-        #[cfg(not(any(feature = "debug_order", debug_assertions)))]
+        #[cfg(not(any(feature = "debug_core", debug_assertions)))]
         {
             Self(StaticBase { k: () })
         }
     }
     #[inline]
     pub const fn from(v: T, _info: StaticInfo) -> Self {
-        #[cfg(any(feature = "debug_order", debug_assertions))]
+        #[cfg(any(feature = "debug_core", debug_assertions))]
         {
             Static(
                 StaticBase {
@@ -317,7 +317,7 @@ impl<T> Static<T> {
                 AtomicI32::new(1),
             )
         }
-        #[cfg(not(any(feature = "debug_order", debug_assertions)))]
+        #[cfg(not(any(feature = "debug_core", debug_assertions)))]
         {
             Static(StaticBase {
                 v: ManuallyDrop::new(v),
@@ -327,12 +327,12 @@ impl<T> Static<T> {
 
     #[inline]
     pub unsafe fn set_to(this: &mut Self, v: T) {
-        #[cfg(any(feature = "debug_order", debug_assertions))]
+        #[cfg(any(feature = "debug_core", debug_assertions))]
         {
             this.0.v = ManuallyDrop::new(v);
             this.2.store(1, Ordering::Relaxed);
         }
-        #[cfg(not(any(feature = "debug_order", debug_assertions)))]
+        #[cfg(not(any(feature = "debug_core", debug_assertions)))]
         {
             this.0.v = ManuallyDrop::new(v);
         }
@@ -340,21 +340,21 @@ impl<T> Static<T> {
 
     #[inline]
     pub unsafe fn drop(this: &mut Self) {
-        #[cfg(any(feature = "debug_order", debug_assertions))]
+        #[cfg(any(feature = "debug_core", debug_assertions))]
         {
             CUR_DROP_PRIO.store(this.1.drop_priority, Ordering::Relaxed);
             ManuallyDrop::drop(&mut this.0.v);
             CUR_DROP_PRIO.store(i32::MIN, Ordering::Relaxed);
             this.2.store(2, Ordering::Relaxed);
         }
-        #[cfg(not(any(feature = "debug_order", debug_assertions)))]
+        #[cfg(not(any(feature = "debug_core", debug_assertions)))]
         {
             ManuallyDrop::drop(&mut this.0.v);
         }
     }
 }
 
-#[cfg(any(feature = "debug_order", debug_assertions))]
+#[cfg(any(feature = "debug_core", debug_assertions))]
 #[inline]
 fn check_access(info: &StaticInfo, status: i32) {
     if status == 0 {
@@ -411,7 +411,7 @@ impl<T> Deref for Static<T> {
     type Target = T;
     #[inline(always)]
     fn deref(&self) -> &T {
-        #[cfg(any(feature = "debug_order", debug_assertions))]
+        #[cfg(any(feature = "debug_core", debug_assertions))]
         check_access(&self.1, self.2.load(Ordering::Relaxed));
         unsafe { &*self.0.v }
     }
@@ -419,7 +419,7 @@ impl<T> Deref for Static<T> {
 impl<T> DerefMut for Static<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut T {
-        #[cfg(any(feature = "debug_order", debug_assertions))]
+        #[cfg(any(feature = "debug_core", debug_assertions))]
         check_access(&self.1, self.2.load(Ordering::Relaxed));
         unsafe { &mut *self.0.v }
     }
@@ -465,17 +465,30 @@ impl<T> Deref for ConstStatic<T> {
 
 #[cfg(feature = "lazy")]
 mod global_lazy {
+    use super::StaticInfo;
     use core::cell::Cell;
     use core::cell::UnsafeCell;
     use core::fmt;
-    use core::hint::unreachable_unchecked;
     use core::mem::MaybeUninit;
     use core::ops::{Deref, DerefMut};
     use core::sync::atomic::Ordering;
-    use std::sync::Once;
-    #[cfg(any(feature = "debug_order", debug_assertions))]
-    use core::sync::atomic::{AtomicBool};
-    use super::StaticInfo;
+
+    #[cfg(not(feature = "debug_lazy"))]
+    use core::hint::unreachable_unchecked;
+
+    #[cfg(not(feature = "debug_lazy"))]
+    use parking_lot::Once;
+
+    #[cfg(feature = "debug_lazy")]
+    use parking_lot::{
+        lock_api::GetThreadId, lock_api::RawMutex as _, RawMutex, RawThreadId, ReentrantMutex,
+    };
+
+    #[cfg(feature = "debug_lazy")]
+    use core::sync::atomic::AtomicBool;
+
+    #[cfg(feature = "debug_lazy")]
+    use core::num::NonZeroUsize;
 
     #[cfg(any(
         target_os = "linux",
@@ -544,16 +557,26 @@ mod global_lazy {
     )))]
     const LAZY_INIT_ENSURED: bool = false;
 
+    #[cfg(feature = "debug_lazy")]
+    struct DebugLazyState<F> {
+        initer:   Cell<Option<NonZeroUsize>>,
+        function: Cell<Option<F>>,
+    }
+
     /// A lazy static that is ensured to be initialized after program startup
     /// initialization phase.
     pub struct Lazy<T, F = fn() -> T> {
-        value:    UnsafeCell<MaybeUninit<T>>,
-        initer:   Once,
-        init_exp: Cell<Option<F>>,
-        #[cfg(any(feature = "debug_order", debug_assertions))]
-        in_init: AtomicBool,
-        #[cfg(any(feature = "debug_order", debug_assertions))]
-        info: Option<StaticInfo>,
+        value:        UnsafeCell<MaybeUninit<T>>,
+        #[cfg(not(feature = "debug_lazy"))]
+        initer:       Once,
+        #[cfg(not(feature = "debug_lazy"))]
+        init_exp:     Cell<Option<F>>,
+        #[cfg(feature = "debug_lazy")]
+        inited:       AtomicBool,
+        #[cfg(feature = "debug_lazy")]
+        debug_initer: ReentrantMutex<DebugLazyState<F>>,
+        #[cfg(feature = "debug_lazy")]
+        info:         Option<StaticInfo>,
     }
 
     impl<T: fmt::Debug, F> fmt::Debug for Lazy<T, F> {
@@ -572,62 +595,110 @@ mod global_lazy {
     }
 
     impl<T, F> Lazy<T, F> {
-        /// #Safety
-        /// The static shall be initialized only when used
-        /// in conjunction with the dynamic(lazy) attribute
+        /// Initialize a lazy with a builder as argument.
         pub const fn new(f: F) -> Self {
             Self {
-                value:    UnsafeCell::new(MaybeUninit::uninit()),
-                initer:   Once::new(),
+                value: UnsafeCell::new(MaybeUninit::uninit()),
+                #[cfg(not(feature = "debug_lazy"))]
+                initer: Once::new(),
+                #[cfg(not(feature = "debug_lazy"))]
                 init_exp: Cell::new(Some(f)),
-                #[cfg(any(feature = "debug_order", debug_assertions))]
-                in_init: AtomicBool::new(false),
-                #[cfg(any(feature = "debug_order", debug_assertions))]
+                #[cfg(feature = "debug_lazy")]
+                inited: AtomicBool::new(false),
+                #[cfg(feature = "debug_lazy")]
+                debug_initer: ReentrantMutex::const_new(
+                    RawMutex::INIT,
+                    RawThreadId::INIT,
+                    DebugLazyState {
+                        initer:   Cell::new(None),
+                        function: Cell::new(Some(f)),
+                    },
+                ),
+                #[cfg(feature = "debug_lazy")]
                 info: None,
             }
         }
 
-        /// #Safety
-        /// The static shall be initialized only when used
-        /// in conjunction with the dynamic(lazy) attribute
+        /// Initialize a lazy with a builder as argument.
+        ///
+        /// This function is intended to be used internaly
+        /// by the [dynamic] macro.
         pub const fn new_with_info(f: F, _info: StaticInfo) -> Self {
             Self {
-                value:    UnsafeCell::new(MaybeUninit::uninit()),
-                initer:   Once::new(),
+                value: UnsafeCell::new(MaybeUninit::uninit()),
+                #[cfg(not(feature = "debug_lazy"))]
+                initer: Once::new(),
+                #[cfg(not(feature = "debug_lazy"))]
                 init_exp: Cell::new(Some(f)),
-                #[cfg(any(feature = "debug_order", debug_assertions))]
-                in_init: AtomicBool::new(false),
-                #[cfg(any(feature = "debug_order", debug_assertions))]
+                #[cfg(feature = "debug_lazy")]
+                inited: AtomicBool::new(false),
+                #[cfg(feature = "debug_lazy")]
+                debug_initer: ReentrantMutex::const_new(
+                    RawMutex::INIT,
+                    RawThreadId::INIT,
+                    DebugLazyState {
+                        initer:   Cell::new(None),
+                        function: Cell::new(Some(f)),
+                    },
+                ),
+                #[cfg(feature = "debug_lazy")]
                 info: Some(_info),
             }
         }
+
+        /// Return a pointer to the value.
+        ///
+        /// The value may be in an uninitialized state.
         #[inline(always)]
         pub fn as_mut_ptr(this: &Self) -> *mut T {
             this.value.get() as *mut T
         }
+        /// Ensure the value is initialized without optimization check
+        ///
+        /// This is intended to be used at program start up by
+        /// the [dynamic] macro.
         #[inline(always)]
         pub fn do_init(this: &Self)
         where
             F: FnOnce() -> T,
         {
-             #[cfg(any(feature = "debug_order", debug_assertions))]
-             if this.in_init.load(Ordering::Relaxed) {
-                 match &this.info {
-                     None => core::panic!("Cyclic lazy initialization detected"),
-                     Some(info) =>core::panic!("Cyclic lazy initialization: Initialization of {:#?} depend on itself.", info),
-                 }
-             }
+            #[cfg(not(feature = "debug_lazy"))]
             this.initer.call_once(|| unsafe {
-                #[cfg(any(feature = "debug_order", debug_assertions))]
-                this.in_init.store(true,Ordering::Relaxed);
-                (&mut *this.value.get())
-                    .as_mut_ptr()
-                    .write(this.init_exp.take().unwrap_or_else(|| unreachable_unchecked()
-                    )());
-                #[cfg(any(feature = "debug_order", debug_assertions))]
-                this.in_init.store(false,Ordering::Relaxed);
+                (*this.value.get()).as_mut_ptr().write(this
+                    .init_exp
+                    .take()
+                    .unwrap_or_else(|| unreachable_unchecked())(
+                ));
             });
+            #[cfg(feature = "debug_lazy")]
+            if !this.inited.load(Ordering::Acquire) {
+                let l = this.debug_initer.lock();
+                if let Some(initer) = l.initer.get() {
+                    if initer == RawThreadId.nonzero_thread_id() {
+                        if let Some(info) = &this.info {
+                            core::panic!("Recurcive lazy initialization of {:#?}.", info);
+                        } else {
+                            core::panic!("Recurcive lazy initialization.");
+                        }
+                    }
+                    return;
+                } else {
+                    l.initer.set(Some(RawThreadId.nonzero_thread_id()));
+                    unsafe {
+                        (*this.value.get())
+                            .as_mut_ptr()
+                            .write(l.function.take().unwrap()())
+                    };
+                    this.inited.store(true, Ordering::Release);
+                }
+            }
         }
+        /// Ensure the value is initialized
+        ///
+        /// Once this function is called, it is guaranteed that
+        /// the value is in an initialized state.
+        ///
+        /// This function is always called when the lazy is dereferenced.
         #[inline(always)]
         fn ensure_init(this: &Self)
         where

@@ -1,15 +1,15 @@
-#[cfg(any(feature = "debug_order",debug_assertions))]
+#[cfg(any(feature = "debug_core", debug_assertions))]
 mod test {
 
     struct A(bool);
 
     use static_init::{destructor, dynamic};
 
-    #[dynamic(drop=10)]
-    static V0: A = unsafe{A(false)};
+    #[dynamic(drop = 10)]
+    static V0: A = unsafe { A(false) };
 
-    #[dynamic(drop=10)]
-    static V1: A = unsafe{A(true)};
+    #[dynamic(drop = 10)]
+    static V1: A = unsafe { A(true) };
 
     impl Drop for A {
         fn drop(&mut self) {
@@ -18,7 +18,6 @@ mod test {
             }
         }
     }
-
 
     fn panic_hook(p: &core::panic::PanicInfo<'_>) -> () {
         println!("Panic caught {}", p);
@@ -37,5 +36,4 @@ mod test {
 }
 
 #[test]
-fn bad_drop_unordered() {
-}
+fn bad_drop_unordered() {}

@@ -10,7 +10,7 @@
 
 # Functionalities
 
- - [x] Optimized version of lazy statics that does not undergoes access penalty (needs std support).
+ - [x] lazy statics that does not undergo access penalty (faster than std::lazy) (needs std support).
 
  - [x] Code execution before or after `main` but after libc and rust runtime has been initialized (but see bellow for std::env).
 
