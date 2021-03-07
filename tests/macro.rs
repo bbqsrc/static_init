@@ -4,9 +4,12 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
+#![cfg_attr(feature = "test_thread_local",feature(thread_local))]
 
 extern crate static_init;
 use static_init::{constructor, destructor, dynamic};
+
+
 
 static mut DEST: i32 = 0;
 
@@ -124,6 +127,33 @@ static V5: A = unsafe { A::new(V4.0 + 23) };
 #[dynamic(drop)]
 static V6: A = unsafe { A(33) };
 
+static mut DROP_V: i32 = 0;
+
+struct C(i32);
+
+impl Drop for C {
+    fn drop(&mut self) {
+        unsafe{
+            assert_eq!(self.0, DROP_V);
+            DROP_V+=1;
+            };
+    }
+}
+
+#[dynamic(init,drop_reverse)]
+static C3: C = unsafe { C(0) };
+
+#[dynamic(10,drop_reverse)]
+static C2: C = unsafe { C(1) };
+
+#[dynamic(20,drop_reverse)]
+static C1: C = unsafe { C(2)};
+
+#[destructor]
+unsafe extern "C" fn check_drop_v() {
+    assert_eq!(DROP_V, 3)
+}
+
 #[test]
 fn dynamic_init() {
     unsafe { assert_eq!(V0.0, 5) };
@@ -139,6 +169,54 @@ fn dynamic_init() {
 
 #[cfg(feature = "lazy")]
 mod lazy {
+    use core::sync::atomic::{AtomicI32, Ordering};
+
+    #[cfg(feature = "test_thread_local")]
+    #[test]
+    fn thread_local() {
+
+        #[thread_local]
+        #[dynamic(lazy)]
+        static mut TH_LOCAL: A = A::new(3);
+
+        unsafe {
+            assert_eq!(TH_LOCAL.0,3);
+            TH_LOCAL.0=42;
+            assert_eq!(TH_LOCAL.0,42);
+        }
+        std::thread::spawn(|| 
+            unsafe {assert_eq!(TH_LOCAL.0,3);}).join().unwrap();
+
+        #[thread_local]
+        #[dynamic(lazy,drop)]
+        static TH_LOCAL_UNSAFE: i32 = 10;
+
+        assert_eq!(unsafe{*TH_LOCAL_UNSAFE}, 10);
+
+        static DROP_COUNT :AtomicI32 = AtomicI32::new(0);
+
+        struct B;
+
+        impl Drop for B {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1,Ordering::Relaxed);
+            }
+        }
+
+        #[thread_local]
+        #[dynamic(lazy,drop)]
+        static B1: B = B;
+
+        #[thread_local]
+        #[dynamic(lazy,drop)]
+        static mut B2: B = B;
+
+        std::thread::spawn(|| unsafe{&*B1;&*B2}).join().unwrap();
+        std::thread::spawn(|| ()).join().unwrap();
+        std::thread::spawn(|| unsafe{&*B1;&*B2}).join().unwrap();
+        assert_eq!(DROP_COUNT.load(Ordering::Relaxed),4);
+    }
+
     use super::A;
     use static_init::dynamic;
     #[dynamic(lazy)]

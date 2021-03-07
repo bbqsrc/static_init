@@ -20,7 +20,8 @@ lazy_drop = ["lazy","libc","static_init_macro/lazy_drop"]
 debug_lazy = ["lazy","parking_lot/deadlock_detection"]
 debug_core = []
 debug_order = ["debug_core","debug_lazy"]
-default = ["lazy","lazy_drop"]
+test_thread_local = ["lazy"]
+default = ["lazy","lazy_drop","test_thread_local"]
 
 [dependencies]
 libc = {version = "0.2", optional=true}

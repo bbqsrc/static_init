@@ -1,4 +1,4 @@
-// Copyright 2021 Olivier Kannengieser 
+// Copyright 2021 Olivier Kannengieser
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -11,7 +11,7 @@
 //!
 //! # Lesser Lazy Statics
 //!
-//! This crate provides *lazy statics* on all plateforms. 
+//! This crate provides *lazy statics* on all plateforms.
 //!
 //! On unixes and windows *lesser lazy statics* are *lazy* during program startup phase
 //! (before `main` is called). Once main is called, those statics are all guaranteed to be
@@ -72,7 +72,7 @@
 //!
 //! #[dynamic(10)]
 //! static D2: Vec<i32> = unsafe {vec![1,2,3]};
-//! # 
+//! #
 //! # unsafe{assert_eq!(D1[0], 1)};
 //! ```
 //!
@@ -93,7 +93,7 @@
 //! The priority act on drop in reverse order. *Dynamic statics* drops with a lower priority are
 //! sequenced before *dynamic statics* drops with higher priority.
 //!
-//! # Constructor and Destructor 
+//! # Constructor and Destructor
 //!
 //! On plateforms that support it (unixes, mac, windows), this crate provides a way to declare
 //! *constructors*: a function called before main is called. This feature is `no_std`.
@@ -121,7 +121,7 @@
 //! //called before main
 //! #[constructor]
 //! unsafe extern "C" fn some_init() {}
-//! 
+//!
 //! //called after main
 //! #[destructor]
 //! unsafe extern "C" fn first_destructor() {}
@@ -132,8 +132,8 @@
 //! ```
 //!
 //! # Debuging initialization order
-//! 
-//! If the feature `debug_order` or `debug_core` is enabled or when the crate is compiled with `debug_assertions`, 
+//!
+//! If the feature `debug_order` or `debug_core` is enabled or when the crate is compiled with `debug_assertions`,
 //! attempts to access `dynamic statics` that are uninitialized or whose initialization is
 //! undeterminately sequenced with the access will cause a panic with a message specifying which
 //! statics was tentatively accessed and how to change this *dynamic static* priority to fix this
@@ -142,8 +142,30 @@
 //! Run `cargo test` in this crate directory to see message examples.
 //!
 //! All implementations of lazy statics may suffer from circular initialization dependencies. Those
-//! circular dependencies will cause either a dead lock or an infinite loop. If the feature `debug_lazy` or `debug_order` is 
+//! circular dependencies will cause either a dead lock or an infinite loop. If the feature `debug_lazy` or `debug_order` is
 //! enabled, atemp are made to detect those circular dependencies. In most case they will be detected.
+//!
+//! # Thread Local Support
+//!
+//! Variable declared with `#[dynamic(lazy)]` can also be declared `#[thread_local]`. These
+//! variable will behave as regular *lazy statics*.
+//! ```ignore
+//! #[thread_local]
+//! #[dynamic(lazy)]
+//! static mut X: Vec<i32> = vec![1,2,3];
+//! ```
+//! These variables can also be droped on thread exit.
+//! ```ignore
+//! #[thread_local]
+//! #[dynamic(lazy,drop)]
+//! static X: Vec<i32> = vec![1,2,3];
+//!
+//! assert!(unsafe{X[1] == 2});
+//! ```
+//!
+//! Accessing a thread local *lazy statics* that should drop during the phase where thread_locals are
+//! droped may cause *undefined behavior*. For this reason any access to a thread local lazy static
+//! that is dropped will require an unsafe block, even if the static is const.
 //!
 //! [1]: https://crates.io/crates/lazy_static
 
@@ -208,7 +230,7 @@
 ///  So static initialization function pointers are placed in section ".CRT$XCU" and
 ///  those with a priority `p` in `format!(".CRT$XCTZ{:05}",65535-p)`. Destructors without priority
 ///  are placed in ".CRT$XPU" and those with a priority in `format!(".CRT$XPTZ{:05}",65535-p)`.
-mod details{}
+mod details {}
 
 use core::cell::UnsafeCell;
 use core::mem::ManuallyDrop;
@@ -259,8 +281,6 @@ pub struct Static<T>(
     #[cfg(any(feature = "debug_core", debug_assertions))] StaticInfo,
     #[cfg(any(feature = "debug_core", debug_assertions))] AtomicI32,
 );
-
-
 
 #[cfg(any(feature = "debug_core", debug_assertions))]
 #[doc(hidden)]
@@ -544,10 +564,9 @@ mod global_lazy {
         function: Cell<Option<F>>,
     }
 
-    /// The type of *lesser lazy statics*. 
+    /// The type of *lazy statics*.
     ///
-    /// For statics that are initialized either on first access
-    /// or just before `main` is called.
+    /// Statics that are initialized on first access.
     pub struct Lazy<T, F = fn() -> T> {
         value:        UnsafeCell<MaybeUninit<T>>,
         #[cfg(not(feature = "debug_lazy"))]
@@ -560,6 +579,56 @@ mod global_lazy {
         debug_initer: ReentrantMutex<DebugLazyState<F>>,
         #[cfg(feature = "debug_lazy")]
         info:         Option<StaticInfo>,
+    }
+
+    /// The type of *lesser lazy statics*.
+    ///
+    /// For statics that are initialized either on first access
+    /// or just before `main` is called.
+    #[derive(Debug)]
+    pub struct GlobalLazy<T, F = fn() -> T>(Lazy<T, F>);
+
+    /// The type of const thread local *lazy statics* that are dropped.
+    ///
+    /// For statics that are initialized on first access. Only
+    /// providing const access to the underlying data, the are
+    /// intended to be declare mutable so that all access to them
+    /// requires an unsafe block.
+    #[derive(Debug)]
+    pub struct ConstLazy<T, F = fn() -> T>(Lazy<T, F>);
+
+    struct DestructorRegister(UnsafeCell<Option<Vec<fn()>>>);
+
+    impl Drop for DestructorRegister {
+        fn drop(&mut self) {
+            if let Some(vec) = unsafe { (*self.0.get()).take() } {
+                for f in vec {
+                    f()
+                }
+            }
+        }
+    }
+
+    unsafe impl Sync for DestructorRegister {}
+
+    thread_local! {
+        static DESTRUCTORS: DestructorRegister = DestructorRegister(UnsafeCell::new(None));
+    }
+
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn __touch_tls_destructors() {
+        DESTRUCTORS.with(|d| {
+            if (*d.0.get()).is_none() {
+                *d.0.get() = Some(vec![])
+            }
+        })
+    }
+
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn __push_tls_destructor(f: fn()) {
+        DESTRUCTORS.with(|d| (*d.0.get()).as_mut().unwrap().push(f))
     }
 
     impl<T: fmt::Debug, F> fmt::Debug for Lazy<T, F> {
@@ -633,18 +702,34 @@ mod global_lazy {
         ///
         /// The value may be in an uninitialized state.
         #[inline(always)]
-        pub fn as_mut_ptr(this: &Self) -> *mut T {
+        pub const fn as_mut_ptr(this: &Self) -> *mut T {
             this.value.get() as *mut T
         }
+
         /// Ensure the value is initialized without optimization check
         ///
         /// This is intended to be used at program start up by
         /// the dynamic macro.
         #[inline(always)]
-        pub fn do_init(this: &Self)
+        pub fn __do_init(this: &Self)
         where
             F: FnOnce() -> T,
         {
+            Lazy::ensure_init(this)
+        }
+        /// Ensure the value is initialized without optimization check
+        ///
+        /// Once this function is called, it is guaranteed that
+        /// the value is in an initialized state.
+        ///
+        /// This function is always called when the lazy is dereferenced.
+        #[inline(always)]
+        pub fn ensure_init(this: &Self)
+        where
+            F: FnOnce() -> T,
+        {
+            //The compiler fails to automatically choose
+            //which branch is the best one...
             #[cfg(not(feature = "debug_lazy"))]
             this.initer.call_once(|| unsafe {
                 (*this.value.get()).as_mut_ptr().write(this
@@ -676,21 +761,6 @@ mod global_lazy {
                 }
             }
         }
-        /// Ensure the value is initialized
-        ///
-        /// Once this function is called, it is guaranteed that
-        /// the value is in an initialized state.
-        ///
-        /// This function is always called when the lazy is dereferenced.
-        #[inline(always)]
-        fn ensure_init(this: &Self)
-        where
-            F: FnOnce() -> T,
-        {
-            if !LAZY_INIT_ENSURED.load(Ordering::Acquire) {
-                Self::do_init(this);
-            }
-        }
     }
 
     unsafe impl<F, T: Send + Sync> Send for Lazy<T, F> {}
@@ -706,7 +776,7 @@ mod global_lazy {
         fn deref(&self) -> &T {
             unsafe {
                 Lazy::ensure_init(self);
-                &*(*self.value.get()).as_ptr()
+                &*Lazy::as_mut_ptr(self)
             }
         }
     }
@@ -718,11 +788,167 @@ mod global_lazy {
         fn deref_mut(&mut self) -> &mut T {
             unsafe {
                 Lazy::ensure_init(self);
-                &mut *(*self.value.get()).as_mut_ptr()
+                &mut *Lazy::as_mut_ptr(self)
+            }
+        }
+    }
+
+    impl<T, F> GlobalLazy<T, F> {
+        /// Initialize a lazy with a builder as argument.
+        ///
+        /// # Safety
+        ///
+        /// This variable shall not be used as a thread_local
+        /// statics or within the state of a thread_local static
+        pub const unsafe fn new(f: F) -> Self {
+            Self(Lazy::new(f))
+        }
+
+        /// Initialize a lazy with a builder as argument.
+        ///
+        /// This function is intended to be used internaly
+        /// by the dynamic macro.
+        ///
+        /// # Safety
+        ///
+        /// This variable shall not be used as a thread_local
+        /// statics or within the state of a thread_local static
+        pub const unsafe fn new_with_info(f: F, info: StaticInfo) -> Self {
+            Self(Lazy::new_with_info(f, info))
+        }
+
+        /// Return a pointer to the value.
+        ///
+        /// The value may be in an uninitialized state.
+        #[inline(always)]
+        pub const fn as_mut_ptr(this: &Self) -> *mut T {
+            Lazy::as_mut_ptr(&this.0)
+        }
+        /// Ensure the value is initialized without optimization check
+        ///
+        /// This is intended to be used at program start up by
+        /// the dynamic macro.
+        #[inline(always)]
+        pub fn __do_init(this: &Self)
+        where
+            F: FnOnce() -> T,
+        {
+            Lazy::ensure_init(&this.0)
+        }
+        /// Ensure the value is initialized
+        ///
+        /// Once this function is called, it is guaranteed that
+        /// the value is in an initialized state.
+        ///
+        /// This function is always called when the lazy is dereferenced.
+        #[inline(always)]
+        pub fn ensure_init(this: &Self)
+        where
+            F: FnOnce() -> T,
+        {
+            if !LAZY_INIT_ENSURED.load(Ordering::Acquire) {
+                Self::__do_init(this);
+            }
+        }
+    }
+
+    impl<T, F> Deref for GlobalLazy<T, F>
+    where
+        F: FnOnce() -> T,
+    {
+        type Target = T;
+        #[inline(always)]
+        fn deref(&self) -> &T {
+            unsafe {
+                GlobalLazy::ensure_init(self);
+                &*GlobalLazy::as_mut_ptr(self)
+            }
+        }
+    }
+    impl<T, F> DerefMut for GlobalLazy<T, F>
+    where
+        F: FnOnce() -> T,
+    {
+        #[inline(always)]
+        fn deref_mut(&mut self) -> &mut T {
+            unsafe {
+                GlobalLazy::ensure_init(self);
+                &mut *GlobalLazy::as_mut_ptr(self)
+            }
+        }
+    }
+
+    impl<T, F> ConstLazy<T, F> {
+        /// Initialize a lazy with a builder as argument.
+        ///
+        /// # Safety
+        ///
+        /// This variable shall not be used as a thread_local
+        /// statics or within the state of a thread_local static
+        pub const unsafe fn new(f: F) -> Self {
+            Self(Lazy::new(f))
+        }
+
+        /// Initialize a lazy with a builder as argument.
+        ///
+        /// This function is intended to be used internaly
+        /// by the dynamic macro.
+        ///
+        /// # Safety
+        ///
+        /// This variable shall not be used as a thread_local
+        /// statics or within the state of a thread_local static
+        pub const unsafe fn new_with_info(f: F, info: StaticInfo) -> Self {
+            Self(Lazy::new_with_info(f, info))
+        }
+
+        /// Return a pointer to the value.
+        ///
+        /// The value may be in an uninitialized state.
+        #[inline(always)]
+        pub const fn as_mut_ptr(this: &Self) -> *mut T {
+            Lazy::as_mut_ptr(&this.0)
+        }
+        /// Ensure the value is initialized without optimization check
+        ///
+        /// This is intended to be used at program start up by
+        /// the dynamic macro.
+        #[inline(always)]
+        pub fn __do_init(this: &Self)
+        where
+            F: FnOnce() -> T,
+        {
+            Lazy::ensure_init(&this.0)
+        }
+        /// Ensure the value is initialized
+        ///
+        /// Once this function is called, it is guaranteed that
+        /// the value is in an initialized state.
+        ///
+        /// This function is always called when the lazy is dereferenced.
+        #[inline(always)]
+        pub fn ensure_init(this: &Self)
+        where
+            F: FnOnce() -> T,
+        {
+            Self::__do_init(this);
+        }
+    }
+
+    impl<T, F> Deref for ConstLazy<T, F>
+    where
+        F: FnOnce() -> T,
+    {
+        type Target = T;
+        #[inline(always)]
+        fn deref(&self) -> &T {
+            unsafe {
+                ConstLazy::ensure_init(self);
+                &*ConstLazy::as_mut_ptr(self)
             }
         }
     }
 }
 
 #[cfg(feature = "lazy")]
-pub use global_lazy::Lazy;
+pub use global_lazy::{ConstLazy, GlobalLazy, Lazy, __touch_tls_destructors, __push_tls_destructor};

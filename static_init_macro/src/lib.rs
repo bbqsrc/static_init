@@ -1,4 +1,4 @@
-// Copyright 2021 Olivier Kannengieser 
+// Copyright 2021 Olivier Kannengieser
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -6,7 +6,6 @@
 // copied, modified, or distributed except according to those terms.
 
 ///! Macros for static_init crate.
-
 extern crate proc_macro;
 extern crate syn;
 use syn::spanned::Spanned;
@@ -264,7 +263,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// Optionnaly, if the default feature "lazy_drop" is enabled, lazy dynamic statics declared with
 /// `[dynamic(lazy,drop)]` will be dropped at program exit. Dropped lazy dynamic statics ared
 /// dropped in the reverse order of their initialization. This feature is implemented thanks to
-/// `libc::atexit`.
+/// `libc::atexit`. See also `drop_reverse` attribute argument. 
 ///
 /// ```ignore
 /// struct A(i32);
@@ -364,6 +363,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// dyn_opt:
 ///   "init" [ "=" <priority> ]
 ///   "drop" [ "=" <priority> ]
+///   "drop_reverse"
 /// ```  
 ///
 /// The macro attribute `dynamic` is equivalent to `dynamic(init=0)`
@@ -376,6 +376,11 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// If the drop priority is not explicitly specified, it will equal that of the initializaton
 /// priority.
+///
+/// If drop_reverse is specified, the drop function will be registered using `libc::atexit`. All
+/// dynamic statics registered this way will be dropped in the reverse order of their
+/// initialization and before any dynamic statics marked for drop using the `drop` attribute
+/// argument.
 ///
 /// ```ignore
 /// struct A(i32);
@@ -516,6 +521,18 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynOptions, Tok
                                 quote_spanned!(id.span()=>compile_error!("feature lazy_drop must be enabled")),
                             );
                         }
+                    } else if id == "drop_reverse" {
+                        opt.drop = true;
+                        if !cfg!(feature = "lazy_drop") {
+                            return Err(
+                                quote_spanned!(id.span()=>compile_error!("feature lazy_drop must be enabled")),
+                            );
+                        } else if opt.init == Initialization::None {
+                            return Err(
+                                quote_spanned!(id.span()=>compile_error!("dynamic static must be initialized dynamically to use drop_reverse")),
+                            );
+                        }
+                        opt.drop_priority = Some(u32::MAX);
                     } else if id == "lazy" {
                         if cfg!(feature = "lazy") {
                             opt.init = Initialization::Lazy;
@@ -613,6 +630,17 @@ fn gen_ctor_dtor(func: ItemFn, section: &str, mod_name: &str, typ: &TypeBareFn) 
     }
 }
 
+fn has_thread_local(attrs: &[Attribute]) -> bool {
+    for attr in attrs {
+        for seg in &attr.path.segments {
+            if seg.ident == "thread_local" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     let stat_name = &stat.ident;
     let expr = &*stat.expr;
@@ -638,6 +666,33 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         }
     }
 
+    let is_thread_local = has_thread_local(&stat.attrs);
+
+    if is_thread_local && options.init != Initialization::Lazy {
+        return quote! {
+            ::core::compile_error!("Only statics with `#[dynamic(lazy)]` or `#[dynamic(lazy,drop)]` can also have `#[thread_local]` attribute")
+        };
+    }
+
+    let lazy_type: Type = if has_thread_local(&stat.attrs) {
+        if stat.mutability.is_none() && options.drop {
+            stat.mutability = Some(token::Mut {
+                span: stat.ty.span(),
+            });
+            parse_quote! {
+                ConstLazy
+            }
+        } else {
+            parse_quote! {
+                Lazy
+            }
+        }
+    } else {
+        parse_quote! {
+            GlobalLazy
+        }
+    };
+
     let (typ, stat_ref): (Type, Expr) = if options.init != Initialization::Lazy {
         if stat.mutability.is_some() {
             (
@@ -661,7 +716,7 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     } else {
         (
             parse_quote! {
-                ::static_init::Lazy::<#stat_typ>
+                ::static_init::#lazy_type::<#stat_typ>
             },
             parse_quote! {
                 &#stat_name
@@ -672,9 +727,28 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
     let sp = stat.expr.span();
 
     let init_priority = options.init_priority.map_or(-1, |p| p as i32);
-    let drop_priority = options.drop_priority.map_or(-1, |p| p as i32);
+    let drop_priority = options.drop_priority.map_or(-1, |p| if p==u32::MAX {-2} else {p as i32});
 
     let initer = match options.init {
+        Initialization::Dynamic if drop_priority == -2 => {
+            let attr: Attribute = if let Some(priority) = options.init_priority {
+                parse_quote!(#[::static_init::constructor(#priority)])
+            } else {
+                parse_quote!(#[::static_init::constructor])
+            };
+            Some(quote_spanned! {sp=>
+                    extern "C" fn __static_init_dropper() {
+                        unsafe{#typ::drop(#stat_ref)}
+                    }
+                    #attr
+                    unsafe extern "C" fn __static_init_initializer() {
+                        ::static_init::__set_init_prio(#init_priority);
+                        #typ::set_to(#stat_ref,#expr);
+                        unsafe{::libc::atexit(__static_init_dropper)};
+                        ::static_init::__set_init_prio(i32::MIN);
+                    }
+            })
+        }
         Initialization::Dynamic => {
             let attr: Attribute = if let Some(priority) = options.init_priority {
                 parse_quote!(#[::static_init::constructor(#priority)])
@@ -693,13 +767,13 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         Initialization::Lazy => Some(quote_spanned! {sp=>
                 #[::static_init::constructor(__lazy_init)]
                 unsafe extern "C" fn __static_init_initializer() {
-                    ::static_init::Lazy::do_init(#stat_ref);
+                    ::static_init::#lazy_type::__do_init(#stat_ref);
                 }
         }),
         Initialization::None => None,
     };
 
-    let droper = if options.drop && options.init != Initialization::Lazy {
+    let droper = if options.drop && options.init != Initialization::Lazy && drop_priority != -2 {
         let attr: Attribute = if let Some(priority) = options.drop_priority {
             parse_quote!(#[::static_init::destructor(#priority)])
         } else {
@@ -742,14 +816,14 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
         Initialization::Lazy if !options.drop => {
             let q = quote_spanned! {sp=>{
                 #initer
-                unsafe{::static_init::Lazy::new_with_info(|| {#expr},
+                unsafe{::static_init::#lazy_type::new_with_info(|| {#expr},
                     ::static_init::StaticInfo{
                         variable_name: ::core::stringify!(#statid),
                         file_name: ::core::file!(),
                         line: ::core::line!(),
                         column: ::core::column!(),
                         init_priority: -2,
-                        drop_priority: -2 
+                        drop_priority: -2
                         }
                 )}
             }
@@ -760,13 +834,13 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                 Err(e) => return e.to_compile_error(),
             }
         }
-        Initialization::Lazy => {
+        Initialization::Lazy if !is_thread_local=> {
             let q = quote_spanned! {sp=>{
                 extern "C" fn __static_init_dropper() {
-                    unsafe{::core::ptr::drop_in_place(::static_init::Lazy::as_mut_ptr(#stat_ref))}
+                    unsafe{::core::ptr::drop_in_place(::static_init::#lazy_type::as_mut_ptr(#stat_ref))}
                 }
                 #initer
-                unsafe{::static_init::Lazy::new_with_info(|| {
+                unsafe{::static_init::#lazy_type::new_with_info(|| {
                     let v = #expr;
                     unsafe{::libc::atexit(__static_init_dropper)};
                     v
@@ -777,7 +851,37 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
                         line: ::core::line!(),
                         column: ::core::column!(),
                         init_priority: -2,
-                        drop_priority: -2 
+                        drop_priority: -2
+                        }
+
+                    )}
+            }
+            }
+            .into();
+            *stat.expr = match parse(q) {
+                Ok(exp) => exp,
+                Err(e) => return e.to_compile_error(),
+            }
+        }
+        Initialization::Lazy => {//thread local drop
+            let q = quote_spanned! {sp=>{
+                fn __static_init_dropper() {
+                    unsafe{::core::ptr::drop_in_place(::static_init::#lazy_type::as_mut_ptr(#stat_ref))}
+                }
+                #initer
+                unsafe{::static_init::#lazy_type::new_with_info(|| {
+                    unsafe{::static_init::__touch_tls_destructors()};
+                    let v = #expr;
+                    unsafe{::static_init::__push_tls_destructor(__static_init_dropper)};
+                    v
+                    },
+                    ::static_init::StaticInfo{
+                        variable_name: ::core::stringify!(#statid),
+                        file_name: ::core::file!(),
+                        line: ::core::line!(),
+                        column: ::core::column!(),
+                        init_priority: -2,
+                        drop_priority: -2
                         }
 
                     )}
