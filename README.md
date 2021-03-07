@@ -3,428 +3,145 @@
 [![Documentation](https://docs.rs/static_init/badge.svg)](https://docs.rs/static_init)
 [![Crates.io Version](https://img.shields.io/crates/v/static_init.svg)](https://crates.io/crates/static_init)
 
- Module initialization termination function with priorities and (mutable) statics initialization with
- non const functions.
+Non const static initialization, and program constructor/destructor code.
 
- Minimum rust version required: 1.49
+# Lesser Lazy Statics
 
-# Functionalities
+This crate provides *lazy statics* on all plateforms.
 
- - [x] lazy statics that does not undergo access penalty (faster than std::lazy) (needs std support).
+On unixes and windows *lesser lazy statics* are *lazy* during program startup phase
+(before `main` is called). Once main is called, those statics are all guaranteed to be
+initialized and any access to them is as fast as any access to regular const initialized
+statics. Benches sho that usual lazy statics, as those provided by `std::lazy::*` or from
+[lazy_static][1] crate, suffer from a 2ns access penalty.
 
- - [x] Code execution before or after `main` but after libc and rust runtime has been initialized (but see bellow for std::env).
+*Lesser lazy statics* can optionaly be dropped at program destruction
+(after main exit but before the program stops). 
 
- - [x] Mutable and const statics with non const initialization.
+*Lesser lazy statics* require the standard library and are enabled by default
+crate features `lazy` and `lazy_drop`.
 
- - [x] Statics dropable after `main` exits.
-
- - [x] Zero cost access to statics.
-
- - [x] Priorities on elf platforms (linux, bsd, etc...) and window.
-
- - [x] Access to uninitialized statics detected in debug mode with detailed message.
-
-# Example
 ```rust
-use static_init::{constructor,destructor,dynamic};
-
-#[constructor]
-unsafe extern "C" fn do_init(){
-}
-//Care not to use priorities above 65535-100
-//as those high priorities are used by
-//the rust runtime.
-#[constructor(200)]
-unsafe extern "C" fn do_first(){
-}
-
-#[destructor]
-unsafe extern "C" fn finaly() {
-}
-#[destructor(100)]
-unsafe extern "C" fn ultimately() {
-}
+use static_init::{dynamic};
 
 #[dynamic(lazy)]
 static L1: Vec<i32> = vec![1,2,3];
+```
 
-#[dynamic(lazy,drop)]
-static mut L2: Vec<i32> = L1.clone();
+# Dynamic statics: statics initialized at program startup
+
+On plateforms that support it (unixes, mac, windows), this crate provides *dynamic statics*: statics that are
+initialized at program startup. This feature is `no_std`.
+
+```rust
+use static_init::{dynamic};
 
 #[dynamic]
-static V1: Vec<i32> = unsafe {vec![1,2,3]};
+static D1: Vec<i32> = unsafe {vec![1,2,3]};
+```
+As can be seen above, the initializer expression of those statics must be an unsafe
+block. The reason is that during startup phase, accesses to *dynamic statics* may cause
+*undefined behavior*: *dynamic statics* may be in a zero initialized state.
 
+To prevent such hazardeous accesses, on unixes and window plateforms, a priority can be
+specified. Dynamic static initializations with higher priority are sequenced before dynamic
+static initializations with lower priority. Dynamic static initializations with the same
+priority are underterminately sequenced.
+
+```rust
+use static_init::{dynamic};
+
+// D2 initialization is sequenced before D1 initialization
+#[dynamic]
+static mut D1: Vec<i32> = unsafe {D2.clone()};
+
+#[dynamic(10)]
+static D2: Vec<i32> = unsafe {vec![1,2,3]};
+```
+
+*Dynamic statics* can be dropped at program destruction phase: they are dropped after main
+exit:
+
+```rust
+use static_init::{dynamic};
+
+// D2 initialization is sequenced before D1 initialization
+// D1 drop is sequenced before D2 drop.
 #[dynamic(init,drop)]
-static mut V2: Vec<i32> = unsafe {vec![1,2,3]};
+static mut D1: Vec<i32> = unsafe {D2.clone()};
 
-//Initialized before V1
-//then destroyed after V1
-#[dynamic(init=142,drop=142)]
-static mut INIT_AND_DROP: Vec<i32> = unsafe {vec![1,2,3]};
+#[dynamic(10,drop)]
+static D2: Vec<i32> = unsafe {vec![1,2,3]};
+```
+The priority act on drop in reverse order. *Dynamic statics* drops with a lower priority are
+sequenced before *dynamic statics* drops with higher priority.
 
-fn main(){
-    assert_eq!(V1[0],1);
-    unsafe{
-    assert_eq!(V2[2],3);
-    V2[2] = 42;
-    assert_eq!(V2[2], 42);
+# Constructor and Destructor 
 
-    assert_eq!(L1[0],1);
-    unsafe{
-    assert_eq!(L2[2],3);
-    L2[2] = 42;
-    assert_eq!(L2[2], 42);
-    }
-    }
-}
+On plateforms that support it (unixes, mac, windows), this crate provides a way to declare
+*constructors*: a function called before main is called. This feature is `no_std`.
+
+```rust
+use static_init::{constructor};
+
+//called before main
+#[constructor]
+unsafe extern "C" fn some_init() {}
 ```
 
-# Attributes
+Constructors also support priorities. Sequencement rules applies also between constructor calls and
+between *dynamic statics* initialization and *constructor* calls.
 
-Static variables marked with the [dynamic(lazy)] are initialized
-on first use or just befor main start on unixes and windows. On
-those plateforms access to those statics will be as fast as regular statics.
-On other plateforms they fall back to equivalent of `std::lazy::SyncLazy`.
+*destructors* are called at program destruction. They also support priorities.
 
-Lazy statics requires std support and can be desabled by disabling "lazy" feature.
-All other attributes does not requires std support but are only supported on unixes, mac and
-windows.
+```rust
+use static_init::{constructor, destructor};
 
-All functions marked with the [constructor] attribute are
-run before `main` is started.
+//called before some_init
+#[constructor(10)]
+unsafe extern "C" fn pre_init() {}
 
-All function marked with the [destructor] attribute are
-run after `main` has returned.
+//called before main
+#[constructor]
+unsafe extern "C" fn some_init() {}
 
-Static variables marked with the [dynamic] attribute can
-be initialized before main start and optionaly droped
-after main returns.
+//called after main
+#[destructor]
+unsafe extern "C" fn first_destructor() {}
 
-The attributes [constructor] and [destructor] works by placing the marked function pointer in
-dedicated object file sections.
-
-Priority ranges from 0 to 2<sup>16</sup>-1. The absence of priority is equivalent to
-a hypothetical priority number of -1.
-
-During program initialization:
-
-- constructors with priority 65535 are the first called;
-- constructors without priority are called last.
-
-During program termination, the order is reversed:
-
-- destructors without priority are the first called;
-- destructors with priority 65535 are the last called.
-
-# Panics
-
-If `debug-assertions` is enabled or feature `debug_order` is passed:
-- accesses to statics from a point not sequenced after its initialization
- - accesses to statics from a point not sequenced before its drop will cause a panic.
- - lazy static initialization that cylicly depends on themself will cause a panic.(without
-  debug assertion the program will enter an infinite loop, this is also the case of types
-  declared `std::lazy::*` or lazy_static crate)
-
-
-# Safety
-
-  Any access to lazy statics are safe. 
-
-  If neither `debug-assertions` nor feature `debug_order` are enabled accesses to
-  statics that are not initialized will cause undefined behavior (Unless this access happen
-  during initialization phase a zero initialized memory is a valid memory
-  representation for the type of the static).
-
-  Accesses to uninitialized dynamic may happen when a constructor access a dynamic static
-  that as a lower or equal initialization priority or when a destructor access a dynamic static dropped
-  with a lower or equal drop priority
-
-```no_run
-use static_init::dynamic;
-
-#[dynamic]
-static V1: Vec<i32> = unsafe {vec![1,2,3]};
-
-//potential undefined behavior: V1 may not have been initialized yet
-#[dynamic]
-static V2: i32 = unsafe {V1[0]};
-
-//undefined behavior, V3 is unconditionnaly initialized before V1
-#[dynamic(1000)]
-static V3: i32 = unsafe {V1[0]};
-
-#[dynamic(1000)]
-static V4: Vec<i32> = unsafe {vec![1,2,3]};
-
-//Good, V5 initialized after V4
-#[dynamic(500)]
-static V5: i32 = unsafe {V4[0]};
-
-//Good, V6 initialized after V5 and v4
-#[dynamic]
-static V6: i32 = unsafe {*V5+V4[1]};
-
-
-# fn main(){}
+//called after first_destructor
+#[destructor(10)]
+unsafe extern "C" fn last_destructor() {}
 ```
 
-# Comparisons against other crates
+# Debuging initialization order
 
-## [lazy_static][1]
- - lazy_static only provides const statics.
- - Each access to lazy_static statics costs 2ns on a x86.
- - lazy_static does not provide priorities.
- - lazy_static statics initialization is *safe*.
+If the feature `debug_order` or `debug_core` is enabled or when the crate is compiled with `debug_assertions`, 
+attempts to access `dynamic statics` that are uninitialized or whose initialization is
+undeterminately sequenced with the access will cause a panic with a message specifying which
+statics was tentatively accessed and how to change this *dynamic static* priority to fix this
+issue.
 
-## [ctor][2]
- - ctor only provides const statics.
- - ctor does not provide priorities.
+Run `cargo test` in this crate directory to see message examples.
 
-# Documentation and details
+All implementations of lazy statics may suffer from circular initialization dependencies. Those
+circular dependencies will cause either a dead lock or an infinite loop. If the feature `debug_lazy` or `debug_order` is 
+enabled, atemp are made to detect those circular dependencies. In most case they will be detected.
 
-## Mac
-  - [MACH_O specification](https://www.cnblogs.com/sunkang/archive/2011/05/24/2055635.html)
-  - GCC source code gcc/config/darwin.c indicates that priorities are not supported.
+# Comparisons with other crates
 
-  Initialization functions pointers are placed in section "__DATA,__mod_init_func" and
-  "__DATA,__mod_term_func"
+## Comparison of *Lesser lazy statics* with [lazy_static][1] or `std::lazy::Lazy`.
+ - lazy_static only provides const statics;
+ - there are no cyclic initialization detection;
+ - Each access to lazy_static statics costs 2ns;
+ - syntax is more verbose.
 
-  std::env is not initialized in any constructor.
-
-## ELF plateforms:
- - `info ld`
- - linker script: `ld --verbose`
- - [ELF specification](https://docs.oracle.com/cd/E23824_01/html/819-0690/chapter7-1.html#scrolltoc)
-
- The runtime will run fonctions pointers of section ".init_array" at startup and function
- pointers in ".fini_array" at program exit. The linker place in the target object file
- sectio .init_array all sections from the source objects whose name is of the form
- .init_array.NNNNN in lexicographical order then the .init_array sections of those same source
- objects. It does equivalently with .fini_array and .fini_array.NNNN sections.
-
- Usage can be seen in gcc source gcc/config/pru.c
-
- Resources of libstdc++ are initialized with priority 65535-100 (see gcc source libstdc++-v3/c++17/default_resource.h)
- The rust standard library function that capture the environment and executable arguments is
- executed at priority 65535-99 on gnu platform variants. On other elf plateform they are not accessbile in any constructors. Nevertheless
- one can read into /proc/self directory to retrieve the command line.
- Some callbacks constructors and destructors with priority 65535 are
- registered by rust/rtlibrary.
- Static C++ objects are usually initialized with no priority (TBC). lib-c resources are
- initialized by the C-runtime before any function in the init_array (whatever the priority) are executed.
-
-## Windows
-
-  std::env is initialized before any constructors.
-
- - [this blog post](https://www.cnblogs.com/sunkang/archive/2011/05/24/2055635.html)
-
- At start up, any functions pointer between sections ".CRT$XIA" and ".CRT$XIZ"
- and then any functions between ".CRT$XCA" and ".CRT$XCZ". It happens that the C library
- initialization functions pointer are placed in ".CRT$XIU" and C++ statics functions initialization
- pointers are placed in ".CRT$XCU". At program finish the pointers between sections
- ".CRT$XPA" and ".CRT$XPZ" are run first then those between ".CRT$XTA" and ".CRT$XTZ".
-
- Some reverse engineering was necessary to find out a way to implement
- constructor/destructor priority.
-
- Contrarily to what is reported in this blog post, msvc linker
- only performs a lexicographicall ordering of section whose name
- is of the form "\<prefix\>$\<suffix\>" and have the same \<prefix\>.
- For example "RUST$01" and "RUST$02" will be ordered but those two
- sections will not be ordered with "RHUM" section.
-
- Moreover, it seems that section name of the form \<prefix\>$\<suffix\> are
- not limited to 8 characters.
-
- So static initialization function pointers are placed in section ".CRT$XCU" and
- those with a priority `p` in `format!(".CRT$XCTZ{:05}",65535-p)`. Destructors without priority
- are placed in ".CRT$XPU" and those with a priority in `format!(".CRT$XPTZ{:05}",65535-p)`.
-
+## *dynamic statics* with [ctor][2]
+ - ctor only provides const statics;
+ - ctor does not provide priorities;
+ - ctor unsafety is unsound;
+ - ctor does not support mutable statics;
+ - ctor does not provide a way to detect access to uninitialized data.
 
 [1]: https://crates.io/crates/lazy_static
 [2]: https://crates.io/crates/ctor
-
-# Example
- ```rust
- use static_init::{constructor,destructor,dynamic};
-
- #[constructor]
- unsafe extern "C" fn do_init(){
- }
- //Care not to use priorities above 65535-100
- //as those high priorities are used by
- //the rust runtime. 
- #[constructor(200)]
- unsafe extern "C" fn do_first(){
- }
-
- #[destructor]
- unsafe extern "C" fn finaly() {
- }
- #[destructor(100)]
- unsafe extern "C" fn ultimately() {
- }
-
- #[dynamic]
- static V: Vec<i32> = unsafe{vec![1,2,3]};
-
- #[dynamic(init,drop)]
- static mut V1: Vec<i32> = unsafe{vec![1,2,3]};
-
- //Initialized before V1 
- //then destroyed after V1 
- #[dynamic(init=142,drop=142)]
- static mut INIT_AND_DROP: Vec<i32> = unsafe{vec![1,2,3]};
-
- fn main(){
-     assert_eq!(V[0],1);
-     unsafe{
-     assert_eq!(V1[2],3);
-     V1[2] = 42;
-     assert_eq!(V1[2], 42);
-     }
- }
- ```
-
-# Attributes
-
- All functions marked with the `constructor` attribute are 
- run before `main` is started.
-
- All function marked with the `destructor` attribute are 
- run after `main` has returned.
-
- Static variables marked with the `dynamic` attribute can
- be initialized before main start and optionaly droped
- after main returns. 
-
- The attributes `constructor` and `destructor` works by placing the marked function pointer in
- dedicated object file sections. 
-
- Priority ranges from 0 to 2<sup>16</sup>-1. The absence of priority is equivalent to
- an hypothetical priority of -1. 
-
- During program initialization:
-
- - constructors with priority 65535 are the first called;
- - constructors without priority are called last.
-
- During program termination, the order is reversed:
-
- - destructors without priority are the first called;
- - destructors with priority 65535 are the last called.
-
-# Supported platforms
-  
-  Any platforms where the target executable file format is ELF (unixes: linux, android, bsd, ...),
-  Windows and macos and ios. Webassembly is not supported. Priorities are not supported on macos and ios.
-
-# Safety
-  
-  *Functionnalities provided by this library are inherently unsafe*. During
-  execution of a constructor, any access to variable initialized with a lower or equal priority 
-  will cause undefined behavior. During execution of a destructor any access
-  to variable droped with a lower or equal priority will cause undefined
-  behavior.
-  
-  This is actually the reason to be of priorities: this is the coder own responsability
-  to ensure that no access is performed to statics with lower or equal priorities.
-
- ```rust
- use static_init::dynamic;
-
- #[dynamic]
- static V1: Vec<i32> = unsafe {vec![1,2,3]};
-
- //potential undefined behavior: V1 may not have been initialized yet
- #[dynamic]
- static V2: i32 = unsafe {V1[0]};
-
- //undefined behavior, V3 is unconditionnaly initialized before V1
- #[dynamic(1000)]
- static V3: i32 = unsafe {V1[0]};
- 
- #[dynamic(1000)]
- static V4: Vec<i32> = unsafe {vec![1,2,3]};
- 
- //Good, V5 initialized after V4
- #[dynamic(500)]
- static V5: i32 = unsafe {V4[0]};
-
- //Good, V6 initialized after V5 and v4
- #[dynamic]
- static V6: i32 = unsafe {*V5+V4[1]};
- ```
- 
-# Comparisons against other crates
-
-## [lazy_static][1]
-  - lazy_static only provides const statics.
-  - Each access to lazy_static statics costs 2ns on a x86.
-  - lazy_static does not provide priorities.
-  - lazy_static statics initialization is *safe*.
-  - lazy_static statics is more portable.
-
-## [ctor][2]
-  - ctor only provides const statics.
-  - ctor does not provide priorities.
-
-# Documentation and details
-
-## Mac
-   - [MACH_O specification](https://www.cnblogs.com/sunkang/archive/2011/05/24/2055635.html)
-   - GCC source code gcc/config/darwin.c indicates that priorities are not supported. 
-
-   Initialization functions pointers are placed in section "__DATA,__mod_init_func" and
-   "__DATA,__mod_term_func"
-
-## ELF plateforms:
-  - `info ld`
-  - linker script: `ld --verbose`
-  - [ELF specification](https://docs.oracle.com/cd/E23824_01/html/819-0690/chapter7-1.html#scrolltoc)
-
-  The runtime will run fonctions pointers of section ".init_array" at startup and function
-  pointers in ".fini_array" at program exit. The linker place in the target object file
-  sectio .init_array all sections from the source objects whose name is of the form
-  .init_array.NNNNN in lexicographical order then the .init_array sections of those same source
-  objects. It does equivalently with .fini_array and .fini_array.NNNN sections.
-
-  Usage can be seen in gcc source gcc/config/pru.c
-
-  Resources of libstdc++ are initialized with priority 65535-100 (see gcc source libstdc++-v3/c++17/default_resource.h)
-  The rust standard library function that capture the environment and executable arguments is
-  executed at priority 65535-99. Some callbacks constructors and destructors with priority 65535 are
-  registered by rust/rtlibrary.
-  Static C++ objects are usually initialized with no priority (TBC). lib-c resources are
-  initialized by the C-runtime before any function in the init_array (whatever the priority) are executed.
-
-## Windows
-
-  - [this blog post](https://www.cnblogs.com/sunkang/archive/2011/05/24/2055635.html)
-
-  At start up, any functions pointer between sections ".CRT$XIA" and ".CRT$XIZ"
-  and then any functions between ".CRT$XCA" and ".CRT$XCZ". It happens that the C library
-  initialization functions pointer are placed in ".CRT$XIU" and C++ statics functions initialization
-  pointers are placed in ".CRT$XCU". At program finish the pointers between sections
-  ".CRT$XPA" and ".CRT$XPZ" are run first then those between ".CRT$XTA" and ".CRT$XTZ".
-
-  Some reverse engineering was necessary to find out a way to implement 
-  constructor/destructor priority.
-
-  Contrarily to what is reported in this blog post, msvc linker
-  only performs a lexicographicall ordering of section whose name
-  is of the form "\<prefix\>$\<suffix\>" and have the same \<prefix\>.
-  For example "RUST$01" and "RUST$02" will be ordered but those two
-  sections will not be ordered with "RHUM" section.
-
-  Moreover, it seems that section name of the form \<prefix\>$\<suffix\> are 
-  not limited to 8 characters.
-
-  So static initialization function pointers are placed in section ".CRT$XCU" and
-  those with a priority `p` in `format!(".CRT$XCTZ{:05}",65535-p)`. Destructors without priority
-  are placed in ".CRT$XPU" and those with a priority in `format!(".CRT$XPTZ{:05}",65535-p)`.
-
-
- [1]: https://crates.io/crates/lazy_static
- [2]: https://crates.io/crates/ctor
