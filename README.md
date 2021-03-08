@@ -32,14 +32,6 @@ static L0: Vec<i32> = vec![1,2,3];
 
 #[dynamic(drop)]
 static mut L2: Vec<i32> = L1.clone();
-#
-# assert_eq!(L1[0], 1);
-# unsafe {
-#     assert_eq!(L2[1], 2);
-#     L2[1] = 42;
-#     assert_eq!(L2[1], 42);
-#     }
-#     
 ```
 As can be seen above accesses to *lazy static* that are dropped must be within unsafe
 blocks. The reason is that it is possible at program destruction to access already dropped
@@ -77,8 +69,6 @@ static mut D1: Vec<i32> = unsafe{D2.clone()};
 
 #[dynamic(10)]
 static D2: Vec<i32> = vec![1,2,3];
-#
-# unsafe{assert_eq!(D1[0], 1)};
 ```
 
 *Dynamic statics* can be dropped at program destruction phase: they are dropped after main
@@ -164,13 +154,16 @@ extern "C" fn last_destructor() {}
 
 Variable declared with `#[dynamic(lazy)]` can also be declared `#[thread_local]`. These
 variable will behave as regular *lazy statics*.
-```ignore
+
+```rust
 #[thread_local]
 #[dynamic(lazy)]
 static mut X: Vec<i32> = vec![1,2,3];
 ```
+
 These variables can also be droped on thread exit.
-```ignore
+
+```rust
 #[thread_local]
 #[dynamic(lazy,drop)]
 static X: Vec<i32> = vec![1,2,3];
