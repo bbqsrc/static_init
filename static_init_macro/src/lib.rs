@@ -11,6 +11,8 @@ extern crate syn;
 use syn::spanned::Spanned;
 use syn::*;
 
+use core::result::Result;
+
 extern crate quote;
 use quote::{quote, quote_spanned};
 
@@ -19,15 +21,20 @@ use proc_macro::TokenStream;
 extern crate proc_macro2;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 
-//TODO: on windows sectionls are classified in alphabetical order by the linker
-//then the c runtime will run every thing between CRT$XCA and CRT$XCZ so
-//it should be possible to define priorty using this
+macro_rules! ok_or_return {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(t) => return t.into(),
+        }
+    };
+}
 
 /// Attribute for functions run at program initialization (before main).
 ///
 /// ```ignore
 /// #[constructor]
-/// unsafe extern "C" fn initer () {
+/// extern "C" fn initer () {
 /// // run before main start
 /// }
 /// ```
@@ -37,11 +44,13 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 ///
 /// Constructors with a priority of 65535 are run first (in unspecified order), then constructors
 /// with priority 65534 are run ...  then constructors
-/// with priority number 0 and finaly constructors with no priority.
+/// with priority number 0 
+///
+/// An abscence of priority is equivalent to a priority of 0.
 ///
 /// # Safety
 ///
-/// Constructor functions must be unsafe. Any access to [macro@dynamic] statics with an equal or lower
+/// Any access to [macro@dynamic] statics with an equal or lower
 /// initialization priority will cause undefined behavior. (NB: usual static data initialized
 /// by a const expression are always in an initialized state so it is always safe to read them).
 ///
@@ -53,12 +62,12 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 ///
 /// ```ignore
 /// #[constructor(0)]
-/// unsafe extern "C" fn first () {
+/// extern "C" fn first () {
 /// // run before main start
 /// }
 ///
 /// #[constructor(1)]
-/// unsafe extern "C" fn then () {
+/// extern "C" fn then () {
 /// // run before main start
 /// }
 /// ```
@@ -69,7 +78,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 ///
 /// # Constructor signature
 ///
-/// Constructor function should have type `unsafe extern "C" fn() -> ()`.
+/// Constructor function should have type `extern "C" fn() -> ()`.
 ///
 /// But on plateform where the program is linked
 /// with the gnu variant of libc (which covers all gnu variant platforms) constructor functions
@@ -80,70 +89,80 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 /// Cf "glibc source"/csu/elf-init.c, and System V ABI.
 #[proc_macro_attribute]
 pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
+    let priority = ok_or_return!(parse_priority(args));
+
+    let section = ok_or_return!(init_section(priority));
+
     let func: ItemFn = parse_macro_input!(input);
 
-    let priority = match parse_priority(args) {
-        Ok(v) => v,
-        Err(e) => return e.into(),
-    };
+    let func_ptr_name = format!("__static_init_constructor_{}", func.sig.ident);
 
-    let section = if cfg!(target_os = "linux")
-        || cfg!(target_os = "android")
-        || cfg!(target_os = "freebsd")
-        || cfg!(target_os = "dragonfly")
-        || cfg!(target_os = "netbsd")
-        || cfg!(target_os = "openbsd")
-        || cfg!(target_os = "solaris")
-        || cfg!(target_os = "illumos")
-        || cfg!(target_os = "emscripten")
-        || cfg!(target_os = "haiku")
-        || cfg!(target_os = "l4re")
-        || cfg!(target_os = "fuchsia")
-        || cfg!(target_os = "redox")
-        || cfg!(target_os = "vxworks")
-    {
-        if let Some(p) = priority {
-            format!(".init_array.{:05}", p)
+    let func_type = get_init_func_sig(&func.sig);
+
+    gen_ctor_dtor(func, &section, &func_ptr_name, func_type).into()
+}
+
+fn get_init_func_sig(sig: &Signature) -> TypeBareFn {
+    let sp = sig.span();
+
+    if cfg!(target_env = "gnu") && cfg!(target_family = "unix") && !sig.inputs.is_empty() {
+        parse2(quote_spanned!(sp.span()=>extern "C" fn(i32,*const*const u8, *const *const u8)))
+            .unwrap()
+    } else {
+        parse2(quote_spanned!(sp.span()=>extern "C" fn())).unwrap()
+    }
+}
+
+fn const_dtor_no_support() -> TokenStream {
+    quote!(compile_error!(
+        "program constructors/destructors not supported on this target"
+    ))
+    .into()
+}
+
+fn init_section(priority: u16) -> Result<String, TokenStream> {
+    if cfg!(elf) {
+        Ok(format!(".init_array.{:05}", 65535 - priority))
+    } else if cfg!(mach_o) {
+        if priority != 0 {
+            Err(quote!(compile_error!(
+                "Constructor priority other than 0 not supported on this plateform."
+            ))
+            .into())
         } else {
-            ".init_array.65536".to_string()
-            //.init_array.65537 and .init_array.65538 used for lazy
+            Ok("__DATA,__mod_init_func".to_string())
         }
-    } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
-        if priority.is_some() {
-            return quote!(compile_error!(
+    } else if cfg!(coff) {
+        Ok(format!(".CRT$XCTZ{:05}", 65535 - priority))
+    } else {
+        Err(const_dtor_no_support())
+    }
+}
+
+fn fini_section(priority: u16) -> Result<String, TokenStream> {
+    if cfg!(elf) {
+        Ok(format!(".fini_array.{:05}", 65535 - priority))
+    } else if cfg!(mach_o) {
+        if priority != 0 {
+            Err(quote!(compile_error!(
                 "Constructor priority not supported on this plateform."
             ))
-            .into();
-        }
-        "__DATA,__mod_init_func".to_string()
-    } else if cfg!(target_os = "windows") {
-        if let Some(p) = priority {
-            format!(".CRT$XCTZ{:05}", p)
+            .into())
         } else {
-            ".CRT$XCTZ65536".to_string()
+            Ok("__DATA,__mod_term_func".to_string())
         }
+    } else if cfg!(coff) {
+        Ok(format!(".CRT$XPTZ{:05}", 65535 - priority))
     } else {
-        return quote!(compile_error!("Target not supported")).into();
-    };
-
-    let mod_name = format!("__static_init_constructor_{}", func.sig.ident);
-    let sp = func.sig.span();
-    let typ = if cfg!(target_env = "gnu")
-        && cfg!(target_family = "unix")
-        && !func.sig.inputs.is_empty()
-    {
-        quote_spanned!(sp.span()=>unsafe extern "C" fn(i32,*const*const u8, *const *const u8))
-    } else {
-        quote_spanned!(sp.span()=>unsafe extern "C" fn())
-    };
-    gen_ctor_dtor(func, &section, &mod_name, &parse2(typ).unwrap()).into()
+        Err(const_dtor_no_support())
+    }
 }
 
 /// Attribute for functions run at program termination (after main)
 ///
 /// ```ignore
 /// #[destructor]
-/// unsafe extern "C" fn droper () {
+/// extern "C" fn droper () {
 /// // run after main return
 /// }
 /// ```
@@ -152,13 +171,10 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// windows plateform a priority can be specified using the syntax `destructor(<num>)` where
 /// `<num>` is a number included in the range [0 ; 2<sup>16</sup>-1].
 ///
-/// Destructors without priority are run first (in unspecified order), then destructors with priority 0 are run,
+/// Destructors with priority 0 are run first (in unspecified order),
 /// then destructors with priority number 1,... finaly destructors with priority 65535 are run.
 ///
-/// # Safety
-///
-/// Destructor functions must be unsafe. Any access to statics dropped with an equal or lower
-/// priority will cause undefined behavior.
+/// An abscence of priority is equivalent to a priority of 0.
 ///
 /// ```ignore
 /// #[destructor(1)]
@@ -177,56 +193,18 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// Destructor function should have type `unsafe extern "C" fn() -> ()`.
 #[proc_macro_attribute]
 pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
+    let priority = ok_or_return!(parse_priority(args));
+
+    let section = ok_or_return!(fini_section(priority));
+
     let func: ItemFn = parse_macro_input!(input);
 
-    let priority = match parse_priority(args) {
-        Ok(v) => v,
-        Err(e) => return e.into(),
-    };
-    let section = if cfg!(target_os = "linux")
-        || cfg!(target_os = "android")
-        || cfg!(target_os = "freebsd")
-        || cfg!(target_os = "dragonfly")
-        || cfg!(target_os = "netbsd")
-        || cfg!(target_os = "openbsd")
-        || cfg!(target_os = "solaris")
-        || cfg!(target_os = "illumos")
-        || cfg!(target_os = "emscripten")
-        || cfg!(target_os = "haiku")
-        || cfg!(target_os = "l4re")
-        || cfg!(target_os = "fuchsia")
-        || cfg!(target_os = "redox")
-        || cfg!(target_os = "vxworks")
-    {
-        if let Some(p) = priority {
-            format!(".fini_array.{:05}", p)
-        } else {
-            ".fini_array.65536".to_string()
-            //.fini_array.65537 and .fini_array used for lazy
-        }
-    } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
-        if priority.is_some() {
-            return quote!(compile_error!(
-                "Constructor priority not supported on this plateform."
-            ))
-            .into();
-        }
-        "__DATA,__mod_term_func".to_string()
-    } else if cfg!(target_os = "windows") {
-        if let Some(p) = priority {
-            format!(".CRT$XPTZ{:05}", p)
-        } else {
-            ".CRT$XPU".to_string()
-            //".CRT$XPVB" and ".CRT$XPVA" used for lazy
-        }
-    } else {
-        return quote!(compile_error!("Target not supported")).into();
-    };
+    let func_ptr_name = format!("__static_init_destructor_{}", func.sig.ident);
 
-    let mod_name = format!("__static_init_constructor_{}", func.sig.ident);
     let sp = func.sig.span();
-    let typ = quote_spanned!(sp.span()=>unsafe extern "C" fn());
-    gen_ctor_dtor(func, &section, &mod_name, &parse2(typ).unwrap()).into()
+    let func_type = parse2(quote_spanned!(sp.span()=>extern "C" fn())).unwrap();
+
+    gen_ctor_dtor(func, &section, &func_ptr_name, func_type).into()
 }
 
 /// Statics initialized with non const functions.
@@ -241,7 +219,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// These dynamics are supported on all plateforms and requires std support. Lazy dynamics are
 /// enabled by the default feature "lazy".
 ///
-/// Lazy statics are declared with the `[dynamic(lazy)]` attribute. On unixes and windows plateforms these
+/// Lazy statics are declared with the `[dynamic(lazy)]` or simply `[dynamic]` attribute. On unixes and windows plateforms these
 /// statics are optimized versions of [std::lazy::SyncLazy]. After program initialization phase,
 /// those statics are guaranteed to be initialized and access to them will be as fast as any access
 /// to a regular static. On other plateforms, those statics are equivalent to [std::lazy::SyncLazy].
@@ -256,14 +234,14 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///   }
 /// }
 ///
-/// #[dynamic(lazy)]
+/// #[dynamic] //equivalently #[dynamic(lazy)]
 /// static V :A = A::new(42);
 /// ```
 ///
 /// Optionnaly, if the default feature "atexit" is enabled, lazy dynamic statics declared with
 /// `[dynamic(lazy,drop)]` will be dropped at program exit. Dropped lazy dynamic statics ared
 /// dropped in the reverse order of their initialization. This feature is implemented thanks to
-/// `libc::atexit`. See also `drop_reverse` attribute argument. 
+/// `libc::atexit`. See also `drop_reverse` attribute argument.
 ///
 /// ```ignore
 /// struct A(i32);
@@ -287,9 +265,28 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// // 33
 /// // 42
 /// #[dynamic(lazy,drop)]
-/// static V1 :A = A::new(V2.0 - 9);
+/// static V1 :A = A::new(unsafe{V2.0} - 9);
 ///
+/// #[dynamic(drop)] //implies lazy
+/// static V2 :A = A::new(42);
+/// ```
+///
+/// Even if V1 is const, access to it must be unsafe because its state may be dropped.
+/// Internaly the procedural macro change V1 to a mutable statics and wrap it in a type
+/// that does not implement `DerefMut`.
+///
+/// ## Thread locals
+///
+/// *lazy statics* can be declared for thread local. This feature does not require std support. 
+/// They also can be dropped with if the `thread_local_drop` feature is enabled. 
+/// This last feature does require std support.
+/// ```ignore
+/// #[thread_local]
 /// #[dynamic(lazy,drop)]
+/// static V1 :A = A::new(unsafe{V2.0} - 9);
+///
+/// #[thread_local]
+/// #[dynamic(drop)] //implies lazy
 /// static V2 :A = A::new(42);
 /// ```
 ///
@@ -316,7 +313,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///   }
 /// }
 ///
-/// #[dynamic]
+/// #[dynamic(0)]
 /// static V :A = A::new(42);
 /// ```
 ///
@@ -328,7 +325,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// Statics with priority number 65535 are initialized first (in unspecified order), then statics
 /// with priority number 65534 are initialized ...  then statics
-/// with priority number 0 and finaly statics without priority.
+/// with priority number 0.
 ///
 /// ```ignore
 /// struct A(i32);
@@ -363,21 +360,20 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// dyn_opt:
 ///   "init" [ "=" <priority> ]
 ///   "drop" [ "=" <priority> ]
-///   "drop_reverse"
+///   "lazy"
+///   "drop_only "=" <priority>
 /// ```  
 ///
-/// The macro attribute `dynamic` is equivalent to `dynamic(init=0)`
-/// and `dynamic(<num>)` to `dynamic(init=<num>)`. In the absence of `init`
-/// the static will be const initialized as usual static. The `drop` option
-/// cause the static to be droped after main returns. The priority has the
-/// same semantic as for the [macro@destructor] attribute: statics without priority
-/// are droped first, then statics with priority 0,... and finaly statics with priority
-/// 65535 are the last dropped.
+/// The macro attribute `dynamic` is equivalent to `dynamic(lazy)`
+/// and `dynamic(<num>)` to `dynamic(init=<num>)`. If a priority
+/// is given it will be dropped by program destructor. The priority has the
+/// same semantic as for the [macro@destructor] attribute:  statics with priority 0 are dropped first,
+/// ... and finaly statics with priority 65535 are the last dropped.
 ///
-/// If the drop priority is not explicitly specified, it will equal that of the initializaton
-/// priority.
+/// The `drop_only=<priority>` is equivalent to #[dynamic(0,drop=<priority>)] except that the
+/// static will be const initialized.
 ///
-/// If drop_reverse is specified, the drop function will be registered using `libc::atexit`. All
+/// If no priority is given to the drop argument, the drop function will be registered using `libc::atexit`. All
 /// dynamic statics registered this way will be dropped in the reverse order of their
 /// initialization and before any dynamic statics marked for drop using the `drop` attribute
 /// argument.
@@ -401,17 +397,15 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///     }
 ///
 /// //const initialized droped after main exit
-/// #[dynamic(drop)]
+/// #[dynamic(init=0, drop=0)]
 /// static mut V1 :A = A::new_const(33);
 ///
 /// //initialized before V1 and droped after V1
 /// #[dynamic(20,drop=10)]
 /// static V2 :A = A::new(10);
 ///
-/// // if a drop priority is not specified, it equals the
-/// // init priority so the attribute bellow is equivalent to
-/// // #[dynamic(init=20, drop=20)
-/// #[dynamic(init=20,drop)]
+/// // not droped, V3, V4 and V5 all have initialization priority 0
+/// #[dynamic(init=0)]
 /// static V3 :A = A::new(10);
 ///
 /// // not droped
@@ -419,7 +413,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// static V4 :A = A::new(10);
 ///
 /// // not droped
-/// #[dynamic]
+/// #[dynamic(0)]
 /// static V5 :A = A::new(10);
 ///
 /// // not droped
@@ -429,12 +423,17 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// # Actual type of "dynamic" statics
 ///
-/// A mutable "dynamic" static declared to have type `T`, will have type `static_init::Static<T>`.
+/// A thread_local *lazy static* that is *not mutable* and that will be dropped is wrapped in a *mutable* thread_local static
+/// of type `static_init::ThreadLocalConstLazy`. Otherwise the mutability is unchanged and the
+/// static is wrapped in a `static_init::ThreadLocalLazy`.
 ///
-/// A mutable "dynamic" static declared to have type `T`, will have type `static_init::ConstStatic<T>`.
+/// A *lazy static* that is *not mutable* and that will be dropped is wrapped in a *mutable* static
+/// of type `static_init::ConstLazy`. Otherwise the mutability is unchanged and the
+/// static is wrapped in a `static_init::Lazy`.
 ///
-/// Those types are opaque types that implements `Deref<T>`. `static_init::Static` also implements
-/// `DerefMut`.
+/// A mutable dynamic static declared to have type `T` are wrapped in `static_init::Static<T>`.
+///
+/// A mutable "dynamic" static declared to have type `T` are wrapped in a mutable static of type `static_init::ConstStatic<T>` 
 ///
 /// ```no_run
 ///
@@ -451,183 +450,218 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 pub fn dynamic(args: TokenStream, input: TokenStream) -> TokenStream {
     let item: ItemStatic = parse_macro_input!(input);
 
-    let options = match parse_dyn_options(parse_macro_input!(args)) {
-        Ok(v) => v,
-        Err(e) => return e.into(),
-    };
+    let options = ok_or_return!(parse_dyn_options(parse_macro_input!(args)));
 
     gen_dyn_init(item, options).into()
 }
 
-#[derive(Eq, PartialEq)]
-enum Initialization {
-    Dynamic,
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum InitMode {
+    Const,
     Lazy,
+    Dynamic(u16),
+}
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum DropMode {
     None,
+    AtExit,
+    Dynamic(u16),
 }
 
-struct DynOptions {
-    init:          Initialization,
-    init_priority: Option<u32>,
-    drop:          bool,
-    drop_priority: Option<u32>,
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct DynMode {
+    init: InitMode,
+    drop: DropMode,
 }
 
-fn parse_priority(args: TokenStream) -> std::result::Result<Option<u32>, TokenStream2> {
+fn parse_priority(args: TokenStream) -> std::result::Result<u16, TokenStream2> {
     if !args.is_empty() {
         if let Ok(n) = syn::parse(args.clone()).map_err(|e| e.to_compile_error()) {
             let n: Ident = n;
             if n == "__lazy_init" {
-                return Ok(Some(65537));
+                return Ok(1);
             } else if n == "__lazy_init_finished" {
-                return Ok(Some(65538));
+                return Ok(0);
             }
         }
-        let n: LitInt = syn::parse(args).map_err(|e| e.to_compile_error())?;
-        Ok(Some(
-            n.base10_parse::<u16>()
-                .map(|v| 65535 - (v as u32))
-                .map_err(|e| e.to_compile_error())?,
+        let lit: Lit = syn::parse(args).map_err(|e| e.to_compile_error())?;
+        parse_priority_literal(&lit)
+    } else {
+        Ok(0)
+    }
+}
+
+macro_rules! generate_error{
+    ($span:expr => $($args:tt),*) => {
+        {
+        let __expand = [$(generate_error!(@expand $args)),*];
+        quote_spanned!($span => ::core::compile_error!(::core::concat!(#(#__expand),*)))
+        }
+    };
+    ($($args:tt),*) => {{
+        let __expand = [$(generate_error!(@expand $args)),*];
+        quote!(::core::compile_error!(::core::concat!(#(#__expand),*)))
+    }
+    };
+    (@expand $v:literal) => {
+        quote!($v)
+    };
+    (@expand $v:ident) => {
+        {
+        quote!(::core::stringify!(#$v))
+        }
+    };
+
+}
+
+fn parse_priority_literal(lit: &Lit) -> Result<u16, TokenStream2> {
+    match lit {
+        Lit::Int(n) => n.base10_parse::<u16>().map_err(|e| e.to_compile_error()),
+        _ => Err(
+            generate_error!(lit.span()=>"Expected a priority in the range [0 ; 65535], found `",lit,"`."),
+        ),
+    }
+}
+
+fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenStream2> {
+    let mut opt = DynMode {
+        init: InitMode::Lazy,
+        drop: DropMode::None,
+    };
+
+    let mut init_set = false;
+    let mut drop_set = false;
+    macro_rules! check_no_init{
+        ($id: expr) => {
+            if init_set {
+                let __attr_arg = &$id;
+                return Err(generate_error!($id.span()=>"Initialization already specified `",__attr_arg,"`"));
+            } else {
+                init_set = true;
+            }
+        }
+    }
+    macro_rules! check_no_drop{
+        ($id: expr) => {
+            if drop_set {
+                let __attr_arg = &$id;
+                return Err(generate_error!($id.span()=>"Drop already specified `",__attr_arg,"`"));
+            } else {
+                drop_set = true;
+            }
+        }
+    }
+
+    macro_rules! unexpected_arg{
+        ($id: expr) => {{
+            let __unexpected = &$id;
+            Err(generate_error!($id.span()=>
+                "Unexpected attribute argument `",
+                __unexpected,
+                "`. Expected either `init[=<u16>]`, `drop[=<u16>]`, `lazy` or `drop_only=<u16>`."
+                ))
+        }
+        }
+    }
+
+    for arg in args {
+        match arg {
+            NestedMeta::Meta(Meta::Path(id)) => {
+                let id = if let Some(id) = id.get_ident() {
+                    id
+                } else {
+                    return unexpected_arg!(id);
+                };
+                if id == "init" {
+                    check_no_init!(id);
+                    opt.init = InitMode::Dynamic(0);
+                } else if id == "drop" {
+                    check_no_drop!(id);
+                    if !cfg!(feature = "atexit") {
+                        return Err(
+                            generate_error!(id.span()=>"static_init crate feature `atexit` is not enabled.",id),
+                        );
+                    }
+                    opt.drop = DropMode::AtExit;
+                } else if id == "lazy" {
+                    check_no_init!(id);
+                    opt.init = InitMode::Lazy;
+                } else {
+                    return unexpected_arg!(id);
+                }
+            }
+            NestedMeta::Meta(Meta::NameValue(nv)) => {
+                let id = if let Some(id) = nv.path.get_ident() {
+                    id
+                } else {
+                    return unexpected_arg!(nv.path);
+                };
+                if id == "init" {
+                    check_no_init!(id);
+                    let priority = parse_priority_literal(&nv.lit)?;
+                    opt.init = InitMode::Dynamic(priority);
+                } else if id == "drop" {
+                    check_no_drop!(id);
+                    let priority = parse_priority_literal(&nv.lit)?;
+                    opt.drop = DropMode::Dynamic(priority);
+                } else if id == "drop_only" {
+                    check_no_init!(id);
+                    check_no_drop!(id);
+                    let priority = parse_priority_literal(&nv.lit)?;
+                    opt.init = InitMode::Const;
+                    opt.drop = DropMode::Dynamic(priority);
+                } else {
+                    return unexpected_arg!(id);
+                }
+            }
+            NestedMeta::Lit(lit) => {
+                check_no_init!(lit);
+                let priority = parse_priority_literal(&lit)?;
+                opt.init = InitMode::Dynamic(priority);
+            }
+            _ => {
+                return unexpected_arg!(arg);
+            }
+        }
+    }
+    if opt.init == InitMode::Lazy && !cfg!(feature = "lazy") {
+        Err(generate_error!(
+            "static_init crate feature `lazy` is not enabled."
         ))
+    } else if opt.init == InitMode::Lazy
+        && !(opt.drop == DropMode::None || opt.drop == DropMode::AtExit)
+    {
+        Err(generate_error!("Drop mode not supported for lazy statics."))
     } else {
-        Ok(None)
-    }
-}
-
-fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynOptions, TokenStream2> {
-    if !args.is_empty() {
-        let mut opt = DynOptions {
-            init:          Initialization::None,
-            init_priority: None,
-            drop:          false,
-            drop_priority: None,
-        };
-        for arg in args {
-            match arg {
-                NestedMeta::Meta(Meta::Path(id)) => {
-                    let id = if let Some(id) = id.get_ident() {
-                        id
-                    } else {
-                        return Err(
-                            quote_spanned!(id.span()=>compile_error!(concat!("Unexpected attribute argument \"",stringify!(#id),"\""))),
-                        );
-                    };
-                    if id == "init" {
-                        opt.init = Initialization::Dynamic;
-                    } else if id == "drop" {
-                        opt.drop = true;
-                        if opt.init == Initialization::Lazy && !cfg!(feature = "atexit") {
-                            return Err(
-                                quote_spanned!(id.span()=>compile_error!("feature `atexit` must be enabled")),
-                            );
-                        }
-                    } else if id == "drop_reverse" {
-                        opt.drop = true;
-                        if !cfg!(feature = "atexit") {
-                            return Err(
-                                quote_spanned!(id.span()=>compile_error!("feature `atexit` must be enabled")),
-                            );
-                        } else if opt.init == Initialization::None {
-                            return Err(
-                                quote_spanned!(id.span()=>compile_error!("dynamic static must be initialized dynamically to use drop_reverse")),
-                            );
-                        }
-                        opt.drop_priority = Some(u32::MAX);
-                    } else if id == "lazy" {
-                        if cfg!(feature = "lazy") {
-                            opt.init = Initialization::Lazy;
-                            if opt.drop && !cfg!(feature = "atexit") {
-                                return Err(
-                                    quote_spanned!(id.span()=>compile_error!("feature atexit must be enabled")),
-                                );
-                            }
-                        } else {
-                            return Err(
-                                quote_spanned!(id.span()=>compile_error!("feature lazy must be enabled")),
-                            );
-                        }
-                    } else {
-                        return Err(
-                            quote_spanned!(id.span()=>compile_error!(concat!("Unknown attribute argument \"",stringify!(#id),"\""))),
-                        );
-                    }
-                }
-                NestedMeta::Meta(Meta::NameValue(nv)) => {
-                    let id = if let Some(id) = nv.path.get_ident() {
-                        id
-                    } else {
-                        return Err(
-                            quote_spanned!(nv.path.span()=>compile_error!(concat!("Unknown attribute argument \"",stringify!(#nv),"\""))),
-                        );
-                    };
-                    if id == "init" {
-                        opt.init = Initialization::Dynamic;
-                        if let Lit::Int(n) = &nv.lit {
-                            let prio = n.base10_parse::<u16>().map_err(|e| e.to_compile_error())?;
-                            opt.init_priority = Some(prio as u32);
-                        } else {
-                            return Err(
-                                quote_spanned!(nv.lit.span()=>compile_error!("Expected an init priority (u16)")),
-                            );
-                        }
-                    } else if id == "drop" {
-                        opt.drop = true;
-                        if let Lit::Int(n) = &nv.lit {
-                            let prio = n.base10_parse::<u16>().map_err(|e| e.to_compile_error())?;
-                            opt.drop_priority = Some(prio as u32);
-                        } else {
-                            return Err(
-                                quote_spanned!(nv.lit.span()=>compile_error!("Expected a drop priority (u16)")),
-                            );
-                        }
-                    } else {
-                        return Err(
-                            quote_spanned!(id.span()=>compile_error!("Expected eithe 'init' or 'drop'")),
-                        );
-                    }
-                }
-                NestedMeta::Lit(Lit::Int(n)) => {
-                    opt.init = Initialization::Dynamic;
-                    opt.init_priority =
-                        Some(n.base10_parse::<u16>().map_err(|e| e.to_compile_error())? as u32);
-                }
-                _ => {
-                    return Err(
-                        quote_spanned!(arg.span()=>compile_error!("Expected either 'init' or 'drop'")),
-                    )
-                }
-            }
-        }
-
         Ok(opt)
-    } else {
-        Ok(DynOptions {
-            init:          Initialization::Dynamic,
-            init_priority: None,
-            drop:          false,
-            drop_priority: None,
-        })
     }
 }
 
-fn gen_ctor_dtor(func: ItemFn, section: &str, mod_name: &str, typ: &TypeBareFn) -> TokenStream2 {
-    let mod_name = Ident::new(mod_name, Span::call_site());
+fn gen_ctor_dtor(
+    func: ItemFn,
+    section: &str,
+    func_ptr_name: &str,
+    typ: TypeBareFn,
+) -> TokenStream2 {
+    let func_ptr_name = Ident::new(func_ptr_name, Span::call_site());
+
     let section = LitStr::new(section, Span::call_site());
+
     let func_name = &func.sig.ident;
 
     let sp = func.sig.span();
-    if func.sig.unsafety.is_none() {
-        quote_spanned! {sp=>compile_error!("Constructors and destructors must be unsafe functions as \
-        they may access uninitialized memory regions")}
-    } else {
-        quote_spanned! {sp=>
-            #func
-            #[doc(hidden)]
-            #[link_section = #section]
-            #[used]
-            pub static #mod_name: #typ = #func_name;
-        }
+    //if func.sig.unsafety.is_none() {
+    //    quote_spanned! {sp=>compile_error!("Constructors and destructors must be unsafe functions as \
+    //    they may access uninitialized memory regions")}
+    //} else {
+    quote_spanned! {sp=>
+        #func
+        #[doc(hidden)]
+        #[link_section = #section]
+        #[used]
+        pub static #func_ptr_name: #typ = #func_name;
     }
+    //}
 }
 
 fn has_thread_local(attrs: &[Attribute]) -> bool {
@@ -641,157 +675,130 @@ fn has_thread_local(attrs: &[Attribute]) -> bool {
     false
 }
 
-fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
+fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     let stat_name = &stat.ident;
+
     let expr = &*stat.expr;
+
     let stat_typ = &*stat.ty;
-
-    //if !(options.init == Initialization::Lazy) && !matches!(*stat.expr, syn::Expr::Unsafe(_)) {
-    //    let sp = stat.expr.span();
-    //    if options.init == Initialization::Dynamic {
-    //        return quote_spanned!(sp=>compile_error!("Initializer expression must be an unsafe block \
-    //        because this expression may access uninitialized data"));
-    //    } else {
-    //        return quote_spanned!(sp=>compile_error!("Although the initialization of this \"dynamic\" static is safe \
-    //        an unsafe block is required for this initialization as a reminder that the drop phase may lead to undefined behavior"));
-    //    }
-    //}
-
-    //fix drop priority, if not specified, drop priority equal
-    //that of initialization priority
-    //
-    if let Some(p) = options.init_priority {
-        if options.drop_priority.is_none() {
-            options.drop_priority = Some(p);
-        }
-    }
 
     let is_thread_local = has_thread_local(&stat.attrs);
 
-    if is_thread_local && options.init != Initialization::Lazy {
-        return quote! {
-            ::core::compile_error!("Only statics with `#[dynamic(lazy)]` or `#[dynamic(lazy,drop)]` can also have `#[thread_local]` attribute")
+    if is_thread_local && options.init != InitMode::Lazy {
+        return generate_error!(
+            "Only statics with `#[dynamic(lazy)]` or `#[dynamic(lazy,drop)]` can also have \
+             `#[thread_local]` attribute"
+        );
+    }
+    if is_thread_local && options.drop == DropMode::AtExit && !cfg!(feature = "thread_local_drop") {
+        return generate_error!(
+            "`#[thread_local] #[dynamic(lazy,drop)]` needs static_init crate `thread_local_drop` feature"
+        );
+    }
+
+    let stat_ref: Expr = if options.init != InitMode::Lazy && stat.mutability.is_some() {
+        parse_quote! {
+            &mut #stat_name
+        }
+    } else {
+        parse_quote! {
+            &#stat_name
+        }
+    };
+
+    macro_rules! into_mutable {
+        () => {
+            stat.mutability = Some(token::Mut {
+                span: stat.ty.span(),
+            })
         };
     }
 
-    let stat_ref: Expr = if options.init != Initialization::Lazy && stat.mutability.is_some() {
-                parse_quote! {
-                    &mut #stat_name
-                }
-    } else {
-                parse_quote! {
-                    &#stat_name
-                }
-    };
-
-    let typ: Type = if options.init != Initialization::Lazy {
-        if stat.mutability.is_some() {
-                parse_quote! {
-                    ::static_init::Static::<#stat_typ>
-                }
-        } else {
-            stat.mutability = Some(token::Mut {
-                span: stat.ty.span(),
-            });
+    let typ: Type = if options.init != InitMode::Lazy {
+        if stat.mutability.is_none() {
+            into_mutable!();
             parse_quote! {
                 ::static_init::ConstStatic::<#stat_typ>
             }
+        } else {
+            parse_quote! {
+                ::static_init::Static::<#stat_typ>
+            }
         }
     } else if is_thread_local {
-        if stat.mutability.is_some() {
+        if stat.mutability.is_none() && options.drop == DropMode::AtExit {
+            into_mutable!();
             parse_quote! {
-                ::static_init::Lazy::<#stat_typ>
+                ::static_init::ThreadLocalConstLazy::<#stat_typ>
             }
         } else {
-            stat.mutability = Some(token::Mut {
-                span: stat.ty.span(),
-            });
             parse_quote! {
-                ::static_init::ConstLazy::<#stat_typ>
+                ::static_init::ThreadLocalLazy::<#stat_typ>
             }
         }
     } else {
-        if !stat.mutability.is_some() && options.drop {
-            stat.mutability = Some(token::Mut {
-                span: stat.ty.span(),
-            });
+        if stat.mutability.is_none() && options.drop == DropMode::AtExit {
+            into_mutable!();
             parse_quote! {
-                ::static_init::ConstGlobalLazy::<#stat_typ>
+                ::static_init::ConstLazy::<#stat_typ>
             }
         } else {
             parse_quote! {
-                ::static_init::GlobalLazy::<#stat_typ>
+                ::static_init::Lazy::<#stat_typ>
             }
         }
     };
 
     let sp = stat.expr.span();
 
-    let init_priority = options.init_priority.map_or(-1, |p| p as i32);
-    let drop_priority = options.drop_priority.map_or(-1, |p| if p==u32::MAX {-2} else {p as i32});
-
     let initer = match options.init {
-        Initialization::Dynamic if drop_priority == -2 => {
-            let attr: Attribute = if let Some(priority) = options.init_priority {
-                parse_quote!(#[::static_init::constructor(#priority)])
-            } else {
-                parse_quote!(#[::static_init::constructor])
-            };
+        InitMode::Dynamic(priority) if options.drop == DropMode::AtExit => {
+            let attr: Attribute = parse_quote!(#[::static_init::constructor(#priority)]);
             Some(quote_spanned! {sp=>
                     extern "C" fn __static_init_dropper() {
                         unsafe{#typ::drop(#stat_ref)}
                     }
                     #attr
-                    unsafe extern "C" fn __static_init_initializer() {
-                        ::static_init::__set_init_prio(#init_priority);
-                        //opt out unsafe
-                        fn __static_init_do_init() -> #stat_typ {
-                            #expr
-                        }
-                        #typ::set_to(#stat_ref,__static_init_do_init());
-                        ::libc::atexit(__static_init_dropper);
+                    extern "C" fn __static_init_initializer() {
+                        ::static_init::__set_init_prio(#priority as i32);
+                        let __static_init_expr_result = #expr;
+                        unsafe {#typ::set_to(#stat_ref,__static_init_expr_result);
+                        ::libc::atexit(__static_init_dropper)};
                         ::static_init::__set_init_prio(i32::MIN);
                     }
             })
         }
-        Initialization::Dynamic => {
-            let attr: Attribute = if let Some(priority) = options.init_priority {
-                parse_quote!(#[::static_init::constructor(#priority)])
-            } else {
-                parse_quote!(#[::static_init::constructor])
-            };
+
+        InitMode::Dynamic(priority) => {
+            let attr: Attribute = parse_quote!(#[::static_init::constructor(#priority)]);
             Some(quote_spanned! {sp=>
                     #attr
-                    unsafe extern "C" fn __static_init_initializer() {
-                        ::static_init::__set_init_prio(#init_priority);
-                        //opt out unsafe
-                        fn __static_init_do_init() -> #stat_typ {
-                            #expr
-                        }
-                        #typ::set_to(#stat_ref,__static_init_do_init());
+                    extern "C" fn __static_init_initializer() {
+                        ::static_init::__set_init_prio(#priority as i32);
+                        let __static_init_expr_result = #expr;
+                        unsafe {#typ::set_to(#stat_ref,__static_init_expr_result)};
                         ::static_init::__set_init_prio(i32::MIN);
                     }
             })
         }
-        Initialization::Lazy => Some(quote_spanned! {sp=>
+
+        InitMode::Lazy => Some(quote_spanned! {sp=>
                 #[::static_init::constructor(__lazy_init)]
-                unsafe extern "C" fn __static_init_initializer() {
-                    #typ::__do_init(#stat_ref);
+                extern "C" fn __static_init_initializer() {
+                    #[allow(unused_unsafe)]
+                    unsafe {#typ::__do_init(#stat_ref)};
                 }
         }),
-        Initialization::None => None,
+
+        InitMode::Const => None,
     };
 
-    let droper = if options.drop && options.init != Initialization::Lazy && drop_priority != -2 {
-        let attr: Attribute = if let Some(priority) = options.drop_priority {
-            parse_quote!(#[::static_init::destructor(#priority)])
-        } else {
-            parse_quote!(#[::static_init::destructor])
-        };
+    let droper = if let DropMode::Dynamic(priority) = options.drop {
+        let attr: Attribute = parse_quote!(#[::static_init::destructor(#priority)]);
         Some(quote_spanned! {sp=>
                 #attr
-                unsafe extern "C" fn __static_init_droper() {
-                    #typ::drop(#stat_ref)
+                extern "C" fn __static_init_droper() {
+                    unsafe {#typ::drop(#stat_ref)}
                 }
         })
     } else {
@@ -800,128 +807,95 @@ fn gen_dyn_init(mut stat: ItemStatic, mut options: DynOptions) -> TokenStream2 {
 
     let statid = &stat.ident;
 
-    match options.init {
-        Initialization::Dynamic => {
-            let q = quote_spanned! {sp=>{
+    let init_priority: Expr = match options.init {
+        InitMode::Dynamic(n) => parse_quote!(::static_init::InitMode::Dynamic(#n)),
+        InitMode::Lazy => parse_quote!(::static_init::InitMode::Lazy),
+        InitMode::Const => parse_quote!(::static_init::InitMode::Const),
+    };
+
+    let drop_priority: Expr = match options.drop {
+        DropMode::Dynamic(n) => parse_quote!(::static_init::DropMode::Dynamic(#n)),
+        DropMode::AtExit => parse_quote!(::static_init::DropMode::AtExit),
+        DropMode::None => parse_quote!(::static_init::DropMode::None),
+    };
+
+    let static_info: Option<Expr> = if cfg!(debug_mode) {
+        Some(parse_quote!(
+    ::static_init::StaticInfo{
+        variable_name: ::core::stringify!(#statid),
+        file_name: ::core::file!(),
+        line: ::core::line!(),
+        column: ::core::column!(),
+        init_mode: #init_priority,
+        drop_mode: #drop_priority
+        })) 
+    } else {
+        None
+    };
+
+    let const_init = match options.init {
+        InitMode::Dynamic(_) => {
+            quote_spanned! {sp=>{
                 #initer
                 #droper
-                #typ::uninit(
-                ::static_init::StaticInfo{
-                    variable_name: ::core::stringify!(#statid),
-                    file_name: ::core::file!(),
-                    line: ::core::line!(),
-                    column: ::core::column!(),
-                    init_priority: #init_priority,
-                    drop_priority: #drop_priority
-                    })
+                #typ::uninit(#static_info)
             }
-            }
-            .into();
-            *stat.expr = match parse(q) {
-                Ok(exp) => exp,
-                Err(e) => return e.to_compile_error(),
             }
         }
-        Initialization::Lazy if !options.drop => {
-            let q = quote_spanned! {sp=>{
+        InitMode::Lazy if !(options.drop == DropMode::AtExit) => {
+            quote_spanned! {sp=>{
                 #initer
-                #typ::new_with_info(|| {#expr},
-                    ::static_init::StaticInfo{
-                        variable_name: ::core::stringify!(#statid),
-                        file_name: ::core::file!(),
-                        line: ::core::line!(),
-                        column: ::core::column!(),
-                        init_priority: -2,
-                        drop_priority: -2
-                        }
-                )
+                #typ::new(|| {#expr},#static_info)
             }
-            }
-            .into();
-            *stat.expr = match parse(q) {
-                Ok(exp) => exp,
-                Err(e) => return e.to_compile_error(),
             }
         }
-        Initialization::Lazy if !is_thread_local=> {
-            let q = quote_spanned! {sp=>{
+        InitMode::Lazy if !is_thread_local => {
+            quote_spanned! {sp=>{
                 extern "C" fn __static_init_dropper() {
                     unsafe{::core::ptr::drop_in_place(#typ::as_mut_ptr(#stat_ref))}
                 }
                 #initer
-                #typ::new_with_info(|| {
-                    let v = (|| {#expr})();
-                    unsafe{::libc::atexit(__static_init_dropper)};
-                    v
-                    },
-                    ::static_init::StaticInfo{
-                        variable_name: ::core::stringify!(#statid),
-                        file_name: ::core::file!(),
-                        line: ::core::line!(),
-                        column: ::core::column!(),
-                        init_priority: -2,
-                        drop_priority: -2
-                        }
-
+                #typ::new(
+                    || {
+                        let v = (|| {#expr})();
+                        unsafe{::libc::atexit(__static_init_dropper)};
+                        v
+                        },
+                    #static_info
                     )
             }}
-            .into();
-            *stat.expr = match parse(q) {
-                Ok(exp) => exp,
-                Err(e) => return e.to_compile_error(),
-            }
         }
-        Initialization::Lazy => {//thread local drop
-            let q = quote_spanned! {sp=>{
+        InitMode::Lazy => {
+            //thread local drop
+            quote_spanned! {sp=>{
                 fn __static_init_dropper() {
                     unsafe{::core::ptr::drop_in_place(#typ::as_mut_ptr(#stat_ref))}
                 }
                 #initer
-                #typ::new_with_info(|| {
-                    unsafe{::static_init::__touch_tls_destructors()};
-                    let v = (|| {#expr})();
-                    unsafe{::static_init::__push_tls_destructor(__static_init_dropper)};
-                    v
-                    },
-                    ::static_init::StaticInfo{
-                        variable_name: ::core::stringify!(#statid),
-                        file_name: ::core::file!(),
-                        line: ::core::line!(),
-                        column: ::core::column!(),
-                        init_priority: -2,
-                        drop_priority: -2
-                        }
-
+                #typ::new(
+                    || {
+                        let v = (|| {#expr})();
+                        unsafe{::static_init::__push_tls_destructor(__static_init_dropper)};
+                        v
+                        },
+                    #static_info
                     )
             }
             }
-            .into();
-            *stat.expr = match parse(q) {
-                Ok(exp) => exp,
-                Err(e) => return e.to_compile_error(),
-            }
         }
-        Initialization::None => {
-            assert!(options.drop);
-            let q = quote_spanned! {sp=>{
+        InitMode::Const => {
+            quote_spanned! {sp=>{
                 #initer
                 #droper
-                #typ::from(#expr,::static_init::StaticInfo{
-                    variable_name: ::core::stringify!(#statid),
-                    file_name: ::core::file!(),
-                    line: ::core::line!(),
-                    column: ::core::line!(),
-                    init_priority: #init_priority,
-                    drop_priority: #drop_priority
-                    })
+                #typ::from(#expr, #static_info)
             }
-            }
-            .into();
-            *stat.expr = match parse(q) {
-                Ok(exp) => exp,
-                Err(e) => return e.to_compile_error(),
             }
         }
+    };
+
+    *stat.expr = match parse(const_init.into()) {
+        Ok(exp) => exp,
+        Err(e) => return e.to_compile_error(),
     };
 
     *stat.ty = typ;

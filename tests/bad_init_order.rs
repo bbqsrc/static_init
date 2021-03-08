@@ -5,11 +5,11 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-#[cfg(any(feature = "debug_core", debug_assertions))]
+#[cfg(debug_mode)]
 mod test {
     use static_init::{constructor, dynamic};
 
-    #[dynamic]
+    #[dynamic(0)]
     static mut V0: i32 = 12;
 
     #[dynamic(10)]
@@ -21,12 +21,18 @@ mod test {
     }
 
     #[constructor(200)]
-    unsafe extern "C" fn set_hook() {
+    extern "C" fn set_hook() {
         std::panic::set_hook(Box::new(panic_hook));
     }
 }
 
+fn panic_hook(p: &core::panic::PanicInfo<'_>) -> () {
+    println!("Panic caught {}", p);
+    std::process::exit(1)
+}
+
 #[test]
 fn bad_init_order() {
-    assert!(!cfg!(any(feature = "debug_core", debug_assertions)));
+    std::panic::set_hook(Box::new(panic_hook));
+    assert!(!cfg!(debug_mode));
 }

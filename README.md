@@ -3,6 +3,7 @@
 [![Documentation](https://docs.rs/static_init/badge.svg)](https://docs.rs/static_init)
 [![Crates.io Version](https://img.shields.io/crates/v/static_init.svg)](https://crates.io/crates/static_init)
 
+
 Non const static initialization, and program constructor/destructor code.
 
 # Lesser Lazy Statics
@@ -19,18 +20,26 @@ statics. Benches sho that usual lazy statics, as those provided by `std::lazy::*
 (after main exit but before the program stops).
 
 *Lesser lazy statics* require the standard library and are enabled by default
-crate features `lazy`. Drop of lazy requires the  `atexit` feature.
+crate features `lazy` and `atexit`.
 ```rust
 use static_init::{dynamic};
 
-#[dynamic(lazy)]
+#[dynamic] //equivalent to #[dynamic(lazy)]
 static L1: Vec<i32> = unsafe{L0.clone()};
 
-#[dynamic(lazy, drop)]
+#[dynamic(drop)] //equivalent to #[dynamic(lazy,drop)]
 static L0: Vec<i32> = vec![1,2,3];
 
-#[dynamic(lazy,drop)]
+#[dynamic(drop)]
 static mut L2: Vec<i32> = L1.clone();
+#
+# assert_eq!(L1[0], 1);
+# unsafe {
+#     assert_eq!(L2[1], 2);
+#     L2[1] = 42;
+#     assert_eq!(L2[1], 42);
+#     }
+#     
 ```
 As can be seen above accesses to *lazy static* that are dropped must be within unsafe
 blocks. The reason is that it is possible at program destruction to access already dropped
@@ -44,7 +53,8 @@ initialized at program startup. This feature is `no_std`.
 ```rust
 use static_init::{dynamic};
 
-#[dynamic]
+#[dynamic(0)]
+//equivalent to #[dynamic(init=0)]
 static D1: Vec<i32> = vec![1,2,3];
 
 assert_eq!(unsafe{D1[0]}, 1);
@@ -62,11 +72,13 @@ priority are underterminately sequenced.
 use static_init::{dynamic};
 
 // D2 initialization is sequenced before D1 initialization
-#[dynamic]
+#[dynamic(0)]
 static mut D1: Vec<i32> = unsafe{D2.clone()};
 
 #[dynamic(10)]
 static D2: Vec<i32> = vec![1,2,3];
+#
+# unsafe{assert_eq!(D1[0], 1)};
 ```
 
 *Dynamic statics* can be dropped at program destruction phase: they are dropped after main
@@ -77,10 +89,10 @@ use static_init::{dynamic};
 
 // D2 initialization is sequenced before D1 initialization
 // D1 drop is sequenced before D2 drop.
-#[dynamic(init,drop)]
+#[dynamic(init=0,drop=0)]
 static mut D1: Vec<i32> = unsafe {D2.clone()};
 
-#[dynamic(10,drop)]
+#[dynamic(init=10,drop=10)]
 static D2: Vec<i32> = vec![1,2,3];
 ```
 The priority act on drop in reverse order. *Dynamic statics* drops with a lower priority are
@@ -90,6 +102,7 @@ Finally, if the feature `atexit` is enabled, *dynamic statics* drop can be regis
 `libc::atexit`. *lazy dynamic statics* and *dynamic statics* with `drop_reverse` attribute
 argument are destroyed in the reverse order of their construction. Functions registered with
 `atexit` are executed before program destructors and drop of *dynamic statics* that use the
+`drop` attribute argument. Drop is registered with at `atexit` if no priority if given to the
 `drop` attribute argument.
 
 ```rust
@@ -100,13 +113,13 @@ use static_init::{dynamic};
 #[dynamic(lazy,drop)]
 static D1: Vec<i32> = vec![0,1,2];
 
-#[dynamic(10,drop_reverse)]
-static D2: i32 = unsafe{D1.clone()};
+#[dynamic(10,drop)]
+static D2: Vec<i32> = unsafe{D1.clone()};
 
 //D3 is initilized after D1 and D2 initializations
 //and it is dropped after D1 and D2 drops
 #[dynamic(5,drop)]
-static D3: i32 = unsafe{D1.clone()};
+static D3: Vec<i32> = unsafe{D1.clone()};
 ```
 
 # Constructor and Destructor
@@ -118,8 +131,8 @@ On plateforms that support it (unixes, mac, windows), this crate provides a way 
 use static_init::{constructor};
 
 //called before main
-#[constructor]
-unsafe extern "C" fn some_init() {}
+#[constructor] //equivalent to #[constructor(0)]
+extern "C" fn some_init() {}
 ```
 
 Constructors also support priorities. Sequencement rules applies also between constructor calls and
@@ -132,34 +145,20 @@ use static_init::{constructor, destructor};
 
 //called before some_init
 #[constructor(10)]
-unsafe extern "C" fn pre_init() {}
+extern "C" fn pre_init() {}
 
 //called before main
 #[constructor]
-unsafe extern "C" fn some_init() {}
+extern "C" fn some_init() {}
 
 //called after main
 #[destructor]
-unsafe extern "C" fn first_destructor() {}
+extern "C" fn first_destructor() {}
 
 //called after first_destructor
 #[destructor(10)]
-unsafe extern "C" fn last_destructor() {}
+extern "C" fn last_destructor() {}
 ```
-
-# Debuging initialization order
-
-If the feature `debug_order` or `debug_core` is enabled or when the crate is compiled with `debug_assertions`,
-attempts to access `dynamic statics` that are uninitialized or whose initialization is
-undeterminately sequenced with the access will cause a panic with a message specifying which
-statics was tentatively accessed and how to change this *dynamic static* priority to fix this
-issue.
-
-Run `cargo test` in this crate directory to see message examples.
-
-All implementations of lazy statics may suffer from circular initialization dependencies. Those
-circular dependencies will cause either a dead lock or an infinite loop. If the feature `debug_lazy` or `debug_order` is
-enabled, atemp are made to detect those circular dependencies. In most case they will be detected.
 
 # Thread Local Support
 
@@ -182,6 +181,20 @@ assert!(unsafe{X[1] == 2});
 Accessing a thread local *lazy statics* that should drop during the phase where thread_locals are
 droped may cause *undefined behavior*. For this reason any access to a thread local lazy static
 that is dropped will require an unsafe block, even if the static is const.
+
+# Debuging initialization order
+
+If the feature `debug_order` is enabled, attempts to access `dynamic statics` that are
+uninitialized or whose initialization is undeterminately sequenced with the access will cause
+a panic with a message specifying which statics was tentatively accessed and how to change this
+*dynamic static* priority to fix this issue.
+
+Run `cargo test` in this crate directory to see message examples.
+
+All implementations of lazy statics may suffer from circular initialization dependencies. Those
+circular dependencies will cause either a dead lock or an infinite loop. If the feature `debug_order` is
+enabled, atemp are made to detect those circular dependencies. In most case they will be detected.
+
 
 
 # Comparisons with other crates

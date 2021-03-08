@@ -5,12 +5,12 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-#[cfg(feature = "debug_lazy")]
+#[cfg(all(debug_mode,feature = "lazy"))]
 mod test {
     use static_init::{constructor, dynamic};
 
     #[dynamic(lazy)]
-    static mut V0: i32 = *V0;
+    static mut V0: i32 = unsafe{*V0};
 
     fn panic_hook(p: &core::panic::PanicInfo<'_>) -> () {
         println!("Panic caught {}", p);
@@ -18,12 +18,19 @@ mod test {
     }
 
     #[constructor(10)]
-    unsafe extern "C" fn set_hook() {
+    extern "C" fn set_hook() {
         std::panic::set_hook(Box::new(panic_hook));
     }
 }
 
+fn panic_hook(p: &core::panic::PanicInfo<'_>) -> () {
+    println!("Panic caught {}", p);
+    std::process::exit(1)
+}
+
+
 #[test]
 fn bad_init_order() {
-    assert!(!cfg!(feature = "debug_lazy"));
+    std::panic::set_hook(Box::new(panic_hook));
+    assert!(!cfg!(all(debug_mode,feature = "lazy")));
 }

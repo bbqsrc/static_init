@@ -1,6 +1,6 @@
 [package]
 name = "static_init_macro"
-version = "0.4.2"
+version = "0.5.0"
 authors = ["Olivier Kannengieser <okannen@gmail.com>"]
 edition = "2018"
 description = "Attribute macros for static_init crate"
@@ -12,6 +12,8 @@ license = "MIT OR Apache-2.0"
 [features]
 lazy = []
 atexit = []
+thread_local_drop = []
+debug_order = []
 
 [lib]
 proc-macro=true
@@ -21,3 +23,6 @@ syn= {version = "1", features = ["full"]}
 quote="1"
 proc-macro2="1"
 memchr="2"
+
+[build-dependencies]
+cfg_aliases = "0.1"

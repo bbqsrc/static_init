@@ -5,17 +5,17 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-#[cfg(any(feature = "debug_core", debug_assertions))]
+#[cfg(debug_mode)]
 mod test {
 
     struct A(bool);
 
     use static_init::{destructor, dynamic};
 
-    #[dynamic(drop = 10)]
+    #[dynamic(drop_only = 10)]
     static V0: A = A(false);
 
-    #[dynamic(drop = 20)]
+    #[dynamic(drop_only = 20)]
     static V1: A = A(true);
 
     impl Drop for A {
@@ -32,13 +32,14 @@ mod test {
     }
 
     #[destructor(0)]
-    unsafe extern "C" fn set_hook() {
+    extern "C" fn set_hook() {
         std::panic::set_hook(Box::new(panic_hook));
     }
 
     #[destructor(30)]
-    unsafe extern "C" fn bad_exit() {
-        libc::_exit(1)
+    extern "C" fn bad_exit() {
+        println!("No panic happened :(");
+        unsafe{libc::_exit(1)}
     }
 }
 
