@@ -3,7 +3,7 @@ use super::StaticInfo;
 
 pub use lazy_impl::{ConstLazy, Lazy};
 
-#[cfg(all(support_priority,not(feature = "test_no_global_lazy_hint")))]
+#[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
 mod inited {
 
     use core::sync::atomic::{AtomicBool, Ordering};
@@ -14,25 +14,23 @@ mod inited {
     extern "C" fn mark_inited() {
         LAZY_INIT_ENSURED.store(true, Ordering::Release);
     }
-    
+
     #[inline(always)]
     pub(crate) fn global_inited_hint() -> bool {
         LAZY_INIT_ENSURED.load(Ordering::Acquire)
     }
 }
 
-#[cfg(all(support_priority,not(feature = "test_no_global_lazy_hint")))]
+#[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
 use inited::global_inited_hint;
-
-#[cfg(not(all(support_priority,not(feature = "test_no_global_lazy_hint"))))]
-#[inline(always)]
-fn global_inited_hint() -> bool {
-    false
-}
 
 #[cfg(debug_mode)]
 mod lazy_impl {
     use super::StaticInfo;
+    #[cfg(feature = "likely")]
+    use likely_stable::unlikely;
+
+    #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
     use super::global_inited_hint;
 
     use core::cell::Cell;
@@ -49,7 +47,7 @@ mod lazy_impl {
     use core::num::NonZeroUsize;
 
     struct DebugLazyState<F> {
-        initer:   Cell<Option<NonZeroUsize>>,
+        initer: Cell<Option<NonZeroUsize>>,
         function: Cell<Option<F>>,
     }
 
@@ -57,11 +55,11 @@ mod lazy_impl {
     ///
     /// Statics that are initialized on first access.
     pub struct Lazy<T, F = fn() -> T> {
-        value:        UnsafeCell<MaybeUninit<T>>,
-        inited:       AtomicBool,
+        value: UnsafeCell<MaybeUninit<T>>,
+        inited: AtomicBool,
         debug_initer: ReentrantMutex<DebugLazyState<F>>,
-        info:         Option<StaticInfo>,
-        dropped:      AtomicBool,
+        info: Option<StaticInfo>,
+        dropped: AtomicBool,
     }
 
     /// The type of const *lesser lazy statics*.
@@ -81,18 +79,18 @@ mod lazy_impl {
         /// by the dynamic macro.
         pub const fn new(f: F, _info: StaticInfo) -> Self {
             Self {
-                value:        UnsafeCell::new(MaybeUninit::uninit()),
-                inited:       AtomicBool::new(false),
+                value: UnsafeCell::new(MaybeUninit::uninit()),
+                inited: AtomicBool::new(false),
                 debug_initer: ReentrantMutex::const_new(
                     RawMutex::INIT,
                     RawThreadId::INIT,
                     DebugLazyState {
-                        initer:   Cell::new(None),
+                        initer: Cell::new(None),
                         function: Cell::new(Some(f)),
                     },
                 ),
-                info:         Some(_info),
-                dropped:      AtomicBool::new(false),
+                info: Some(_info),
+                dropped: AtomicBool::new(false),
             }
         }
 
@@ -146,9 +144,21 @@ mod lazy_impl {
         where
             F: FnOnce() -> T,
         {
-            if !global_inited_hint() {
-                Self::__do_init(this);
+            #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
+            {
+                #[cfg(feature = "likely")]
+                if unlikely(!global_inited_hint()) {
+                    Self::__do_init(this);
+                }
+                #[cfg(not(feature = "likely"))]
+                if !global_inited_hint() {
+                    Self::__do_init(this);
+                }
             }
+
+            #[cfg(not(all(support_priority, not(feature = "test_no_global_lazy_hint"))))]
+            Self::__do_init(this);
+
             if this.dropped.load(Ordering::Acquire) {
                 if let Some(info) = &this.info {
                     core::panic!("Access to a dropped lazy static {:#?}.", info);
@@ -271,7 +281,11 @@ mod lazy_impl {
 
 #[cfg(not(debug_mode))]
 mod lazy_impl {
+    #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
     use super::global_inited_hint;
+
+    #[cfg(feature = "likely")]
+    use likely_stable::unlikely;
 
     use core::cell::Cell;
     use core::cell::UnsafeCell;
@@ -287,8 +301,8 @@ mod lazy_impl {
     /// Statics that are initialized on first access or
     /// before main is called.
     pub struct Lazy<T, F = fn() -> T> {
-        value:    UnsafeCell<MaybeUninit<T>>,
-        initer:   Once,
+        value: UnsafeCell<MaybeUninit<T>>,
+        initer: Once,
         init_exp: Cell<Option<F>>,
     }
     /// The type of const *lesser lazy statics*.
@@ -305,8 +319,8 @@ mod lazy_impl {
         /// Initialize a lazy with a builder as argument.
         pub const fn new(f: F) -> Self {
             Self {
-                value:    UnsafeCell::new(MaybeUninit::uninit()),
-                initer:   Once::new(),
+                value: UnsafeCell::new(MaybeUninit::uninit()),
+                initer: Once::new(),
                 init_exp: Cell::new(Some(f)),
             }
         }
@@ -349,9 +363,20 @@ mod lazy_impl {
         where
             F: FnOnce() -> T,
         {
-            if !global_inited_hint() {
-                Self::__do_init(this);
+            #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
+            {
+                #[cfg(feature = "likely")]
+                if unlikely(!global_inited_hint()) {
+                    Self::__do_init(this);
+                }
+                #[cfg(not(feature = "likely"))]
+                if !global_inited_hint() {
+                    Self::__do_init(this);
+                }
             }
+
+            #[cfg(not(all(support_priority, not(feature = "test_no_global_lazy_hint"))))]
+            Self::__do_init(this);
         }
         /// Drop the contained value
         ///

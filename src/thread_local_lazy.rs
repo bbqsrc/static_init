@@ -5,6 +5,10 @@ pub use lazy_impl::{Lazy, ConstLazy};
 
 #[cfg(not(debug_mode))]
 mod lazy_impl {
+
+    #[cfg(feature = "likely")]
+    use likely_stable::if_unlikely;
+
     use core::cell::Cell;
     use core::cell::UnsafeCell;
     use core::fmt;
@@ -66,9 +70,14 @@ mod lazy_impl {
         where
             F: FnOnce() -> T,
         {
+            #[cfg(not(feature = "likely"))]
             if let Some(f) = this.init_exp.take() {
                 unsafe { (*this.value.get()).as_mut_ptr().write(f()) };
             }
+            #[cfg(feature = "likely")]
+            if_unlikely!{let Some(_f) = this.init_exp.take() => {
+                unsafe { (*this.value.get()).as_mut_ptr().write(_f()) };
+            }}
         }
 
         /// Drop the contained value
@@ -177,6 +186,8 @@ mod lazy_impl {
 
 #[cfg(debug_mode)]
 mod lazy_impl {
+    #[cfg(feature = "likely")]
+    use likely_stable::if_unlikely;
     use super::StaticInfo;
     use core::cell::Cell;
     use core::cell::UnsafeCell;
@@ -254,6 +265,7 @@ mod lazy_impl {
         where
             F: FnOnce() -> T,
         {
+            #[cfg(not(feature = "likely"))]
             if let Some(f) = this.init_exp.take() {
                 match this.status.get() {
                     Status::NotInitialized => {
@@ -264,6 +276,19 @@ mod lazy_impl {
                     _ => panic!("Unexpected"),
                 }
             }
+
+            #[cfg(feature = "likely")]
+            if_unlikely!{let Some(_f)  = this.init_exp.take() => {
+                match this.status.get() {
+                    Status::NotInitialized => {
+                        this.status.set(Status::Initializing);
+                        unsafe { (*this.value.get()).as_mut_ptr().write(_f()) };
+                        this.status.set(Status::Initialized);
+                    }
+                    _ => panic!("Unexpected"),
+                }
+            }}
+
         }
         /// Drop the contained value
         ///
