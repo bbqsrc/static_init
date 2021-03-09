@@ -3,29 +3,37 @@ use super::StaticInfo;
 
 pub use lazy_impl::{ConstLazy, Lazy};
 
-#[cfg(support_priority)]
+#[cfg(all(support_priority,not(feature = "test_no_global_lazy_hint")))]
 mod inited {
 
     use core::sync::atomic::{AtomicBool, Ordering};
 
-    pub static LAZY_INIT_ENSURED: AtomicBool = AtomicBool::new(false);
+    static LAZY_INIT_ENSURED: AtomicBool = AtomicBool::new(false);
 
     #[static_init_macro::constructor(__lazy_init_finished)]
     extern "C" fn mark_inited() {
         LAZY_INIT_ENSURED.store(true, Ordering::Release);
     }
+    
+    #[inline(always)]
+    pub(crate) fn global_inited_hint() -> bool {
+        LAZY_INIT_ENSURED.load(Ordering::Acquire)
+    }
 }
 
-#[cfg(support_priority)]
-use inited::LAZY_INIT_ENSURED;
+#[cfg(all(support_priority,not(feature = "test_no_global_lazy_hint")))]
+use inited::global_inited_hint;
 
-#[cfg(not(support_priority))]
-const LAZY_INIT_ENSURED: bool = false;
+#[cfg(not(all(support_priority,not(feature = "test_no_global_lazy_hint"))))]
+#[inline(always)]
+fn global_inited_hint() -> bool {
+    false
+}
 
 #[cfg(debug_mode)]
 mod lazy_impl {
     use super::StaticInfo;
-    use super::LAZY_INIT_ENSURED;
+    use super::global_inited_hint;
 
     use core::cell::Cell;
     use core::cell::UnsafeCell;
@@ -138,7 +146,7 @@ mod lazy_impl {
         where
             F: FnOnce() -> T,
         {
-            if !LAZY_INIT_ENSURED.load(Ordering::Acquire) {
+            if !global_inited_hint() {
                 Self::__do_init(this);
             }
             if this.dropped.load(Ordering::Acquire) {
@@ -263,7 +271,7 @@ mod lazy_impl {
 
 #[cfg(not(debug_mode))]
 mod lazy_impl {
-    use super::LAZY_INIT_ENSURED;
+    use super::global_inited_hint;
 
     use core::cell::Cell;
     use core::cell::UnsafeCell;
@@ -271,7 +279,6 @@ mod lazy_impl {
     use core::hint::unreachable_unchecked;
     use core::mem::MaybeUninit;
     use core::ops::{Deref, DerefMut};
-    use core::sync::atomic::Ordering;
 
     use parking_lot::Once;
 
@@ -342,7 +349,7 @@ mod lazy_impl {
         where
             F: FnOnce() -> T,
         {
-            if !LAZY_INIT_ENSURED.load(Ordering::Acquire) {
+            if !global_inited_hint() {
                 Self::__do_init(this);
             }
         }

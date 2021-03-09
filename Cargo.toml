@@ -1,11 +1,11 @@
 [package]
 name = "static_init"
-version = "0.5.1"
+version = "0.5.2"
 authors = ["Olivier Kannengieser <okannen@gmail.com>"]
 edition = "2018"
 description = "Code execution during program initialization/termination phases and non const static initialization (and drop)"
-keywords = ["no_std","utility","static","constructor","initialization"]
-categories = ["no-std","os"]
+keywords = ["no_std","optimization","static","preformance","constructor"]
+categories = ["no-std","rust-patterns","memory-management"]
 repository = "https://gitlab.com/okannen/static_init"
 license = "MIT OR Apache-2.0"
 
@@ -29,8 +29,10 @@ debug_order = ["static_init_macro/debug_order"]
 # for thread local lazy static drop capability => requires std library
 thread_local_drop = ["static_init_macro/thread_local_drop"]
 
-# internal feature to enable thread local test on nightly rust
+# internal feature to enable tests
 test_thread_local = []
+test_no_global_lazy_hint = []
+
 
 default = ["lazy", "atexit", "thread_local_drop"]
 
