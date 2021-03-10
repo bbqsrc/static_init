@@ -6,6 +6,8 @@
 // copied, modified, or distributed except according to those terms.
 
 #![cfg_attr(not(any(feature = "lazy",feature="thread_local_drop")), no_std)]
+#![cfg_attr(all(elf),feature(linkage))]
+#![feature(thread_local)]
 //! Non const static initialization, and program constructor/destructor code.
 //!
 //! # Lesser Lazy Statics
@@ -283,6 +285,9 @@ pub use static_lazy::{Lazy,ConstLazy};
 mod thread_local_lazy;
 
 pub use thread_local_lazy::{Lazy as ThreadLocalLazy, ConstLazy as ThreadLocalConstLazy};
+
+pub mod at_thread_exit;
+pub mod at_exit;
 
 #[cfg(feature = "thread_local_drop")]
 pub use thread_local_lazy::__push_tls_destructor;
