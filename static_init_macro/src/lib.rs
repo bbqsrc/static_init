@@ -121,9 +121,15 @@ fn const_dtor_no_support() -> TokenStream {
 }
 
 fn init_section(priority: u16) -> Result<String, TokenStream> {
+    //Todo priority bellow(65535-100) should be unsafe
+    //or increase the number to be above 100
+    //
+    //idem put Room for lesser lazy initialized later
     if cfg!(elf) {
         Ok(format!(".init_array.{:05}", 65535 - priority))
     } else if cfg!(mach_o) {
+        //on mach it is not clear of ObjC runtime is initialized
+        //before or after constructors that are here
         if priority != 0 {
             Err(quote!(compile_error!(
                 "Constructor priority other than 0 not supported on this plateform."
@@ -133,6 +139,8 @@ fn init_section(priority: u16) -> Result<String, TokenStream> {
             Ok("__DATA,__mod_init_func".to_string())
         }
     } else if cfg!(coff) {
+        //on window the c runtime is already initialized
+        //so no trouble here
         Ok(format!(".CRT$XCTZ{:05}", 65535 - priority))
     } else {
         Err(const_dtor_no_support())

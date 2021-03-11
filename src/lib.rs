@@ -8,6 +8,7 @@
 #![cfg_attr(not(any(feature = "lazy",feature="thread_local_drop")), no_std)]
 #![cfg_attr(all(elf),feature(linkage))]
 #![feature(thread_local)]
+#![feature(cfg_target_thread_local)]
 //! Non const static initialization, and program constructor/destructor code.
 //!
 //! # Lesser Lazy Statics
@@ -289,8 +290,13 @@ pub use thread_local_lazy::{Lazy as ThreadLocalLazy, ConstLazy as ThreadLocalCon
 pub mod at_thread_exit;
 pub mod at_exit;
 
+
 #[cfg(feature = "thread_local_drop")]
 pub use thread_local_lazy::__push_tls_destructor;
+
+pub trait ConstDrop {
+    fn const_drop(&self);
+}
 
 union StaticBase<T> {
     k: (),
