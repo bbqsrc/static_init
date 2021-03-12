@@ -26,7 +26,18 @@ fn main() {
 
         debug_mode: { any(feature = "debug_order", debug_assertions) },
 
-        support_priority: { any(elf,coff) }
+        support_priority: { any(elf,coff) },
+
+        cxa_thread_at_exit: { any(
+            target_os = "linux", 
+            target_os = "fushia", 
+            target_os = "redox", 
+            target_os = "emscripten" ,
+            target_env = "gnu")},
+
+        pthread_thread_at_exit: { all(any(unix,target_env="gnu"),not(cxa_thread_at_exit)) },
+
+        coff_thread_at_exit: {all(coff,not(pthread_thread_at_exit))},
 
     }
 }

@@ -17,6 +17,10 @@ use core::ptr::NonNull;
 /// is run at thread exit, the data owned and accessed by the handler is necessarily thread
 /// local and registration is unlikely to cause any memory allocation. State needed to ensure
 /// at thread local exit functionnality is stored directly within the object.
+///
+/// Function registered through this type will be called in reverse order. There is no
+/// order between those registrations and those performed by C++ thread locals or standard library
+/// thread locals declared with `thread_local!` macro.
 pub struct AtThreadLocalExit<T> {
     pub data:    T,
     pub managed: AtThreadLocalExitManaged,
@@ -54,7 +58,7 @@ pub const COMPLETE_INIT: AtThreadLocalExitManaged = AtThreadLocalExitManaged {
 
 trait OnThreadExit {
     fn execute(&self);
-    fn set_next(&self, _: NonNull<dyn OnThreadExit>);
+    fn set_next(&self, _: Option<NonNull<dyn OnThreadExit>>);
     fn take_next(&self) -> Option<NonNull<dyn OnThreadExit>>;
 }
 
@@ -67,7 +71,8 @@ impl<T: 'static + ConstDrop> AtThreadLocalExit<T> {
     /// thread destruction
     ///
     /// # Safety
-    ///  self must be a thread_local.
+    ///
+    ///  `self` must refer to a thread_local static object of the current thread other
     pub unsafe fn register(&self) -> Result<(), Status> {
         let status = self.managed.status.get();
         if status == Status::NonRegistered {
@@ -93,8 +98,8 @@ impl<T: ConstDrop> OnThreadExit for AtThreadLocalExit<T> {
         self.data.const_drop();
         self.managed.status.set(Status::Executed);
     }
-    fn set_next(&self, ptr: NonNull<dyn OnThreadExit>) {
-        self.managed.next.set(Some(ptr));
+    fn set_next(&self, ptr: Option<NonNull<dyn OnThreadExit>>) {
+        self.managed.next.set(ptr);
     }
     fn take_next(&self) -> Option<NonNull<dyn OnThreadExit>> {
         self.managed.next.take()
@@ -102,22 +107,27 @@ impl<T: ConstDrop> OnThreadExit for AtThreadLocalExit<T> {
 }
 
 
-#[cfg(coff)]
+#[cfg(coff_thread_at_exit)]
 mod windows {
     use super::OnThreadExit;
     use core::cell::Cell;
     use core::ptr::NonNull;
+
+    #[cfg(target_arch = "x86_64")]
+    type Reason = u64;
+    #[cfg(target_arch = "i686")]
+    type Reason = u32;
     //On thread exit
     //non nul pointers between .CRT$XLA and .CRT$XLZ will be
     //run... => So we could implement thread_local drop without
     //registration...
     #[link_section = ".CRT$XLAZ"] //do this after the standard library
     #[used]
-    pub static AT_THEAD_EXIT: extern "system" fn(*mut u8, u64, *mut u8) = destroy;
+    pub static AT_THEAD_EXIT: extern "system" fn(*mut u8, Reason, *mut u8) = destroy;
 
-    extern "system" fn destroy(_: *mut u8, reason: u64, _: *mut u8) {
-        const DLL_THREAD_DETACH: u64 = 3;
-        const DLL_PROCESS_DETACH: u64 = 0;
+    extern "system" fn destroy(_: *mut u8, reason: Reason, _: *mut u8) {
+        const DLL_THREAD_DETACH: Reason = 3;
+        const DLL_PROCESS_DETACH: Reason = 0;
         if reason == DLL_THREAD_DETACH || reason == DLL_PROCESS_DETACH {
             let mut o_ptr = REGISTER.take();
             while let Some(ptr) = o_ptr {
@@ -133,6 +143,8 @@ mod windows {
         //
         // See comments above for what this is doing. Note that we don't need this
         // trickery on GNU windows, just on MSVC.
+        //
+        // TODO: better implement it as in libstdc++ implementation of __cxa_thread_atexit?
         unsafe { reference_tls_used() };
         #[cfg(target_env = "msvc")]
         unsafe fn reference_tls_used() {
@@ -155,10 +167,7 @@ mod windows {
         if DONE.get() {
             false
         } else {
-            let old = REGISTER.take();
-            if let Some(old) = old {
-                r.set_next(old);
-            }
+            r.set_next(REGISTER.take());
             REGISTER.set(Some(NonNull::new_unchecked(r as *const _ as *mut _)));
             true
         }
@@ -169,8 +178,8 @@ mod windows {
     }
 }
 
-#[cfg(elf)]
-mod elf {
+#[cfg(cxa_thread_at_exit)]
+mod cxa {
     use super::OnThreadExit;
     use core::cell::Cell;
     use core::ptr::{self, NonNull};
@@ -181,15 +190,16 @@ mod elf {
         static __cxa_thread_atexit_impl: *const core::ffi::c_void;
     }
 
-    type CxaThreadAtExit =
-        extern "C" fn(f: extern "C" fn(*mut u8), data: *mut u8, dso_handle: *mut u8);
-
     /// Register a function along with a pointer.
     ///
     /// When the thread exit, functions register with this
     /// function will be called in reverse order of their addition
     /// and will take as argument the `data`.
     fn at_thread_exit(f: extern "C" fn(*mut u8), data: *mut u8) {
+
+        type CxaThreadAtExit =
+            extern "C" fn(f: extern "C" fn(*mut u8), data: *mut u8, dso_handle: *mut u8);
+
         unsafe {
             assert!(!__cxa_thread_atexit_impl.is_null()); //
             let at_thread_exit_impl: CxaThreadAtExit =
@@ -201,21 +211,26 @@ mod elf {
     #[thread_local]
     static REGISTER: Cell<Option<NonNull<dyn OnThreadExit>>> = Cell::new(None);
 
+    #[thread_local]
+    static DESTROYING: Cell<bool> = Cell::new(false);
+
     extern "C" fn execute_destroy(_: *mut u8) {
+        DESTROYING.set(true);
         let mut o_ptr = REGISTER.take();
         while let Some(ptr) = o_ptr {
             let r = unsafe { ptr.as_ref() };
             r.execute();
-            o_ptr = r.take_next();
+            o_ptr = r.take_next().or_else(|| REGISTER.take());
         }
+        DESTROYING.set(false);
     }
     /// #Safety
     /// r must refer to a (thread local) static
     pub(super) unsafe fn register_on_thread_exit(r: &(dyn OnThreadExit + 'static)) -> bool {
         let old = REGISTER.take();
         if let Some(old) = old {
-            r.set_next(old);
-        } else {
+            r.set_next(Some(old));
+        } else if !DESTROYING.get() {
             at_thread_exit(execute_destroy, ptr::null_mut())
         }
         REGISTER.set(Some(NonNull::new_unchecked(r as *const _ as *mut _)));
@@ -227,7 +242,7 @@ mod elf {
     }
 }
 
-#[cfg(all(not(any(elf,windows)),feature="libc"))]
+#[cfg(pthread_thread_at_exit)]
 mod pthread {
     use super::OnThreadExit;
     use core::cell::Cell;
@@ -248,22 +263,17 @@ mod pthread {
     #[thread_local]
     static ITERATION_COUNT: Cell<usize> = Cell::new(0);
 
-    extern "C" fn execute_destroy(ptr: *mut c_void) {
-        debug_assert!(!ptr.is_null());
+    #[thread_local]
+    static REGISTER: Cell<Option<NonNull<dyn OnThreadExit>>> = Cell::new(None);
 
-        let load_list = || {
-            let p = unsafe { &mut *(ptr as *mut Option<NonNull<dyn OnThreadExit>>) };
-            p.take()
-        };
+    extern "C" fn execute_destroy(_: *mut c_void) {
 
-        let mut opt_head = load_list();
+        let mut opt_head = REGISTER.take();
         while let Some(ptr) = opt_head {
             let r = unsafe { ptr.as_ref() };
             r.execute();
-            opt_head = r.take_next().or_else(|| load_list());
+            opt_head = r.take_next().or_else(|| REGISTER.take());
         }
-
-        unsafe { Box::<Option<NonNull<dyn OnThreadExit>>>::from_raw(ptr as *mut _) };
     }
 
     pub(super) unsafe fn register_on_thread_exit(r: &(dyn OnThreadExit + 'static)) -> bool {
@@ -302,15 +312,11 @@ mod pthread {
             key as pthread_key_t
         };
 
-        let specific = pthread_getspecific(key) as *mut Option<NonNull<dyn OnThreadExit + 'static>>;
+        let specific = pthread_getspecific(key);
 
         if specific.is_null() {
             if ITERATION_COUNT.get() < _POSIX_THREAD_DESTRUCTOR_ITERATIONS {
-                let b = Box::<Option<NonNull<dyn OnThreadExit + 'static>>>::new(None);
-                let specific = Box::into_raw(b);
-                if pthread_setspecific(key, specific as *mut c_void) == 0 {
-                    //NOMEM?
-                    Box::from_raw(specific);
+                if pthread_setspecific(key, NonNull::dangling().as_ptr()) == 0 {
                     return false;
                 }
                 ITERATION_COUNT.set(ITERATION_COUNT.get() + 1);
@@ -321,12 +327,9 @@ mod pthread {
             }
         }
 
-        // push node on the list
-        let old = &mut *specific;
-        if let Some(old) = old {
-            r.set_next(*old);
-        }
-        *old = Some(NonNull::new_unchecked(r as *const _ as *mut _));
+        r.set_next(REGISTER.take());
+
+        REGISTER.set(Some(NonNull::new_unchecked(r as *const _ as *mut _)));
 
         true
     }
@@ -345,23 +348,27 @@ mod pthread {
 // may cause UB if interoperating with a library written in C++ that
 // also use thread_locals.
 
-#[cfg(not(any(elf, windows)))]
+#[cfg(not(any(cxa_thread_at_exit,pthread_thread_at_exit,coff_thread_at_exit)))]
 mod fall_back {
-    // The fall back does not fix standard library bug reported above
-    struct Register(Cell<Option<NonNull<dyn OnThreadExit>>>);
+    
+    pub(super) unsafe fn register_on_thread_exit(r: &(dyn OnThreadExit + 'static)) -> bool {
+        false
+    }
 
-    thread_local! {
-        static REGISTER: Register = Register(Cell::new(None));
+    pub(crate) fn registration_closed() -> bool {
+        true
     }
 }
 
-#[cfg(elf)]
-use elf::{register_on_thread_exit, registration_closed};
-//#[cfg(mach_o)]
-//use mach_o::register_on_thread_exit;
-#[cfg(windows)]
+#[cfg(cxa_thread_at_exit)]
+use cxa::{register_on_thread_exit, registration_closed};
+
+#[cfg(coff_thread_at_exit)]
 use windows::{register_on_thread_exit, registration_closed};
 
-#[cfg(all(not(any(elf, windows)), feature = "libc"))]
+#[cfg(pthread_thread_at_exit)]
 use pthread::{register_on_thread_exit, registration_closed};
+
+#[cfg(not(any(cxa_thread_at_exit,pthread_thread_at_exit,coff_thread_at_exit)))]
+use fall_back::{register_on_thread_exit, registration_closed};
 
