@@ -5,8 +5,8 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-#![cfg_attr(not(any(feature = "lazy",feature="thread_local_drop")), no_std)]
-#![cfg_attr(all(elf),feature(linkage))]
+#![cfg_attr(not(any(feature = "lazy", feature = "thread_local_drop")), no_std)]
+#![cfg_attr(all(elf), feature(linkage))]
 #![feature(thread_local)]
 #![feature(cfg_target_thread_local)]
 //! Non const static initialization, and program constructor/destructor code.
@@ -61,7 +61,7 @@
 //! #[dynamic(0)]
 //! //equivalent to #[dynamic(init=0)]
 //! static D1: Vec<i32> = vec![1,2,3];
-//! 
+//!
 //! assert_eq!(unsafe{D1[0]}, 1);
 //! ```
 //! As can be seen above, even if D1 is not mutable, access to it must be performed in unsafe
@@ -264,9 +264,212 @@
 ///  So static initialization function pointers are placed in section ".CRT$XCU" and
 ///  those with a priority `p` in `format!(".CRT$XCTZ{:05}",65535-p)`. Destructors without priority
 ///  are placed in ".CRT$XPU" and those with a priority in `format!(".CRT$XPTZ{:05}",65535-p)`.
-mod details {}
+///
+// # Potential usages:
+//
+// ## Initialization of a runtime as a static object
+//
+// Pros:
+//
+//   - Access to runtime is done through the static object which
+//   simplify program code: there is no need to pass the runtime
+//   as an argument.
+//
+// Cons with Lazy:
+//
+//   - Slow down due to recurring check to see weither the static is initialized or not
+//
+//   - Lazy may lead to cycles which will lock the program, but that can be detected in debug mode
+//
+// Cons with QuasiLazy:
+//
+//   - Non optional initialization of the runtime so it is better not used in a library
+//   or only as a opt-in feature.
+//
+//   - Fall back to Lazy on mach and plateforms that are not unixes or windows
+//
+//   - Same trouble with cycles
+//
+// Cons with Dynamic Static:
+//
+//   - Undefined behavior if combined with other dynamic statics that try to access it: it
+//   should only be used in final executable crate: but this can be detected in debug mode
+//
+//   - Only on windows
+//
+// Pros with const initialized lazy:
+//
+//   - the object is const initialized but uses a initialization function which can fails
+//   so that the object works in degradated mod.
+//
+//   - it should be possible in this case to try again initialization
+//
+//   - or to know if it has succeeded or not (but leave this as an option)
+//
+// Pros with const initialized lazy:
+//
+//   - Any access time cost may actualy be forwarded to
+//   of the runtime static object if it must adapt its behavior
+//   on its initialization state. But for the case that interest me
+//   the object may but itself in uninitialized state during normal
+//   execution so there are no cost of such const initialization. For
+//   this object the const initialization consist in registrating the destructor.
+//   On the other hand, trial to check this registration on each access is unusefull
+//   and could be done when the object detect itself it is in an uninitialized state.
+//
+//   More over the object needs to know if registration not even initialization cause
+//   a recursion and it is perfectly able to avoid dead lock in this case as it fallback
+//   to a degradated mode.
+//
+//
+//
+//
+// On the usage of drop:
+//
+//   - drop may be used to for logging, releasing resources etc.
+//
+//   - it is guaranteed to be executed once, this is what is interesting
+//
+//   - it potentitialy leave the object in an invalid state, this is obsolutely
+//   unusefull and only leads to UB.
+//
+//   - So either drop is used for finalization and any access to the object after
+//   that finalization should lead to panic => runtime cost for checking object
+//   state
+//
+//   - Or we use a more invariant friendly drop => Finaly trait that takes a const
+//   object.
+//
+// ## Initialization of a runtime as a thread local object
+//
+// A thread local runtime is interesting in the case where access to the runtime object
+// may needs synchronization. In this case some of the synchronization primitive may be
+// avoided.
+//
+// As it is not possible to declare an initialization at thread start up (though it could
+// be implemented in the standard library quite easily for windows and unixes)
+//
+// The initialized runtime thread local object may want to release resources at thread exit
+// so it needs a finalization phase.
+//
+// The actual thread_local! implementation in the library may leads to resources leak as
+// thread_local object destructor may not be called.
+//
+// So the crate provides a thread_local implementation that is safer that the one of the standard
+// library:
+//
+//   - registration success of a finalization steps guarantee it will be run.
+//
+//   - registration failure is reported
+//
+// What about const initialized const finalized in may case:
+//   - actuellement l'objet détecte si il est dans un état non initialisé et essaie la
+//   registration du destructeur dans ce cas. Il enregistre le fait qu'il essaie de s'enregistrer.
+//   Si la registration est en cours et qu'il est appelé de façon cyclique il sait comment
+//   s'adapter. Donc les accèss cyclique sont parfaitement acceptable et ne devrait pas causer
+//   de blocage. Deplus il faut que quand il détecte que la registration forme un cycle, il soit
+//   garanti que celle-ci réussise et que le destructeur soir appellé. Deplus une fois que le
+//   destructeur est appellé, il ne faut pas qu'il essait de s'enregistrer à nouveau et qu'il
+//   fonctionne en mode dégradé.
+//
+//   Il me faut donc plus de souplesse dans l'éplémentation, un tel objet aurait besoin d'accéder
+//   directement le at_exit. Le problème est le cractère unsafe de la registration qui est laissée
+//   à l'utilisateur final. Comment faire. Le statut doit être dans les méthodes de l'objet.
+//
+//   Donc il faut:
+//     - Fournir de façon publique l'objet qui assure le management et que l'interface
+//     de cette objet permette à l'utilisateur de connaitre lui-même la phase dans laquelle est
+//     l'objet.
+//     - Le wrapper fournit par le crate accèderai alors à cette objet via un trait que
+//     l'utilisateur implémenterai lui-meme. De sorte que les macros de la librairie serait
+//     ensuite les seules responsable des phases dangereuses?
+//
+//  Comment faire dans mon cas: c'est l'objet lui-meme qui demande la registration et il faut
+//  fournir cette possibilité à l'utilisateur final de façon safe. Il s'assurer que l'objet
+//  ne puisse être construit qu'au travers de la librairie.
+//
+//  Comment résoud cela la librairie standard: elle déclare l'objet comme un objet normal
+//  accessible uniquement de facon statique et dont l'initializer est "caché". Deplus
+//  au lieu d'implémenter deref, elle implémente "with" comme une méthode n'acceptant que les objet
+//  statiques.
+//
+//  Le problème est qu'il est impossible de fournir une méthode deref dans ce cas.
+//
+//  Donc autant déclarer un fonction new as unsafe, pour créer l'objet. La macro ne
+//  se prive pas de le créer puisque qu'elle assurera qu'il soit thread_local.
 
-//use core::mem::ManuallyDrop;
+/// Manager and Data should refer to object that are parts of Self structure.
+///
+/// Moreover, to be usable the type should provide an associated function of signature:
+/// `unsafe const fn new_static(<init_expr>, _:Manager) -> Self` which is safe to call as long as
+/// the target object is a static.
+///
+/// The data refered by manager should not be modified by the implementor
+/// of the trait (for example through a union).
+pub unsafe trait Static: 'static + Sized {
+    type Data: 'static;
+    type Manager: 'static;
+    fn manager(this: &Self) -> &Self::Manager;
+    fn data(this: &Self) -> &Self::Data;
+}
+//Le manager est une struct publique,
+//avec une interface qui est safe, mais
+//dont la safety n'est assuré que dans la mesure
+//ou le manager et donc l'objet qui le contient
+//est thread local.
+//
+//Il faut donc que l'objet propose une fonction new_managed
+//qui soit unsafe et const. Et celle si doit produire un objet
+//contenant the manager qui est référencé par les appel à `manager`.
+//le unsafe const new_managed(<Self as Deref>::Target,Manager)
+
+pub trait Manager<T: Static<Manager = Self>>: 'static + Sized {
+    /// return the current phase
+    fn phase(&self) -> Phase;
+    /// Execute once init and, depending on the manager register <T as Finaly>::finaly
+    /// for execution at program exit or thread exit.
+    ///
+    /// will panic if previous attempt to initialize
+    /// leed to a panic
+    ///
+    /// the `init` function is run before registration
+    /// of Finally::finaly for this type target. If it
+    /// returns false, registration of finaly is skiped.
+    ///
+    /// TODO: init is run only if registration of finaly if any
+    /// is guaranteed to succeed but registration is not done
+    /// if init return false
+    fn register(
+        s: &T,
+        init: impl FnOnce(&<T as Static>::Data) -> bool,
+        on_registration_failure: impl FnOnce(&<T as Static>::Data),
+    );
+}
+
+pub trait Generator<T> {
+    fn generate(_: &Self) -> T;
+}
+
+impl<U, T: Fn() -> U> Generator<U> for T {
+    fn generate(this: &Self) -> U {
+        this()
+    }
+}
+pub trait Recoverer<T> {
+    fn recover(this: &Self, _: &T);
+}
+
+impl<T: Fn(&T)> Recoverer<T> for T {
+    fn recover(this: &Self, data: &T) {
+        this(data)
+    }
+}
+
+pub trait Finaly {
+    fn finaly(&self);
+}
+
+mod details {}
 
 #[doc(inline)]
 pub use static_init_macro::constructor;
@@ -277,48 +480,83 @@ pub use static_init_macro::destructor;
 #[doc(inline)]
 pub use static_init_macro::dynamic;
 
-#[cfg(feature = "lazy")]
-mod static_lazy;
-//
-#[cfg(feature = "lazy")]
-//pub use static_lazy::{Lazy,ConstLazy};
-pub use static_lazy::{Lazy};
+mod generic_lazy;
+pub use generic_lazy::{GenericLazy, RegisterOnFirstAccess, UnInited};
 
-//mod thread_local_lazy;
-//
-//pub use thread_local_lazy::{Lazy as ThreadLocalLazy, ConstLazy as ThreadLocalConstLazy};
-//
-//pub mod at_thread_exit;
-pub mod at_exit;
+mod once;
+pub use once::{GlobalOnce, LocalOnce, PkOnce};
+//#[cfg(feature = "lazy")]
+//pub use static_lazy::Lazy;
 
+mod at_exit;
+pub use at_exit::{AtExit, AtThreadExit, AtGlobalExit, GlobalManager, LocalManager};
 
-//#[cfg(feature = "thread_local_drop")]
-//pub use thread_local_lazy::__push_tls_destructor;
-//
-pub trait ConstDrop {
-    fn const_drop(&self);
+pub mod raw_static;
+
+mod phase {
+    use core::mem::transmute;
+    use core::sync::atomic::{AtomicU8, Ordering};
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    #[repr(u8)]
+    pub enum Phase {
+        /// State before initialization phase. Depending on the category
+        /// of the static, it may mean the static is in an uninitialized
+        /// state, or in the state it has in early phase of program start up
+        New                = 0,
+        /// The initialization is running
+        Initialization     = 1,
+        /// For statics that are mean to execut a final staget on program/thread exit
+        /// the registration of the final execution is running
+        FinalyRegistration = 2,
+        /// State of the static after initilization end finaly registration succeed
+        Initialized        = 3,
+        /// drop_const is being executed     
+        FinalyExecution    = 4,
+        /// drop_const has been executed     
+        Finalized          = 5,
+        PostFinalyRegistrationFailure = 6,
+        /// drop_const is being executed     
+        InitializedWithoutFinaly = 7,
+        PostInitializationPanic = 8,
+        OnRegistrationFailurePanic = 9,
+        InitializedPostOnRegistrationFailure = 10,
+        PostFinalyExecutionPanic = 11,
+    }
+
+    pub(crate) struct AtomicPhase(AtomicU8);
+
+    impl AtomicPhase {
+        pub(crate) const fn new() -> Self {
+            Self(AtomicU8::new(0))
+        }
+        pub(crate) fn get(&self) -> Phase {
+            unsafe { transmute(self.0.load(Ordering::Acquire)) }
+        }
+        pub(crate) fn set(&self, p: Phase) {
+            self.0.store(p as u8, Ordering::Release)
+        }
+    }
 }
+pub use phase::Phase;
 
-impl<T> ConstDrop for T {
-    fn const_drop(&self){}
-}
+use phase::AtomicPhase;
 
 #[derive(Debug)]
 #[doc(hidden)]
 pub enum InitMode {
     Const,
     Lazy,
-    Dynamic(u16),
+    ProgramConstructor(u16),
 }
 
 #[derive(Debug)]
 #[doc(hidden)]
-pub enum DropMode {
+pub enum FinalyMode {
     None,
     AtExit,
-    Dynamic(u16),
+    ProgramDestructor(u16),
 }
-
 
 #[derive(Debug)]
 #[doc(hidden)]
@@ -327,299 +565,112 @@ pub struct StaticInfo {
     pub file_name:     &'static str,
     pub line:          u32,
     pub column:        u32,
-    pub init_mode: InitMode,
-    pub drop_mode: DropMode,
+    pub init_mode:     InitMode,
+    pub drop_mode:     FinalyMode,
 }
 
-//union StaticBase<T> {
-//    k: (),
-//    v: ManuallyDrop<T>,
-//}
-//
-//
-//pub use static_impl::{Static, ConstStatic,__set_init_prio};
-//
-//#[cfg(debug_mode)]
-//mod static_impl {
-//    use super::{StaticBase,StaticInfo,InitMode,DropMode};
-//    use core::mem::ManuallyDrop;
-//    use core::ops::{Deref,DerefMut};
-//    use core::cell::UnsafeCell;
-//  /// The actual type of mutable *dynamic statics*.
-//  ///
-//  /// It implements `Deref<Target=T>` and `DerefMut`.
-//  ///
-//  /// All associated functions are only usefull for the implementation of
-//  /// the `dynamic` proc macro attribute
-//  pub struct Static<T>(
-//      StaticBase<T>,
-//      StaticInfo,
-//      AtomicI32,
-//  );
-//
-//    /// The actual type of non mutable *dynamic statics*.
-//    ///
-//    /// It implements `Deref<Target=T>`.
-//    ///
-//    /// All associated functions are only usefull for the implementation of
-//    /// the `dynamic` proc macro attribute
-//    pub struct ConstStatic<T>(UnsafeCell<Static<T>>);
-//
-//  
-//  
-//  use core::sync::atomic::{AtomicI32, Ordering};
-//  
-//  static CUR_INIT_PRIO: AtomicI32 = AtomicI32::new(i32::MIN);
-//  
-//  static CUR_DROP_PRIO: AtomicI32 = AtomicI32::new(i32::MIN);
-//  
-//  #[doc(hidden)]
-//  #[inline]
-//  pub fn __set_init_prio(v: i32) {
-//      CUR_INIT_PRIO.store(v, Ordering::Relaxed);
-//  }
-//
-//  impl<T> Static<T> {
-//      #[inline]
-//      pub const fn uninit(info: StaticInfo) -> Self {
-//              Self(StaticBase { k: () }, info, AtomicI32::new(0))
-//      }
-//      #[inline]
-//      pub const fn from(v: T, info: StaticInfo) -> Self {
-//              Static(
-//                  StaticBase {
-//                      v: ManuallyDrop::new(v),
-//                  },
-//                  info,
-//                  AtomicI32::new(1),
-//              )
-//      }
-//  
-//      #[inline]
-//      pub unsafe fn set_to(this: &mut Self, v: T) {
-//              this.0.v = ManuallyDrop::new(v);
-//              this.2.store(1, Ordering::Relaxed);
-//      }
-//  
-//      #[inline]
-//      pub unsafe fn drop(this: &mut Self) {
-//              if let DropMode::Dynamic(prio) = &this.1.drop_mode {
-//                  CUR_DROP_PRIO.store(*prio as i32, Ordering::Relaxed);
-//                  ManuallyDrop::drop(&mut this.0.v);
-//                  CUR_DROP_PRIO.store(i32::MIN, Ordering::Relaxed);
-//              } else {
-//                  ManuallyDrop::drop(&mut this.0.v);
-//              };
-//              this.2.store(2, Ordering::Relaxed);
-//      }
-//  }
-//  
-//  #[inline]
-//  fn check_access(info: &StaticInfo, status: i32) {
-//      if status == 0 {
-//          core::panic!(
-//              "Attempt to access variable {:#?} before it is initialized during initialization \
-//               priority {}. Tip: increase init priority of this static to a value larger than \
-//               {prio} (attribute syntax: `#[dynamic(init=<prio>)]`)",
-//              info,
-//              prio = CUR_INIT_PRIO.load(Ordering::Relaxed)
-//          )
-//      }
-//      if status == 2 {
-//          core::panic!(
-//              "Attempt to access variable {:#?} after it was destroyed during destruction priority \
-//               {prio}. Tip increase drop priority of this static to a value larger than {prio} \
-//               (attribute syntax: `#[dynamic(drop=<prio>)]`)",
-//              info,
-//              prio = CUR_DROP_PRIO.load(Ordering::Relaxed)
-//          )
-//      }
-//      let init_prio = CUR_INIT_PRIO.load(Ordering::Relaxed);
-//      let drop_prio = CUR_DROP_PRIO.load(Ordering::Relaxed);
-//  
-//      if let DropMode::Dynamic(prio) = &info.drop_mode {
-//          if drop_prio == *prio as i32 {
-//              core::panic!(
-//                  "This access to variable {:#?} is not sequenced before to its drop. Tip increase drop \
-//                   priority of this static to a value larger than {prio} (attribute syntax: \
-//                   `#[dynamic(drop=<prio>)]`)",
-//                  info,
-//                  prio = drop_prio
-//              )
-//          } else if drop_prio > *prio as i32 {
-//          core::panic!(
-//              "Unexpected initialization order while accessing {:#?} from drop \
-//               priority {}. This is a bug of `static_init` library, please report \"
-//             the issue inside `static_init` repository.",
-//              info,
-//              drop_prio
-//          )
-//          }
-//      } 
-//  
-//      if let InitMode::Dynamic(prio) = &info.init_mode {
-//          if init_prio == *prio as i32 {
-//              core::panic!(
-//                  "This access to variable {:#?} is not sequenced after construction of this static. \
-//                   Tip increase init priority of this static to a value larger than {prio} (attribute \
-//                   syntax: `#[dynamic(init=<prio>)]`)",
-//                  info,
-//                  prio = init_prio
-//              )
-//          } else if init_prio > *prio as i32 {
-//          core::panic!(
-//              "Unexpected initialization order while accessing {:#?} from init priority {}\
-//               . This is a bug of `static_init` library, please report \"
-//             the issue inside `static_init` repository.",
-//              info,
-//              init_prio,
-//          )
-//          }
-//      } 
-//  }
-//  
-//  impl<T> Deref for Static<T> {
-//      type Target = T;
-//      #[inline(always)]
-//      fn deref(&self) -> &T {
-//          check_access(&self.1, self.2.load(Ordering::Relaxed));
-//          unsafe { &*self.0.v }
-//      }
-//  }
-//  impl<T> DerefMut for Static<T> {
-//      #[inline(always)]
-//      fn deref_mut(&mut self) -> &mut T {
-//          check_access(&self.1, self.2.load(Ordering::Relaxed));
-//          unsafe { &mut *self.0.v }
-//      }
-//  }
-//
-//    impl<T> ConstStatic<T> {
-//        #[inline]
-//        pub const fn uninit(info: StaticInfo) -> Self {
-//            Self(UnsafeCell::new(Static::uninit(info)))
-//        }
-//        #[inline]
-//        pub const fn from(v: T, info: StaticInfo) -> Self {
-//            Self(UnsafeCell::new(Static::from(v, info)))
-//        }
-//        #[inline]
-//        pub unsafe fn set_to(this: &Self, v: T) {
-//            Static::set_to(&mut (*this.0.get()), v)
-//        }
-//        #[inline]
-//        pub unsafe fn drop(this: &Self) {
-//            Static::drop(&mut *this.0.get());
-//        }
-//    }
-//    
-//    unsafe impl<T: Send> Send for ConstStatic<T> {}
-//    unsafe impl<T: Sync> Sync for ConstStatic<T> {}
-//    
-//    impl<T> Deref for ConstStatic<T> {
-//        type Target = T;
-//        #[inline(always)]
-//        fn deref(&self) -> &T {
-//            unsafe { &**self.0.get() }
-//        }
-//    }
-//}
-//
-//#[cfg(not(debug_mode))]
-//mod static_impl {
-//  use core::mem::ManuallyDrop;
-//  use core::ops::{Deref,DerefMut};
-//  use super::StaticBase;
-//    use core::cell::UnsafeCell;
-//  /// The actual type of mutable *dynamic statics*.
-//  ///
-//  /// It implements `Deref<Target=T>` and `DerefMut`.
-//  ///
-//  /// All associated functions are only usefull for the implementation of
-//  /// the `dynamic` proc macro attribute
-//  pub struct Static<T>(
-//      StaticBase<T>,
-//  );
-//
-//  /// The actual type of non mutable *dynamic statics*.
-//  ///
-//  /// It implements `Deref<Target=T>`.
-//  ///
-//  /// All associated functions are only usefull for the implementation of
-//  /// the `dynamic` proc macro attribute
-//  pub struct ConstStatic<T>(UnsafeCell<Static<T>>);
-//
-//  
-//  
-//  #[doc(hidden)]
-//  #[inline(always)]
-//  pub fn __set_init_prio(_: i32) {}
-//  
-//  //As a trait in order to avoid noise;
-//  impl<T> Static<T> {
-//      #[inline]
-//      pub const fn uninit() -> Self {
-//          Self(StaticBase { k: () })
-//      }
-//      #[inline]
-//      pub const fn from(v: T) -> Self {
-//         Static(StaticBase {
-//             v: ManuallyDrop::new(v),
-//         })
-//      }
-//  
-//      #[inline]
-//      pub unsafe fn set_to(this: &mut Self, v: T) {
-//          this.0.v = ManuallyDrop::new(v);
-//      }
-//  
-//      #[inline]
-//      pub unsafe fn drop(this: &mut Self) {
-//              ManuallyDrop::drop(&mut this.0.v);
-//      }
-//  }
-//  
-//  impl<T> Deref for Static<T> {
-//      type Target = T;
-//      #[inline(always)]
-//      fn deref(&self) -> &T {
-//          unsafe { &*self.0.v }
-//      }
-//  }
-//  impl<T> DerefMut for Static<T> {
-//      #[inline(always)]
-//      fn deref_mut(&mut self) -> &mut T {
-//          unsafe { &mut *self.0.v }
-//      }
-//  }
-//
-//    impl<T> ConstStatic<T> {
-//        #[inline]
-//        pub const fn uninit() -> Self {
-//            Self(UnsafeCell::new(Static::uninit()))
-//        }
-//        #[inline]
-//        pub const fn from(v: T) -> Self {
-//            Self(UnsafeCell::new(Static::from(v)))
-//        }
-//        #[inline]
-//        pub unsafe fn set_to(this: &Self, v: T) {
-//            Static::set_to(&mut (*this.0.get()), v)
-//        }
-//        #[inline]
-//        pub unsafe fn drop(this: &Self) {
-//            Static::drop(&mut *this.0.get());
-//        }
-//    }
-//    
-//    unsafe impl<T: Send> Send for ConstStatic<T> {}
-//    unsafe impl<T: Sync> Sync for ConstStatic<T> {}
-//    
-//    impl<T> Deref for ConstStatic<T> {
-//        type Target = T;
-//        #[inline(always)]
-//        fn deref(&self) -> &T {
-//            unsafe { &**self.0.get() }
-//        }
-//    }
-//}
+pub struct NullRecoverer;
+
+impl<T> Recoverer<T> for NullRecoverer {
+    fn recover(_: &Self, _: &T) {}
+}
+pub struct FinalyRecoverer;
+
+impl<T: Finaly> Recoverer<T> for FinalyRecoverer {
+    fn recover(_: &Self, d: &T) {
+        d.finaly()
+    }
+}
+
+pub type Lazy<T, G> = GenericLazy<T, G, NullRecoverer, PkOnce>;
+pub type LocalLazy<T, G> = GenericLazy<T, G, NullRecoverer, LocalOnce>;
+pub type GlobalLazy<T, G> = GenericLazy<T, G, NullRecoverer, GlobalOnce>;
+pub type LazyFinalize<T, G> = GenericLazy<T, G, FinalyRecoverer, AtExit>;
+pub type GlobalLazyFinalize<T, G> = GenericLazy<T, G, FinalyRecoverer, AtGlobalExit>;
+pub type LocalLazyFinalize<T, G> = GenericLazy<T, G, FinalyRecoverer, AtThreadExit>;
+
+#[cfg(test)]
+mod test_lazy {
+    use super::{PkOnce, Lazy, NullRecoverer};
+    static _X: Lazy<u32, fn() -> u32> =
+        unsafe { Lazy::new_static(|| {println!("runned");22}, NullRecoverer, PkOnce::new()) };
+    #[test]
+    fn test() {
+        assert_eq!(*_X, 22);
+    }
+}
+
+#[cfg(test)]
+mod test_global_lazy {
+    use super::{GlobalOnce, GlobalLazy, NullRecoverer};
+    static _X: GlobalLazy<u32, fn() -> u32> =
+        unsafe { GlobalLazy::new_static(|| {println!("runned");22}, NullRecoverer, GlobalOnce::new()) };
+    #[test]
+    fn test() {
+        assert_eq!(*_X, 22);
+    }
+}
+#[cfg(test)]
+mod test_local_lazy {
+    use super::{LocalLazy, LocalOnce, NullRecoverer};
+    #[thread_local]
+    static _X: LocalLazy<u32, fn() -> u32> =
+        unsafe { LocalLazy::new_static(|| 22, NullRecoverer, LocalOnce::new()) };
+    #[test]
+    fn test() {
+        assert_eq!(*_X, 22);
+    }
+}
+#[cfg(test)]
+mod test_lazy_finalize {
+    use super::{AtExit, Finaly, FinalyRecoverer, GlobalManager, LazyFinalize};
+    #[derive(Debug)]
+    struct A(u32);
+    impl Finaly for A {
+        fn finaly(&self) {}
+    }
+    static _X: LazyFinalize<A, fn() -> A> = unsafe {
+        LazyFinalize::new_static(|| A(22), FinalyRecoverer, AtExit::new(GlobalManager::new_pk()))
+    };
+    #[test]
+    fn test() {
+        assert_eq!(_X.0, 22);
+    }
+}
+#[cfg(test)]
+mod test_global_lazy_finalize {
+    use super::{AtGlobalExit, Finaly, FinalyRecoverer, GlobalManager, GlobalLazyFinalize};
+    #[derive(Debug)]
+    struct A(u32);
+    impl Finaly for A {
+        fn finaly(&self) {}
+    }
+    static _X: GlobalLazyFinalize<A, fn() -> A> = unsafe {
+        GlobalLazyFinalize::new_static(|| A(22), FinalyRecoverer, AtGlobalExit::new(GlobalManager::new()))
+    };
+    #[test]
+    fn test() {
+        assert_eq!(_X.0, 22);
+    }
+}
+#[cfg(test)]
+mod test_local_lazy_finalize {
+    use super::{AtThreadExit, Finaly, FinalyRecoverer, LocalLazyFinalize, LocalManager};
+    #[derive(Debug)]
+    struct A(u32);
+    impl Finaly for A {
+        fn finaly(&self) {}
+    }
+    #[thread_local]
+    static _X: LocalLazyFinalize<A, fn() -> A> = unsafe {
+        LocalLazyFinalize::new_static(
+            || A(22),
+            FinalyRecoverer,
+            AtThreadExit::new(LocalManager::new()),
+        )
+    };
+    #[test]
+    fn test() {
+        assert_eq!(_X.0, 22);
+    }
+}

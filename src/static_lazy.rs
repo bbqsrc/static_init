@@ -3,6 +3,8 @@ use core::cell::{Cell, UnsafeCell};
 use core::mem::{forget, MaybeUninit};
 use core::ops::{Deref, DerefMut};
 
+use crate::at_exit::{Status,AtExitTrait};
+
 pub use parking_lot::{Once as PkOnce, OnceState};
 
 #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
@@ -49,6 +51,8 @@ mod inited {
         }
     }
 }
+
+
 #[cfg(not(all(support_priority, not(feature = "test_no_global_lazy_hint"))))]
 mod uninited {
 
@@ -116,12 +120,22 @@ impl Once for PkOnce {
         self.state()
     }
 }
+struct NotOnce;
+impl Once for NotOnce {
+    fn call_once<F: FnOnce()>(&self, f: F) {
+        f()
+    }
+    fn state(&self) -> OnceState {
+       OnceState::New 
+    }
+}
+
 
 pub trait Generator<T> {
     fn generate(_: &Self) -> T;
 }
 
-impl<T: Fn() -> T> Generator<T> for T {
+impl<T: FnOnce() -> T> Generator<T> for T {
     fn generate(this: &Self) -> T {
         this()
     }
@@ -163,7 +177,7 @@ pub trait Once {
 trait AccessOnceTrait {
     /// with behavior similar to Once
     fn access_once(this: &Self);
-    fn state(this: &Self) -> OnceState;
+    fn state(this: &Self) -> Status;
 }
 
 /// Will call object of type F
@@ -233,16 +247,14 @@ impl<T, F, O> DerefMut for AccessOnceMut<T, F, O> {
         unsafe { &mut *self.value.get() }
     }
 }
-unsafe impl<T, F: Sync, O: Sync> Sync for AccessOnceMut<T, F, O> {}
-unsafe impl<T, F: Send, O: Send> Send for AccessOnceMut<T, F, O> {}
 
 impl<T, F: StaticAccessor<T>, O: Once> AccessOnceTrait for AccessOnce<T, F, O> {
     fn access_once(this: &Self) {
         this.once
             .call_once(|| StaticAccessor::access(&this.accessor, &this.value));
     }
-    fn state(this: &Self) -> OnceState {
-        this.once.state()
+    fn state(this: &Self) -> Status {
+        this.once.state().into()
     }
 }
 
@@ -253,10 +265,56 @@ impl<T, F: StaticAccessorMut<T>, O: Once> AccessOnceTrait for AccessOnceMut<T, F
         this.once
             .call_once(|| StaticAccessorMut::access_mut(accessor, unsafe { &mut *value.get() }));
     }
-    fn state(this: &Self) -> OnceState {
+    fn state(this: &Self) -> Status {
         this.once.state()
     }
 }
+
+/// Will call object of type F
+/// when `access_once` is called, and will do
+/// it only once.
+///
+/// The access will be throught type F implementation
+/// of StaticAccessor.
+pub struct AccessOnceAndRegister<T, F> {
+    value:    T,
+    accessor: F,
+}
+
+impl<T, F> AccessOnceAndRegister<T, F> {
+    const fn new(value: T, accessor: F) -> Self {
+        Self {
+            value,
+            accessor,
+        }
+    }
+}
+
+impl<T:Deref, F> Deref for AccessOnceAndRegister<T, F> {
+    type Target = <T as Deref>::Target;
+    fn deref(&self) -> &Self::Target {
+        &*self.value
+    }
+}
+
+impl<T:DerefMut, F> DerefMut for AccessOnceAndRegister<T, F> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut *self.value
+    }
+}
+
+impl<T: AtExitTrait, F: StaticAccessor<T>> AccessOnceTrait for AccessOnceAndRegister<T, F> {
+    fn access_once(this: &Self) {
+        this.value.register(|| StaticAccessor::access(&this.accessor, &this.value));
+    }
+    fn state(this: &Self) -> Status {
+        this.value.status()
+    }
+}
+
+
+
+
 
 /// Will perform the access to the variable
 /// when dereferenced
@@ -407,7 +465,7 @@ impl_lazy! {GlobalLazy,GlobalOnce, unsafe}
 
 impl_lazy! {LocalLazy,LocalOnce}
 
-//use crate::at_exit::{UnguardedAtExit, UNGUARDED_COMPLETE_INIT};
+use crate::at_exit::{AtExit};
 //use crate::ConstDrop;
 //
 ///// Will initialize the variable
