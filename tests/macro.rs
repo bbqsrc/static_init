@@ -7,7 +7,7 @@
 #![cfg_attr(feature = "test_thread_local", feature(thread_local))]
 
 extern crate static_init;
-use static_init::{constructor, destructor, dynamic};
+use static_init::{constructor, destructor, dynamic, Finaly};
 
 static mut DEST: i32 = 0;
 
@@ -93,6 +93,11 @@ impl A {
 }
 impl Drop for A {
     fn drop(&mut self) {
+        assert_eq!(self.0, 33)
+    }
+}
+impl Finaly for A {
+    fn finaly(&self) {
         assert_eq!(self.0, 33)
     }
 }
@@ -267,7 +272,7 @@ mod lazy {
 
     #[cfg(feature = "atexit")]
     #[dynamic(lazy, drop)]
-    static mut L2: A = A::new(unsafe { L3.0 });
+    static mut L2: A = A::new(L3.0);
 
     #[test]
     fn lazy_init() {

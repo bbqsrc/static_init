@@ -1,7 +1,7 @@
 #![cfg(any(elf, mach_o, coff))]
 
 use super::once::{Once, GlobalOnce};
-use super::{destructor, Finaly, Manager, Phase, Static};
+use super::{destructor, Finaly, Manager, ManagerBase, Phase, Static};
 use core::cell::Cell;
 use core::marker::PhantomData;
 use core::mem::{forget, transmute};
@@ -40,6 +40,7 @@ pub trait StatusHolder {
 
 struct OnPanic<'a, StH: StatusHolder>(&'a StH, Phase);
 impl<'a, StH: StatusHolder> Drop for OnPanic<'a, StH> {
+    #[inline(always)]
     fn drop(&mut self) {
         self.0.set_status(self.1)
     }
@@ -61,6 +62,7 @@ impl<
         T: Static<Data = Data, Manager = GenericAtExit<StH, ER>>,
     > OnExit for T
 {
+    #[inline(always)]
     fn execute(&self) {
         let at_exit = Static::manager(self);
 
@@ -71,25 +73,37 @@ impl<
 
         at_exit.manager.set_status(Phase::Finalized);
     }
+    #[inline(always)]
     unsafe fn set_next(&self, node: Option<Node>) {
         Static::manager(self).manager.set_next(node)
     }
+    #[inline(always)]
     fn get_next(&self) -> Option<Node> {
         Static::manager(self).manager.get_next()
     }
 }
-
 impl<
+        StH: StatusHolder,
+        ER,
+    > ManagerBase for GenericAtExit<StH, ER>
+{
+    #[inline(always)]
+    fn phase(&self) -> Phase {
+        self.manager.get_status()
+    }
+}
+
+//SAFETY: the panic requirement of register is ensured
+//by Once::call once
+unsafe impl<
         Data: Finaly + 'static,
         S: Static<Data = Data, Manager = Self>,
         StH: StatusHolder + 'static + Once,
         ER: 'static + ExitRegister,
     > Manager<S> for GenericAtExit<StH, ER>
 {
-    fn phase(&self) -> Phase {
-        self.manager.get_status()
-    }
 
+    #[inline(always)]
     fn register(st: &S, init: impl FnOnce(&Data) -> bool, on_reg_failure: impl FnOnce(&Data)) {
         let this = Static::manager(st);
         this.manager.call_once(|| {
@@ -100,7 +114,7 @@ impl<
 
             if register {
                 this.manager.set_status(Phase::FinalyRegistration);
-                let guard = OnPanic(&this.manager, Phase::PostFinalyRegistrationFailure);
+                let guard = OnPanic(&this.manager, Phase::PostFinalyRegistrationPanic);
                 let r = st as &(dyn 'static + OnExit);
                 let cond = ER::register(r);
                 forget(guard);
@@ -127,7 +141,7 @@ mod global_register {
     use crate::AtomicPhase;
 
     #[destructor(0)]
-    extern "C" fn execute_at_exit2() {
+    extern "C" fn execute_at_exit() {
         let mut l = REGISTER.lock();
         let mut list: Option<Node> = l.0.take().map(|n| n.0);
         drop(l);
@@ -154,19 +168,19 @@ mod global_register {
     /// Opaque type used for registration management
     /// To be used with GlobalRegister
     pub struct GlobalManager<O> {
-        next:   Cell<Option<Node>>,
         once:   O,
+        next:   Cell<Option<Node>>,
         status: AtomicPhase,
     }
 
     const GLOBAL_PK_INIT: GlobalManager<PkOnce> = GlobalManager {
-        status: AtomicPhase::new(),
         once:   PkOnce::new(),
+        status: AtomicPhase::new(),
         next:   Cell::new(None),
     };
     const GLOBAL_INIT: GlobalManager<GlobalOnce> = GlobalManager {
-        status: AtomicPhase::new(),
         once:   unsafe{GlobalOnce::new()},
+        status: AtomicPhase::new(),
         next:   Cell::new(None),
     };
     impl GlobalManager<GlobalOnce> {
@@ -194,28 +208,34 @@ mod global_register {
     }
 
     //All access of next are done when REGISTER2 is locked
+    //or when the access is exclusive in execute_at_exit
     unsafe impl<O:Sync> Sync for GlobalManager<O> {}
 
     impl<O> StatusHolder for GlobalManager<O> {
+        #[inline(always)]
         fn set_status(&self, s: Phase) {
             self.status.set(s);
         }
+        #[inline(always)]
         fn get_status(&self) -> Phase {
             unsafe { transmute(self.status.get()) }
         }
+        #[inline(always)]
         fn set_next(&self, node: Option<Node>) {
             assert!(REGISTER.is_locked());
             self.next.set(node)
         }
+        #[inline(always)]
         fn get_next(&self) -> Option<Node> {
-            assert!(REGISTER.is_locked());
             self.next.get()
         }
     }
     impl<O:Once> Once for GlobalManager<O> {
+        #[inline(always)]
         fn call_once<F: FnOnce()>(&self, f: F) {
             self.once.call_once(f)
         }
+        #[inline(always)]
         fn state(&self) -> OnceState {
             self.once.state()
         }
@@ -241,6 +261,7 @@ impl LocalManager {
     }
 }
 impl Once for LocalManager {
+    #[inline(always)]
     fn state(&self) -> OnceState {
         match self.status.get() {
             Phase::New => OnceState::New,
@@ -253,9 +274,11 @@ impl Once for LocalManager {
             | Phase::PostFinalyRegistrationFailure => OnceState::Done,
             Phase::PostInitializationPanic
             | Phase::OnRegistrationFailurePanic
-            | Phase::PostFinalyExecutionPanic => OnceState::Poisoned,
+            | Phase::PostFinalyExecutionPanic 
+            | Phase::PostFinalyRegistrationPanic=> OnceState::Poisoned,
         }
     }
+    #[inline(always)]
     fn call_once<F: FnOnce()>(&self, f: F) {
         if self.status.get() == Phase::New {
             f();
@@ -265,17 +288,21 @@ impl Once for LocalManager {
 }
 
 impl StatusHolder for LocalManager {
+    #[inline(always)]
     fn set_status(&self, s: Phase) {
         self.status.set(s);
     }
+    #[inline(always)]
     fn get_status(&self) -> Phase {
         self.status.get()
     }
     /// #Safety
     /// Node must last long enough
+    #[inline(always)]
     fn set_next(&self, node: Option<Node>) {
         self.next.set(node)
     }
+    #[inline(always)]
     fn get_next(&self) -> Option<Node> {
         self.next.get()
     }

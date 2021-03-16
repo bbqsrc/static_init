@@ -1,6 +1,6 @@
 pub use parking_lot::{Once as PkOnce, OnceState};
 
-use super::{Manager, Phase, Static};
+use super::{Manager,ManagerBase, Phase, Static};
 use core::cell::Cell;
 use core::mem::forget;
 
@@ -12,14 +12,18 @@ pub use uninited::GlobalOnce;
 pub struct LocalOnce(Cell<OnceState>);
 
 impl LocalOnce {
+    #[inline(always)]
     pub const fn new() -> Self {
         Self(Cell::new(OnceState::New))
     }
 }
 
 impl Once for LocalOnce {
+    #[inline(always)]
     fn call_once<F: FnOnce()>(&self, f: F) {
-        if !(self.0.get() == OnceState::Done) {
+        match self.0.get() {
+          OnceState::Done => (),
+          OnceState::New => {
             assert_eq!(self.0.get(), OnceState::New);
             self.0.set(OnceState::InProgress);
             struct OnPanic<'a>(&'a Cell<OnceState>);
@@ -32,17 +36,22 @@ impl Once for LocalOnce {
             f();
             forget(guard);
             self.0.set(OnceState::Done);
+            }
+        s => panic!("Bad call to call_once while state is {:?}",s),
         }
     }
+    #[inline(always)]
     fn state(&self) -> OnceState {
         self.0.get()
     }
 }
 
 impl Once for PkOnce {
+    #[inline(always)]
     fn call_once<F: FnOnce()>(&self, f: F) {
         self.call_once(f);
     }
+    #[inline(always)]
     fn state(&self) -> OnceState {
         self.state()
     }
@@ -54,7 +63,8 @@ pub trait Once {
     fn state(&self) -> OnceState;
 }
 
-impl<U: 'static + Once, T: 'static + Static<Manager = Self>> Manager<T> for U {
+impl<U: 'static + Once> ManagerBase for U {
+    #[inline(always)]
     fn phase(&self) -> Phase {
         match self.state() {
             OnceState::New => Phase::New,
@@ -63,6 +73,9 @@ impl<U: 'static + Once, T: 'static + Static<Manager = Self>> Manager<T> for U {
             OnceState::InProgress => Phase::Initialization,
         }
     }
+}
+unsafe impl<U: 'static + Once, T: 'static + Static<Manager = Self>> Manager<T> for U {
+    #[inline(always)]
     fn register(
         s: &T,
         init: impl FnOnce(&<T as Static>::Data) -> bool,
@@ -108,11 +121,13 @@ mod inited {
     }
 
     impl Once for GlobalOnce {
+        #[inline(always)]
         fn call_once<F: FnOnce()>(&self, f: F) {
-            if !global_inited_hint() {
+            if global_inited_hint() { } else {
                 self.0.call_once(f)
             }
         }
+        #[inline(always)]
         fn state(&self) -> OnceState {
             self.0.state()
         }
@@ -136,9 +151,11 @@ mod uninited {
     }
 
     impl Once for GlobalOnce {
+        #[inline(always)]
         fn call_once<F: FnOnce()>(&self, f: F) {
             self.0.call_once(f)
         }
+        #[inline(always)]
         fn state(&self) -> OnceState {
             self.0.state()
         }

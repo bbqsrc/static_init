@@ -726,35 +726,29 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         if stat.mutability.is_none() {
             into_mutable!();
             parse_quote! {
-                ::static_init::ConstStatic::<#stat_typ>
+                ::static_init::raw_static::ConstStatic::<#stat_typ>
             }
         } else {
             parse_quote! {
-                ::static_init::Static::<#stat_typ>
+                ::static_init::raw_static::Static::<#stat_typ>
             }
         }
-    } else if is_thread_local {
-        if stat.mutability.is_none() && options.drop == DropMode::AtExit {
-            into_mutable!();
+    } else if is_thread_local && options.drop == DropMode::AtExit {
             parse_quote! {
-                ::static_init::ThreadLocalConstLazy::<#stat_typ>
+                ::static_init::LocalLazyFinalize::<#stat_typ>
             }
-        } else {
+    } else if is_thread_local && !(options.drop == DropMode::AtExit){
             parse_quote! {
-                ::static_init::ThreadLocalLazy::<#stat_typ>
+                ::static_init::LocalLazy::<#stat_typ>
             }
+    } else if options.drop == DropMode::AtExit{
+        parse_quote! {
+            ::static_init::GlobalLazyFinalize::<#stat_typ>
         }
     } else {
-        if stat.mutability.is_none() && options.drop == DropMode::AtExit {
-            into_mutable!();
-            parse_quote! {
-                ::static_init::ConstLazy::<#stat_typ>
-            }
-        } else {
-            parse_quote! {
-                ::static_init::Lazy::<#stat_typ>
-            }
-        }
+         parse_quote! {
+             ::static_init::GlobalLazy::<#stat_typ>
+         }
     };
 
     let sp = stat.expr.span();
@@ -768,11 +762,11 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                     }
                     #attr
                     extern "C" fn __static_init_initializer() {
-                        ::static_init::__set_init_prio(#priority as i32);
+                        ::static_init::raw_static::__set_init_prio(#priority as i32);
                         let __static_init_expr_result = #expr;
                         unsafe {#typ::set_to(#stat_ref,__static_init_expr_result);
                         ::libc::atexit(__static_init_dropper)};
-                        ::static_init::__set_init_prio(i32::MIN);
+                        ::static_init::raw_static::__set_init_prio(i32::MIN);
                     }
             })
         }
@@ -782,23 +776,23 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             Some(quote_spanned! {sp=>
                     #attr
                     extern "C" fn __static_init_initializer() {
-                        ::static_init::__set_init_prio(#priority as i32);
+                        ::static_init::raw_static::__set_init_prio(#priority as i32);
                         let __static_init_expr_result = #expr;
                         unsafe {#typ::set_to(#stat_ref,__static_init_expr_result)};
-                        ::static_init::__set_init_prio(i32::MIN);
+                        ::static_init::raw_static::__set_init_prio(i32::MIN);
                     }
             })
         }
 
-        InitMode::Lazy => Some(quote_spanned! {sp=>
+        InitMode::Lazy if !is_thread_local => Some(quote_spanned! {sp=>
                 #[::static_init::constructor(__lazy_init)]
                 extern "C" fn __static_init_initializer() {
                     #[allow(unused_unsafe)]
-                    unsafe {#typ::__do_init(#stat_ref)};
+                    unsafe {#typ::register(#stat_ref)};
                 }
         }),
 
-        InitMode::Const => None,
+        InitMode::Const | InitMode::Lazy => None,
     };
 
     let droper = if let DropMode::Dynamic(priority) = options.drop {
@@ -846,48 +840,34 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             quote_spanned! {sp=>{
                 #initer
                 #droper
-                #typ::uninit(#static_info)
+                unsafe{#typ::uninit(#static_info)}
             }
             }
         }
-        InitMode::Lazy if !(options.drop == DropMode::AtExit) => {
-            quote_spanned! {sp=>{
+        InitMode::Lazy if cfg!(debug_mode) => {
+            quote_spanned!{sp=>{
                 #initer
-                #typ::new(|| {#expr},#static_info)
-            }
-            }
-        }
-        InitMode::Lazy if !is_thread_local => {
-            quote_spanned! {sp=>{
-                extern "C" fn __static_init_dropper() {
-                    unsafe{::core::ptr::drop_in_place(#typ::as_mut_ptr(#stat_ref))}
+
+                #[inline]
+                fn initer() -> #stat_typ {
+                    #expr
                 }
-                #initer
-                #typ::new(
-                    || {
-                        let v = (|| {#expr})();
-                        unsafe{::libc::atexit(__static_init_dropper)};
-                        v
-                        },
-                    #static_info
-                    )
-            }}
+
+                unsafe{#typ::new_static_with_info(initer,
+                    #static_info)}
+            }
+            }
         }
         InitMode::Lazy => {
-            //thread local drop
-            quote_spanned! {sp=>{
-                fn __static_init_dropper() {
-                    unsafe{::core::ptr::drop_in_place(#typ::as_mut_ptr(#stat_ref))}
-                }
+            quote_spanned!{sp=>{
                 #initer
-                #typ::new(
-                    || {
-                        let v = (|| {#expr})();
-                        unsafe{::static_init::__push_tls_destructor(__static_init_dropper)};
-                        v
-                        },
-                    #static_info
-                    )
+
+                #[inline]
+                fn initer() -> #stat_typ {
+                    #expr
+                }
+
+                unsafe{#typ::new_static(initer)}
             }
             }
         }
