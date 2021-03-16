@@ -267,11 +267,11 @@ mod lazy {
     static mut L0: A = A::new(10);
 
     #[cfg(feature = "atexit")]
-    #[dynamic(lazy, drop)]
+    #[dynamic(lazy, finalize)]
     static L3: A = A::new(33);
 
     #[cfg(feature = "atexit")]
-    #[dynamic(lazy, drop)]
+    #[dynamic(lazy, finalize)]
     static mut L2: A = A::new(L3.0);
 
     #[test]

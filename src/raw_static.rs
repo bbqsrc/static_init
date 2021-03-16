@@ -1,3 +1,6 @@
+#[cfg(debug_mode)]
+use super::{StaticInfo,InitMode,FinalyMode};
+
 use core::mem::ManuallyDrop;
 
 union StaticBase<T> {
@@ -9,7 +12,7 @@ pub use static_impl::{Static, ConstStatic,__set_init_prio};
 
 #[cfg(debug_mode)]
 mod static_impl {
-    use super::{StaticBase,StaticInfo,InitMode,DropMode};
+    use super::{StaticBase,StaticInfo,InitMode,FinalyMode};
     use core::mem::ManuallyDrop;
     use core::ops::{Deref,DerefMut};
     use core::cell::UnsafeCell;
@@ -71,7 +74,7 @@ mod static_impl {
   
       #[inline]
       pub unsafe fn drop(this: &mut Self) {
-              if let DropMode::Dynamic(prio) = &this.1.drop_mode {
+              if let FinalyMode::ProgramDestructor(prio) = &this.1.drop_mode {
                   CUR_DROP_PRIO.store(*prio as i32, Ordering::Relaxed);
                   ManuallyDrop::drop(&mut this.0.v);
                   CUR_DROP_PRIO.store(i32::MIN, Ordering::Relaxed);
@@ -105,7 +108,7 @@ mod static_impl {
       let init_prio = CUR_INIT_PRIO.load(Ordering::Relaxed);
       let drop_prio = CUR_DROP_PRIO.load(Ordering::Relaxed);
   
-      if let DropMode::Dynamic(prio) = &info.drop_mode {
+      if let FinalyMode::ProgramDestructor(prio) = &info.drop_mode {
           if drop_prio == *prio as i32 {
               core::panic!(
                   "This access to variable {:#?} is not sequenced before to its drop. Tip increase drop \
@@ -125,7 +128,7 @@ mod static_impl {
           }
       } 
   
-      if let InitMode::Dynamic(prio) = &info.init_mode {
+      if let InitMode::ProgramConstructor(prio) = &info.init_mode {
           if init_prio == *prio as i32 {
               core::panic!(
                   "This access to variable {:#?} is not sequenced after construction of this static. \
@@ -164,7 +167,7 @@ mod static_impl {
 
     impl<T> ConstStatic<T> {
         #[inline]
-        pub const fn uninit(info: StaticInfo) -> Self {
+        pub const unsafe fn uninit(info: StaticInfo) -> Self {
             Self(UnsafeCell::new(Static::uninit(info)))
         }
         #[inline]

@@ -1,12 +1,17 @@
 //use crate::{AtThreadExit, LocalManager};
-use crate::{Finaly, Generator, Manager, Recoverer, Static, StaticInfo, Phase};
+use crate::{Finaly, Generator, Manager, Static, StaticInfo, Phase};
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 use core::marker::PhantomData;
 
+#[cfg(debug_mode)]
+use crate::CyclicPanic;
+
 pub trait PhaseChecker {
     fn shall_proceed(_:Phase) -> bool;
+    #[inline(always)]
+    fn is_in_cycle(_:Phase)->bool {false}
 }
 
 pub struct RegisterOnFirstAccess<T,S> {
@@ -24,7 +29,7 @@ impl<M: Manager<T>, T: Static<Manager = M>, S:PhaseChecker> Deref for RegisterOn
     type Target = T;
     #[inline(always)]
     fn deref(&self) -> &T {
-        Manager::register(&self.value, S::shall_proceed, |_| true, |_| {});
+        Manager::register(&self.value, S::shall_proceed, |_| (),);
         &self.value
     }
 }
@@ -32,7 +37,7 @@ impl<M: Manager<T>, T: Static<Manager = M>, S:PhaseChecker> Deref for RegisterOn
 impl<M: Manager<T>, T: Static<Manager = M>, S:PhaseChecker> DerefMut for RegisterOnFirstAccess<T,S> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut T {
-        Manager::register(&self.value, S::shall_proceed, |_| true, |_| {});
+        Manager::register(&self.value, S::shall_proceed, |_| ());
         &mut self.value
     }
 }
@@ -46,41 +51,39 @@ impl<T: Finaly> Finaly for UnInited<T> {
     }
 }
 
-pub struct GenericLazy<T, F, G, M, S> {
+pub struct GenericLazy<T, F, M, S> {
     value:     UnInited<T>,
     generator: F,
-    recover:   G,
     manager:   M,
     phantom: PhantomData<S>,
     #[cfg(debug_mode)]
-    _info:     StaticInfo,
+    _info:     Option<StaticInfo>,
 }
-unsafe impl<T: Sync, F: Sync, G: Sync, M: Sync, S> Sync for GenericLazy<T, F, G, M,S> {}
+unsafe impl<T: Sync, F: Sync, M: Sync, S> Sync for GenericLazy<T, F, M,S> {}
 
-impl<T, F, G, M,S> GenericLazy<T, F, G, M,S> {
-    pub const unsafe fn new_static(generator: F, recover: G, manager: M) -> Self {
+impl<T, F, M,S> GenericLazy<T, F, M,S> {
+    pub const unsafe fn new_static(generator: F, manager: M) -> Self {
         Self {
             value: UnInited(UnsafeCell::new(MaybeUninit::uninit())),
             generator,
-            recover,
             manager,
             phantom:PhantomData,
+            #[cfg(debug_mode)]
+            _info: None
         }
     }
     pub const unsafe fn new_static_with_info(
         generator: F,
-        recover: G,
         manager: M,
         _info: StaticInfo,
     ) -> Self {
         Self {
             value: UnInited(UnsafeCell::new(MaybeUninit::uninit())),
             generator,
-            recover,
             manager,
             phantom:PhantomData,
             #[cfg(debug_mode)]
-            _info,
+            _info:Some(_info),
         }
     }
     #[inline(always)]
@@ -89,16 +92,14 @@ impl<T, F, G, M,S> GenericLazy<T, F, G, M,S> {
         T: 'static,
         M: 'static + Manager<Self>,
         F: 'static + Generator<T>,
-        G: 'static + Recoverer<T>,
         S: 'static + PhaseChecker
     {
         #[cfg(debug_mode)]
-        match Static::phase(self) {
-            Phase::Initialization | Phase::FinalyRegistration => {
-                panic!("Circular lazy initialization of {:#?}", self._info)
-            }
-            _ => (),
+        if S::is_in_cycle(self.manager.phase()) {
+            panic!("Circular initialization of {:#?}",self._info);
         }
+        #[cfg(not(debug_mode))]
+        {
         Manager::register(
             self,
             S::shall_proceed,
@@ -108,15 +109,35 @@ impl<T, F, G, M,S> GenericLazy<T, F, G, M,S> {
                 // Only one thread can ever get this mutable access
                 let d = Generator::generate(&self.generator);
                 unsafe { (*data.0.get()).as_mut_ptr().write(d) };
-                true
             },
-            |data| Recoverer::recover(&self.recover, unsafe { &*(*data.0.get()).as_ptr() }),
         );
+        }
+        #[cfg(debug_mode)]
+        {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Manager::register(
+            self,
+            S::shall_proceed,
+            |data: &UnInited<T>| {
+                // SAFETY
+                // This function is called only once within the register function
+                // Only one thread can ever get this mutable access
+                let d = Generator::generate(&self.generator);
+                unsafe { (*data.0.get()).as_mut_ptr().write(d) };
+            },
+        ))) {
+            Ok(_) => (),
+            Err(x) => if x.is::<CyclicPanic>() { 
+                panic!("Circular initialization of {:#?}", self._info);
+            } else {
+                std::panic::resume_unwind(x)
+            }
+        }
+        }
     }
 }
 
-impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, G: 'static + Recoverer<T>,S:'static+PhaseChecker> Deref
-    for GenericLazy<T, F, G, M, S>
+impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, S:'static+PhaseChecker> Deref
+    for GenericLazy<T, F, M, S>
 {
     type Target = T;
     #[inline(always)]
@@ -129,8 +150,8 @@ impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, G: 'static
     }
 }
 
-impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, G: 'static + Recoverer<T>,S:'static+PhaseChecker> DerefMut
-    for GenericLazy<T, F, G, M,S>
+impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, S:'static+PhaseChecker> DerefMut
+    for GenericLazy<T, F, M,S>
 {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut T {
@@ -139,8 +160,8 @@ impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, G: 'static
     }
 }
 
-unsafe impl<F: 'static + Generator<T>, T: 'static, M: 'static, G: 'static + Recoverer<T>, S:'static+PhaseChecker> Static
-    for GenericLazy<T, F, G, M, S>
+unsafe impl<F: 'static + Generator<T>, T: 'static, M: 'static, S:'static+PhaseChecker> Static
+    for GenericLazy<T, F, M, S>
 {
     type Data = UnInited<T>;
     type Manager = M;

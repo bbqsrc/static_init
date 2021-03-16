@@ -472,7 +472,8 @@ enum InitMode {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum DropMode {
     None,
-    AtExit,
+    Drop,
+    Finalize,
     Dynamic(u16),
 }
 
@@ -590,8 +591,16 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
                             generate_error!(id.span()=>"static_init crate feature `atexit` is not enabled.",id),
                         );
                     }
-                    opt.drop = DropMode::AtExit;
-                } else if id == "lazy" {
+                    opt.drop = DropMode::Drop;
+                } else if id == "finalize" {
+                    check_no_drop!(id);
+                    if !cfg!(feature = "atexit") {
+                        return Err(
+                            generate_error!(id.span()=>"static_init crate feature `atexit` is not enabled.",id),
+                        );
+                    }
+                    opt.drop = DropMode::Finalize;
+                }else if id == "lazy" {
                     check_no_init!(id);
                     opt.init = InitMode::Lazy;
                 } else {
@@ -637,7 +646,7 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
             "static_init crate feature `lazy` is not enabled."
         ))
     } else if opt.init == InitMode::Lazy
-        && !(opt.drop == DropMode::None || opt.drop == DropMode::AtExit)
+        && !(opt.drop == DropMode::None || opt.drop == DropMode::Finalize || opt.drop == DropMode::Drop)
     {
         Err(generate_error!("Drop mode not supported for lazy statics."))
     } else {
@@ -698,9 +707,14 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
              `#[thread_local]` attribute"
         );
     }
-    if is_thread_local && options.drop == DropMode::AtExit && !cfg!(feature = "thread_local_drop") {
+    if is_thread_local && (options.drop == DropMode::Finalize || options.drop == DropMode::Drop) && !cfg!(feature = "thread_local_drop") {
         return generate_error!(
             "`#[thread_local] #[dynamic(lazy,drop)]` needs static_init crate `thread_local_drop` feature"
+        );
+    }
+    if !is_thread_local && options.init == InitMode::Lazy && options.drop == DropMode::Drop {
+        return generate_error!(
+            "A lazy can be `drop` only if it is also thread_local, use `finalize` attribute argument instead and implement Finalize trait for your type."
         );
     }
 
@@ -733,15 +747,19 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 ::static_init::raw_static::Static::<#stat_typ>
             }
         }
-    } else if is_thread_local && options.drop == DropMode::AtExit {
+    } else if is_thread_local && options.drop == DropMode::Finalize {
             parse_quote! {
                 ::static_init::LocalLazyFinalize::<#stat_typ>
             }
-    } else if is_thread_local && !(options.drop == DropMode::AtExit){
+    } else if is_thread_local && !(options.drop == DropMode::Finalize){
             parse_quote! {
                 ::static_init::LocalLazy::<#stat_typ>
             }
-    } else if options.drop == DropMode::AtExit{
+    } else if is_thread_local && options.drop == DropMode::Drop{
+        parse_quote! {
+            ::static_init::DropedLazy::<#stat_typ>
+        }
+    } else if options.drop == DropMode::Finalize{
         parse_quote! {
             ::static_init::GlobalLazyFinalize::<#stat_typ>
         }
@@ -754,11 +772,27 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     let sp = stat.expr.span();
 
     let initer = match options.init {
-        InitMode::Dynamic(priority) if options.drop == DropMode::AtExit => {
+        InitMode::Dynamic(priority) if options.drop == DropMode::Drop => {
             let attr: Attribute = parse_quote!(#[::static_init::constructor(#priority)]);
             Some(quote_spanned! {sp=>
                     extern "C" fn __static_init_dropper() {
                         unsafe{#typ::drop(#stat_ref)}
+                    }
+                    #attr
+                    extern "C" fn __static_init_initializer() {
+                        ::static_init::raw_static::__set_init_prio(#priority as i32);
+                        let __static_init_expr_result = #expr;
+                        unsafe {#typ::set_to(#stat_ref,__static_init_expr_result);
+                        ::libc::atexit(__static_init_dropper)};
+                        ::static_init::raw_static::__set_init_prio(i32::MIN);
+                    }
+            })
+        }
+        InitMode::Dynamic(priority) if options.drop == DropMode::Finalize => {
+            let attr: Attribute = parse_quote!(#[::static_init::constructor(#priority)]);
+            Some(quote_spanned! {sp=>
+                    extern "C" fn __static_init_dropper() {
+                        unsafe{::static_init::Finaly::finalize(**#stat_ref)}
                     }
                     #attr
                     extern "C" fn __static_init_initializer() {
@@ -810,15 +844,16 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     let statid = &stat.ident;
 
     let init_priority: Expr = match options.init {
-        InitMode::Dynamic(n) => parse_quote!(::static_init::InitMode::Dynamic(#n)),
+        InitMode::Dynamic(n) => parse_quote!(::static_init::InitMode::ProgramConstructor(#n)),
         InitMode::Lazy => parse_quote!(::static_init::InitMode::Lazy),
         InitMode::Const => parse_quote!(::static_init::InitMode::Const),
     };
 
     let drop_priority: Expr = match options.drop {
-        DropMode::Dynamic(n) => parse_quote!(::static_init::DropMode::Dynamic(#n)),
-        DropMode::AtExit => parse_quote!(::static_init::DropMode::AtExit),
-        DropMode::None => parse_quote!(::static_init::DropMode::None),
+        DropMode::Dynamic(n) => parse_quote!(::static_init::FinalyMode::ProgramDestructor(#n)),
+        DropMode::Finalize => parse_quote!(::static_init::FinalyMode::Finalize),
+        DropMode::Drop => parse_quote!(::static_init::FinalyMode::Drop),
+        DropMode::None => parse_quote!(::static_init::FinalyMode::None),
     };
 
     let static_info: Option<Expr> = if cfg!(debug_mode) {
