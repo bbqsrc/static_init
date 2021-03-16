@@ -6,6 +6,8 @@
 // copied, modified, or distributed except according to those terms.
 
 #![feature(test)]
+#![feature(thread_local)]
+
 extern crate static_init;
 use ctor::ctor;
 use static_init::dynamic;
@@ -41,8 +43,10 @@ static WCT: AtomicI32 = AtomicI32::new(0);
 
 #[dynamic(lazy)]
 static L: AtomicI32 = AtomicI32::new(0);
-static L1: AtomicI32 = AtomicI32::new(0);
-static L2: AtomicI32 = AtomicI32::new(0);
+
+#[dynamic(lazy)]
+#[thread_local]
+static LT: AtomicI32 = AtomicI32::new(0);
 #[dynamic(lazy)]
 static mut L_: i32 = 0;
 
@@ -60,16 +64,12 @@ fn atomic_lesser_lazy_static(bench: &mut Bencher) {
     bench.iter(|| L.fetch_add(1, Ordering::Relaxed));
 }
 #[bench]
+fn atomic_lesser_lazy_static_thread_local(bench: &mut Bencher) {
+    bench.iter(|| LT.fetch_add(1, Ordering::Relaxed));
+}
+#[bench]
 fn atomic_lazy_static_crate(bench: &mut Bencher) {
     bench.iter(|| WL.fetch_add(1, Ordering::Relaxed));
-}
-#[bench]
-fn atomic_lesser_lazy_static2(bench: &mut Bencher) {
-    bench.iter(|| L.fetch_add(L1.fetch_add(L2.fetch_add(1, Ordering::Relaxed),Ordering::Relaxed),Ordering::Relaxed));
-}
-#[bench]
-fn atomic_lazy_static_crate2(bench: &mut Bencher) {
-    bench.iter(|| WL.fetch_add(WL1.fetch_add(WL2.fetch_add(1, Ordering::Relaxed),Ordering::Relaxed),Ordering::Relaxed));
 }
 #[bench]
 fn atomic_ctor_crate(bench: &mut Bencher) {

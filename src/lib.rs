@@ -397,7 +397,6 @@
 //
 //  Donc autant déclarer un fonction new as unsafe, pour créer l'objet. La macro ne
 //  se prive pas de le créer puisque qu'elle assurera qu'il soit thread_local.
-use core::ops::{Deref, DerefMut};
 /// Manager and Data should refer to object that are parts of Self structure.
 ///
 /// Moreover, to be usable the type should provide an associated function of signature:
@@ -449,27 +448,55 @@ pub unsafe trait Manager<T: Static<Manager = Self>>: 'static + Sized + ManagerBa
     /// or on_registration_failure paniqued
     fn register(
         s: &T,
+        on_uninited: impl Fn(Phase) -> bool,
         init: impl FnOnce(&<T as Static>::Data) -> bool,
         on_registration_failure: impl FnOnce(&<T as Static>::Data),
     );
 }
+pub unsafe trait OnceManager<T: Static>: 'static + Sized + ManagerBase {
+    /// Execute once init and, depending on the manager register <T as Finaly>::finaly
+    /// for execution at program exit or thread exit.
+    ///
+    /// will panic if previous attempt to initialize
+    /// leed to a panic
+    ///
+    /// the `init` function is run before registration
+    /// of Finally::finaly for this type target. If it
+    /// returns false, registration of finaly is skiped.
+    ///
+    /// if registration fails for some reason 'on_registration_failure'
+    /// is run.
+    ///
+    /// Panic requirement:
+    ///
+    /// Call to this function will through a panic if a previous call to init
+    /// or on_registration_failure paniqued
+    fn register(
+        s: &T,
+        on_uninited: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&<T as Static>::Data) -> bool,
+        reg: impl FnOnce(&T) -> bool,
+        on_registration_failure: impl FnOnce(&<T as Static>::Data),
+    ); 
+    fn finalize(s: &T, f: impl FnOnce(&T::Data));
+}
 
 pub trait Generator<T> {
-    fn generate(_: &Self) -> T;
+    fn generate(&self) -> T;
 }
 
 impl<U, T: Fn() -> U> Generator<U> for T {
-    fn generate(this: &Self) -> U {
-        this()
+    fn generate(&self) -> U {
+        self()
     }
 }
 pub trait Recoverer<T> {
-    fn recover(this: &Self, _: &T);
+    fn recover(&self, _: &T);
 }
 
 impl<T: Fn(&T)> Recoverer<T> for T {
-    fn recover(this: &Self, data: &T) {
-        this(data)
+    fn recover(&self, data: &T) {
+        self(data)
     }
 }
 
@@ -489,107 +516,68 @@ pub use static_init_macro::destructor;
 pub use static_init_macro::dynamic;
 
 mod generic_lazy;
-pub use generic_lazy::{DropedLazy, GenericLazy, RegisterOnFirstAccess, UnInited};
+pub use generic_lazy::{GenericLazy, RegisterOnFirstAccess, UnInited, PhaseChecker};
 
 mod once;
-pub use once::{GlobalOnce, LocalOnce, PkOnce};
+pub use once::{GlobalManager, LocalManager};
 //#[cfg(feature = "lazy")]
 //pub use static_lazy::Lazy;
 
 mod at_exit;
-pub use at_exit::{AtExit, AtGlobalExit, AtThreadExit, GlobalManager, LocalManager};
-
+pub use at_exit::{ExitManager, ThreadExitManager};
+//
 pub mod raw_static;
 
-mod phase {
-    use core::mem::transmute;
-    use core::sync::atomic::{AtomicU8, Ordering};
+pub mod phase {
+    pub(crate) const INITED_BIT: u32 = 1;
+    pub(crate) const INITIALIZING_BIT: u32 = 2*INITED_BIT;
+    pub(crate) const POISON_BIT: u32 = 2*INITIALIZING_BIT;
+    pub(crate) const LOCKED_BIT: u32 = 2*POISON_BIT;
+    pub(crate) const PARKED_BIT: u32 = 2*LOCKED_BIT;
+    pub(crate) const REGISTRATING_BIT: u32 = 2*PARKED_BIT;
+    pub(crate) const REGISTERED_BIT: u32 = 2*REGISTRATING_BIT;
+    pub(crate) const FINALIZING_BIT: u32 = 2*REGISTERED_BIT;
+    pub(crate) const FINALIZED_BIT: u32 = 2*FINALIZING_BIT;
+    pub(crate) const ROLLING_OUT_BIT: u32 = 2*FINALIZED_BIT;
+    pub(crate) const ROLLED_OUT_BIT: u32 = 2*ROLLING_OUT_BIT;
 
     #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-    #[repr(u8)]
-    pub enum Phase {
-        /// State before initialization phase. Depending on the category
-        /// of the static, it may mean the static is in an uninitialized
-        /// state, or in the state it has in early phase of program start up
-        New                = 0,
-        /// The initialization is running
-        Initialization     = 1,
-        /// For statics that are mean to execut a final staget on program/thread exit
-        /// the registration of the final execution is running
-        FinalyRegistration = 2,
-        /// State of the static after initilization end finaly registration succeed
-        Initialized        = 3,
-        /// drop_const is being executed     
-        FinalyExecution    = 4,
-        /// drop_const has been executed     
-        Finalized          = 5,
-        PostFinalyRegistrationFailure = 6,
-        /// drop_const is being executed     
-        InitializedWithoutFinaly = 7,
-        PostInitializationPanic = 8,
-        OnRegistrationFailurePanic = 9,
-        InitializedPostOnRegistrationFailure = 10,
-        PostFinalyExecutionPanic = 11,
-        PostFinalyRegistrationPanic = 12,
-    }
+    pub struct Phase(pub(crate) u32);
 
     impl Phase {
-        pub fn is_poisoned(self) -> bool {
-            match self {
-                Phase::PostInitializationPanic
-                | Phase::OnRegistrationFailurePanic
-                | Phase::PostFinalyRegistrationPanic => true,
-                _ => false,
-            }
+        pub const fn new() -> Self {
+            Self(0)
         }
-        pub fn was_initialized(self) -> bool {
-            match self {
-                Phase::New | Phase::Initialization | Phase::PostInitializationPanic => false,
-                _ => true,
-            }
+        pub fn poisoned(self) -> bool {
+            self.0 & POISON_BIT != 0
+        }
+        pub fn initializing(self) -> bool {
+            self.0 & LOCKED_BIT != 0
+        }
+        pub fn initialized(self) -> bool {
+            self.0 & INITED_BIT != 0
+        }
+        pub fn registrating(self) -> bool {
+            self.0 & REGISTRATING_BIT != 0
         }
         pub fn finaly_registered(self) -> bool {
-            match self {
-                Phase::Initialized
-                | Phase::FinalyExecution
-                | Phase::Finalized
-                | Phase::PostFinalyExecutionPanic => true,
-                _ => false,
-            }
+            self.0 & REGISTERED_BIT != 0
         }
-        pub fn post_finaly_start(self) -> bool {
-            match self {
-                Phase::Finalized | Phase::FinalyExecution => true,
-                _ => false,
-            }
+        pub fn finalizing(self) -> bool {
+            self.0 & FINALIZING_BIT != 0
         }
-        pub fn initialized_after_registration_closed(self) -> bool {
-            match self {
-                Phase::OnRegistrationFailurePanic | Phase::InitializedPostOnRegistrationFailure => {
-                    true
-                }
-                _ => false,
-            }
+        pub fn finalized(self) -> bool {
+            self.0 & FINALIZED_BIT != 0
         }
-    }
-
-    pub(crate) struct AtomicPhase(AtomicU8);
-
-    impl AtomicPhase {
-        pub(crate) const fn new() -> Self {
-            Self(AtomicU8::new(0))
+        pub fn rolling_out(self) -> bool {
+            self.0 & ROLLING_OUT_BIT != 0
         }
-        pub(crate) fn get(&self) -> Phase {
-            unsafe { transmute(self.0.load(Ordering::Acquire)) }
-        }
-        pub(crate) fn set(&self, p: Phase) {
-            self.0.store(p as u8, Ordering::Release)
+        pub fn rolled_out(self) -> bool {
+            self.0 & ROLLED_OUT_BIT != 0
         }
     }
 }
 pub use phase::Phase;
-
-use phase::AtomicPhase;
 
 #[derive(Debug)]
 #[doc(hidden)]
@@ -621,32 +609,106 @@ pub struct StaticInfo {
 pub struct NullRecoverer;
 
 impl<T> Recoverer<T> for NullRecoverer {
-    fn recover(_: &Self, _: &T) {}
+    fn recover(&self, _: &T) {}
 }
 pub struct FinalyRecoverer;
 
 impl<T: Finaly> Recoverer<T> for FinalyRecoverer {
-    fn recover(_: &Self, d: &T) {
+    fn recover(&self, d: &T) {
         d.finaly()
     }
 }
 
-//pub type Lazy<T, G = fn()->T> = GenericLazy<T, G, NullRecoverer, PkOnce>;
-//pub type LocalLazy<T, G=fn()->T> = GenericLazy<T, G, NullRecoverer, LocalOnce>;
-//pub type GlobalLazy<T, G=fn()->T> = GenericLazy<T, G, NullRecoverer, GlobalOnce>;
-//pub type LazyFinalize<T, G=fn()->T> = GenericLazy<T, G, FinalyRecoverer, AtExit>;
-//pub type GlobalLazyFinalize<T, G=fn()->T> = GenericLazy<T, G, FinalyRecoverer, AtGlobalExit>;
-//pub type LocalLazyFinalize<T, G=fn()->T> = GenericLazy<T, G, FinalyRecoverer, AtThreadExit>;
+pub struct NonPoisonedChecker; 
 
+impl PhaseChecker for NonPoisonedChecker {
+    #[inline(always)]
+    fn shall_proceed(p: Phase) -> bool {
+        if p.initialized() {
+            false
+        } else {
+            assert!(!p.poisoned());
+            true
+        }
+    }
+}
+pub struct NonFinalizedChecker; 
+impl PhaseChecker for NonFinalizedChecker {
+    #[inline(always)]
+    fn shall_proceed(p: Phase) -> bool {
+        if p.initialized() {
+            assert!(!p.finalized());
+            false
+        } else {
+            assert!(!p.poisoned());
+            true
+        }
+    }
+}
+
+macro_rules! init_only {
+    ($typ: ident, $sub: ty) => {
+        init_only!{$typ,$sub,<$sub>::new()}
+    };
+
+    ($typ: ident, $sub: ty, $init:expr) => {
+
+        pub struct $typ($sub);
+
+        impl $typ {
+            pub const fn new() -> Self {
+                Self($init)
+            }
+        }
+
+        impl AsRef<$sub> for $typ {
+            fn as_ref(&self) -> &$sub {
+                &self.0
+            }
+        }
+        
+        impl ManagerBase for $typ {
+            fn phase(&self) -> Phase {
+                self.0.phase()
+            }
+        }
+        
+        unsafe impl<T:Static<Manager=Self>> Manager<T> for $typ {
+            fn register(s: &T, on_uninited: impl Fn(Phase) -> bool,
+                init: impl FnOnce(&<T as Static>::Data) -> bool,
+                _: impl FnOnce(&<T as Static>::Data)) {
+                <$sub as OnceManager<T>>::register(
+                s,
+                on_uninited,
+                init,
+                |_| {true},
+                |_| {unreachable!()}
+                )
+            }
+        }
+    }
+}
+
+init_only!{GlobalInitOnlyManager,GlobalManager<true>}
+
+init_only!{LazyInitOnlyManager,GlobalManager<false>, GlobalManager::new_lazy()}
+
+init_only!{LocalInitOnlyManager,LocalManager}
+
+
+use core::ops::{Deref,DerefMut};
 macro_rules! impl_lazy {
-    ($tp:ident, $rec:ident, $man:ident, $init:expr) => {
-        pub struct $tp<T, G = fn() -> T>{__private: GenericLazy<T, G, $rec, $man>}
+    ($tp:ident, $rec:ident, $man:ty, $checker:ty) => {
+        impl_lazy!{$tp,$rec,$man,$checker,<$man>::new()}
+    };
+    ($tp:ident, $rec:ident, $man:ty, $checker:ty,$init:expr) => {
+        pub struct $tp<T, G = fn() -> T>{__private: GenericLazy<T, G, $rec, $man, $checker>}
 
         impl<T, G> Deref for $tp<T, G>
         where
-            GenericLazy<T, G, $rec, $man>: Deref,
+            GenericLazy<T, G, $rec, $man, $checker>: Deref,
         {
-            type Target = <GenericLazy<T, G, $rec, $man> as Deref>::Target;
+            type Target = <GenericLazy<T, G, $rec, $man, $checker> as Deref>::Target;
             #[inline(always)]
             fn deref(&self) -> &Self::Target {
                 &*self.__private
@@ -655,7 +717,7 @@ macro_rules! impl_lazy {
 
         impl<T, G> DerefMut for $tp<T, G>
         where
-            GenericLazy<T, G, $rec, $man>: DerefMut,
+            GenericLazy<T, G, $rec, $man, $checker>: DerefMut,
         {
             #[inline(always)]
             fn deref_mut(&mut self) -> &mut Self::Target {
@@ -673,8 +735,8 @@ macro_rules! impl_lazy {
 
         impl<T, G> $tp<T, G>
         where
-            GenericLazy<T, G, $rec, $man>: Deref + Static,
-            <GenericLazy<T, G, $rec, $man> as Static>::Manager: ManagerBase,
+            GenericLazy<T, G, $rec, $man, $checker>: Deref + Static,
+            <GenericLazy<T, G, $rec, $man, $checker> as Static>::Manager: ManagerBase,
         {
             #[inline(always)]
             pub fn phase(&self) -> Phase {
@@ -687,12 +749,12 @@ macro_rules! impl_lazy {
         }
     };
 }
-impl_lazy! {Lazy,NullRecoverer,PkOnce,PkOnce::new()}
-impl_lazy! {GlobalLazy,NullRecoverer,GlobalOnce,GlobalOnce::new()}
-impl_lazy! {LocalLazy,NullRecoverer,LocalOnce,LocalOnce::new()}
-impl_lazy! {LazyFinalize,FinalyRecoverer,AtExit,AtExit::new(GlobalManager::new_pk())}
-impl_lazy! {GlobalLazyFinalize,FinalyRecoverer,AtGlobalExit,AtGlobalExit::new(GlobalManager::new())}
-impl_lazy! {LocalLazyFinalize,FinalyRecoverer,AtThreadExit,AtThreadExit::new(LocalManager::new())}
+impl_lazy! {Lazy,NullRecoverer,LazyInitOnlyManager,NonPoisonedChecker}
+impl_lazy! {GlobalLazy,NullRecoverer,GlobalInitOnlyManager,NonPoisonedChecker}
+impl_lazy! {LocalLazy,NullRecoverer,LocalInitOnlyManager,NonPoisonedChecker}
+impl_lazy! {LazyFinalize,FinalyRecoverer,ExitManager<false>,NonPoisonedChecker,ExitManager::new_lazy()}
+impl_lazy! {GlobalLazyFinalize,FinalyRecoverer,ExitManager<true>,NonPoisonedChecker}
+impl_lazy! {LocalLazyFinalize,FinalyRecoverer,ThreadExitManager,NonPoisonedChecker}
 
 #[cfg(test)]
 mod test_lazy {
@@ -710,20 +772,20 @@ mod test_lazy {
     }
 }
 
-//#[cfg(test)]
-//mod test_global_lazy {
-//    use super::GlobalLazy;
-//    static _X: GlobalLazy<u32, fn() -> u32> = unsafe {
-//        GlobalLazy::new_static(|| {
-//            println!("runned");
-//            22
-//        })
-//    };
-//    #[test]
-//    fn test() {
-//        assert_eq!(*_X, 22);
-//    }
-//}
+#[cfg(test)]
+mod test_global_lazy {
+    use super::GlobalLazy;
+    static _X: GlobalLazy<u32, fn() -> u32> = unsafe {
+        GlobalLazy::new_static(|| {
+            println!("runned");
+            22
+        })
+    };
+    #[test]
+    fn test() {
+        assert_eq!(*_X, 22);
+    }
+}
 #[cfg(test)]
 mod test_local_lazy {
     use super::LocalLazy;
@@ -748,21 +810,21 @@ mod test_lazy_finalize {
         assert_eq!((*_X).0, 22);
     }
 }
-//#[cfg(test)]
-//mod test_global_lazy_finalize {
-//    use super::{Finaly, GlobalLazyFinalize};
-//    #[derive(Debug)]
-//    struct A(u32);
-//    impl Finaly for A {
-//        fn finaly(&self) {}
-//    }
-//    static _X: GlobalLazyFinalize<A, fn() -> A> =
-//        unsafe { GlobalLazyFinalize::new_static(|| A(22)) };
-//    #[test]
-//    fn test() {
-//        assert_eq!((*_X).0, 22);
-//    }
-//}
+#[cfg(test)]
+mod test_global_lazy_finalize {
+    use super::{Finaly, GlobalLazyFinalize};
+    #[derive(Debug)]
+    struct A(u32);
+    impl Finaly for A {
+        fn finaly(&self) {}
+    }
+    static _X: GlobalLazyFinalize<A, fn() -> A> =
+        unsafe { GlobalLazyFinalize::new_static(|| A(22)) };
+    #[test]
+    fn test() {
+        assert_eq!((*_X).0, 22);
+    }
+}
 #[cfg(test)]
 mod test_local_lazy_finalize {
     use super::{Finaly, LocalLazyFinalize};
@@ -788,5 +850,109 @@ mod test_droped_local_lazy_finalize {
     #[test]
     fn test() {
         assert_eq!(_X.0, 22);
+    }
+}
+
+use core::cell::UnsafeCell;
+use core::mem::MaybeUninit;
+use core::marker::PhantomData;
+pub struct Droped<T>(UnsafeCell<MaybeUninit<T>>);
+
+impl<T> Finaly for Droped<T> {
+    #[inline(always)]
+    fn finaly(&self) {
+        unsafe { (*self.0.get()).as_mut_ptr().drop_in_place() };
+    }
+}
+
+pub struct DropedLazy<T, F, S = NonFinalizedChecker> {
+    value:     Droped<T>,
+    generator: F,
+    manager:   ThreadExitManager,
+    phantom: PhantomData<S>,
+    #[cfg(debug_mode)]
+    _info:     Option<StaticInfo>,
+}
+
+impl<T, F, S> DropedLazy<T, F, S> {
+    pub const unsafe fn new_static(generator: F) -> Self {
+        Self {
+            value: Droped(UnsafeCell::new(MaybeUninit::uninit())),
+            generator,
+            manager: ThreadExitManager::new(),
+            phantom: PhantomData,
+        }
+    }
+    pub const unsafe fn new_static_with_info(generator: F, _info: Option<StaticInfo>) -> Self {
+        Self {
+            value: Droped(UnsafeCell::new(MaybeUninit::uninit())),
+            generator,
+            manager: ThreadExitManager::new(),
+            phantom: PhantomData,
+            #[cfg(debug_mode)]
+            _info,
+        }
+    }
+    #[inline(always)]
+    fn register(&self)
+    where
+        T: 'static,
+        F: 'static + Generator<T>,
+        S: 'static + PhaseChecker,
+    {
+        #[cfg(debug_mode)]
+        match Static::phase(self) {
+            Phase::Initialization | Phase::FinalyRegistration => {
+                panic!("Circular lazy initialization of {:#?}", self._info)
+            }
+            _ => (),
+        }
+        Manager::register(
+            self,
+            S::shall_proceed,
+            |data: &Droped<T>| {
+                // SAFETY
+                // This function is called only once within the register function
+                // Only one thread can ever get this mutable access
+                let d = Generator::generate(&self.generator);
+                unsafe { (*data.0.get()).as_mut_ptr().write(d) };
+                true
+            },
+            |data: &Droped<T>| unsafe { (*data.0.get()).as_mut_ptr().drop_in_place() },
+        );
+    }
+}
+
+impl<T: 'static, F: 'static + Generator<T>, S:'static + PhaseChecker> Deref for DropedLazy<T, F, S> {
+    type Target = T;
+    #[inline(always)]
+    fn deref(&self) -> &T {
+        self.register();
+        // SAFETY
+        // This is safe as long as the object has been initialized
+        // this is the contract ensured by register. And it is not
+        // in finalization process
+        unsafe { &*(*self.value.0.get()).as_ptr() }
+    }
+}
+
+impl<T: 'static, F: 'static + Generator<T>, S:'static + PhaseChecker> DerefMut for DropedLazy<T, F, S> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut T {
+        self.register();
+        unsafe { &mut *(*self.value.0.get()).as_mut_ptr() }
+    }
+}
+
+unsafe impl<F: 'static + Generator<T>, T: 'static, S:'static + PhaseChecker> Static for DropedLazy<T, F,S> {
+    type Data = Droped<T>;
+    type Manager = ThreadExitManager;
+    #[inline(always)]
+    fn manager(this: &Self) -> &Self::Manager {
+        &this.manager
+    }
+    #[inline(always)]
+    fn data(this: &Self) -> &Self::Data {
+        &this.value
     }
 }

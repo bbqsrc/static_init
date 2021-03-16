@@ -17,7 +17,7 @@ members = [
 [features]
 
 # for non thread local lesser lazy statics => requires std library
-lazy = ["static_init_macro/lazy", "parking_lot"]
+lazy = ["static_init_macro/lazy", "parking_lot", "parking_lot_core"]
 
 likely = ["likely_stable"]
 
@@ -41,6 +41,7 @@ default = ["lazy", "atexit", "thread_local_drop"]
 [dependencies]
 libc = {version = "0.2", optional=true}
 parking_lot = {version = "0.11", optional=true}
+parking_lot_core = {version = "0.8", optional=true}
 likely_stable = {version = "0.1", optional=true}
 
 [dependencies.static_init_macro]
