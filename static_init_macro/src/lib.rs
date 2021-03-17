@@ -649,7 +649,13 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
         && !(opt.drop == DropMode::None || opt.drop == DropMode::Finalize || opt.drop == DropMode::Drop)
     {
         Err(generate_error!("Drop mode not supported for lazy statics."))
-    } else {
+    } else if let InitMode::Dynamic(p) = opt.init {
+        match opt.drop {
+           DropMode::Drop => { opt.drop = DropMode::Dynamic(p); Ok(opt) }
+           DropMode::Finalize => Err(generate_error!("Drop mode finalize not supported for global dynamic statics.")),
+           _ => Ok(opt)
+        }
+    }else {
         Ok(opt)
     }
 }
@@ -753,7 +759,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             }
     } else if is_thread_local && options.drop == DropMode::Drop{
         parse_quote! {
-            ::static_init::DropedLazy::<#stat_typ>
+            ::static_init::LocalLazyDroped::<#stat_typ>
         }
     } else if is_thread_local {
             parse_quote! {
@@ -772,38 +778,38 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     let sp = stat.expr.span();
 
     let initer = match options.init {
-        InitMode::Dynamic(priority) if options.drop == DropMode::Drop => {
-            let attr: Attribute = parse_quote!(#[::static_init::constructor(#priority)]);
-            Some(quote_spanned! {sp=>
-                    extern "C" fn __static_init_dropper() {
-                        unsafe{#typ::drop(#stat_ref)}
-                    }
-                    #attr
-                    extern "C" fn __static_init_initializer() {
-                        ::static_init::raw_static::__set_init_prio(#priority as i32);
-                        let __static_init_expr_result = #expr;
-                        unsafe {#typ::set_to(#stat_ref,__static_init_expr_result);
-                        ::libc::atexit(__static_init_dropper)};
-                        ::static_init::raw_static::__set_init_prio(i32::MIN);
-                    }
-            })
-        }
-        InitMode::Dynamic(priority) if options.drop == DropMode::Finalize => {
-            let attr: Attribute = parse_quote!(#[::static_init::constructor(#priority)]);
-            Some(quote_spanned! {sp=>
-                    extern "C" fn __static_init_dropper() {
-                        unsafe{::static_init::Finaly::finalize(**#stat_ref)}
-                    }
-                    #attr
-                    extern "C" fn __static_init_initializer() {
-                        ::static_init::raw_static::__set_init_prio(#priority as i32);
-                        let __static_init_expr_result = #expr;
-                        unsafe {#typ::set_to(#stat_ref,__static_init_expr_result);
-                        ::libc::atexit(__static_init_dropper)};
-                        ::static_init::raw_static::__set_init_prio(i32::MIN);
-                    }
-            })
-        }
+        //InitMode::Dynamic(priority) if options.drop == DropMode::Drop => {
+        //    let attr: Attribute = parse_quote!(#[::static_init::constructor(#priority)]);
+        //    Some(quote_spanned! {sp=>
+        //            extern "C" fn __static_init_dropper() {
+        //                unsafe{#typ::drop(#stat_ref)}
+        //            }
+        //            #attr
+        //            extern "C" fn __static_init_initializer() {
+        //                ::static_init::raw_static::__set_init_prio(#priority as i32);
+        //                let __static_init_expr_result = #expr;
+        //                unsafe {#typ::set_to(#stat_ref,__static_init_expr_result);
+        //                ::libc::atexit(__static_init_dropper)};
+        //                ::static_init::raw_static::__set_init_prio(i32::MIN);
+        //            }
+        //    })
+        //}
+        //InitMode::Dynamic(priority) if options.drop == DropMode::Finalize => {
+        //    let attr: Attribute = parse_quote!(#[::static_init::constructor(#priority)]);
+        //    Some(quote_spanned! {sp=>
+        //            extern "C" fn __static_init_dropper() {
+        //                unsafe{::static_init::Finaly::finalize(**#stat_ref)}
+        //            }
+        //            #attr
+        //            extern "C" fn __static_init_initializer() {
+        //                ::static_init::raw_static::__set_init_prio(#priority as i32);
+        //                let __static_init_expr_result = #expr;
+        //                unsafe {#typ::set_to(#stat_ref,__static_init_expr_result);
+        //                ::libc::atexit(__static_init_dropper)};
+        //                ::static_init::raw_static::__set_init_prio(i32::MIN);
+        //            }
+        //    })
+        //}
 
         InitMode::Dynamic(priority) => {
             let attr: Attribute = parse_quote!(#[::static_init::constructor(#priority)]);

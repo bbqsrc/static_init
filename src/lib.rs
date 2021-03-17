@@ -520,7 +520,7 @@ pub use static_init_macro::destructor;
 pub use static_init_macro::dynamic;
 
 mod generic_lazy;
-pub use generic_lazy::{GenericLazy, LazyPolicy, RegisterOnFirstAccess, UnInited};
+pub use generic_lazy::{GenericLazy, LazyPolicy, RegisterOnFirstAccess, UnInited,DropedUnInited, LazyData};
 
 mod once;
 pub use once::{GlobalManager, LocalManager};
@@ -699,19 +699,19 @@ init_only! {LocalInitOnlyManager,LocalManager}
 
 use core::ops::{Deref, DerefMut};
 macro_rules! impl_lazy {
-    ($tp:ident, $man:ty, $checker:ty) => {
-        impl_lazy! {$tp,$man,$checker,<$man>::new()}
+    ($tp:ident, $man:ty, $checker:ty, $data:ty) => {
+        impl_lazy! {$tp,$man,$checker,$data,<$man>::new()}
     };
-    ($tp:ident, $man:ty, $checker:ty, $init:expr) => {
+    ($tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr) => {
         pub struct $tp<T, G = fn() -> T> {
-            __private: GenericLazy<T, G, $man, $checker>,
+            __private: GenericLazy<$data, G, $man, $checker>,
         }
 
         impl<T, G> Deref for $tp<T, G>
         where
-            GenericLazy<T, G, $man, $checker>: Deref,
+            GenericLazy<$data, G, $man, $checker>: Deref,
         {
-            type Target = <GenericLazy<T, G, $man, $checker> as Deref>::Target;
+            type Target = <GenericLazy<$data, G, $man, $checker> as Deref>::Target;
             #[inline(always)]
             fn deref(&self) -> &Self::Target {
                 &*self.__private
@@ -720,7 +720,7 @@ macro_rules! impl_lazy {
 
         impl<T, G> DerefMut for $tp<T, G>
         where
-            GenericLazy<T, G, $man, $checker>: DerefMut,
+            GenericLazy<$data, G, $man, $checker>: DerefMut,
         {
             #[inline(always)]
             fn deref_mut(&mut self) -> &mut Self::Target {
@@ -730,20 +730,20 @@ macro_rules! impl_lazy {
         impl<T, G> $tp<T, G> {
             pub const unsafe fn new_static(f: G) -> Self {
                 Self {
-                    __private: GenericLazy::new_static(f, $init),
+                    __private: GenericLazy::new_static(f, $init,<$data>::INIT),
                 }
             }
             pub const unsafe fn new_static_with_info(f: G, info: StaticInfo) -> Self {
                 Self {
-                    __private: GenericLazy::new_static_with_info(f, $init, info),
+                    __private: GenericLazy::new_static_with_info(f, $init, <$data>::INIT,info),
                 }
             }
         }
 
         impl<T, G> $tp<T, G>
         where
-            GenericLazy<T, G, $man, $checker>: Deref + Static,
-            <GenericLazy<T, G, $man, $checker> as Static>::Manager: ManagerBase,
+            GenericLazy<$data, G, $man, $checker>: Deref + Static,
+            <GenericLazy<$data, G, $man, $checker> as Static>::Manager: ManagerBase,
         {
             #[inline(always)]
             pub fn phase(&self) -> Phase {
@@ -756,12 +756,13 @@ macro_rules! impl_lazy {
         }
     };
 }
-impl_lazy! {Lazy,LazyInitOnlyManager,NonPoisonedChecker}
-impl_lazy! {GlobalLazy,GlobalInitOnlyManager,NonPoisonedChecker}
-impl_lazy! {LocalLazy,LocalInitOnlyManager,NonPoisonedChecker}
-impl_lazy! {LazyFinalize,ExitManager<false>,NonPoisonedChecker,ExitManager::new_lazy()}
-impl_lazy! {GlobalLazyFinalize,ExitManager<true>,NonPoisonedChecker}
-impl_lazy! {LocalLazyFinalize,ThreadExitManager,NonPoisonedChecker}
+impl_lazy! {Lazy,LazyInitOnlyManager,NonPoisonedChecker,UnInited::<T>}
+impl_lazy! {GlobalLazy,GlobalInitOnlyManager,NonPoisonedChecker,UnInited::<T>}
+impl_lazy! {LocalLazy,LocalInitOnlyManager,NonPoisonedChecker,UnInited::<T>}
+impl_lazy! {LazyFinalize,ExitManager<false>,NonPoisonedChecker,UnInited::<T>,ExitManager::new_lazy()}
+impl_lazy! {GlobalLazyFinalize,ExitManager<true>,NonPoisonedChecker,UnInited::<T>}
+impl_lazy! {LocalLazyFinalize,ThreadExitManager,NonPoisonedChecker,UnInited::<T>}
+impl_lazy! {LocalLazyDroped,ThreadExitManager,NonFinalizedChecker,DropedUnInited::<T>}
 
 #[cfg(test)]
 mod test_lazy {
@@ -843,112 +844,14 @@ mod test_local_lazy_finalize {
 }
 #[cfg(test)]
 mod test_droped_local_lazy_finalize {
-    use super::DropedLazy;
+    use super::LocalLazyDroped;
     #[derive(Debug)]
     struct A(u32);
     #[thread_local]
-    static _X: DropedLazy<A> = unsafe { DropedLazy::new_static(|| A(22)) };
+    static _X: LocalLazyDroped<A> = unsafe { LocalLazyDroped::new_static(|| A(22)) };
     #[test]
     fn test() {
         assert_eq!(_X.0, 22);
     }
 }
 
-use core::cell::UnsafeCell;
-use core::marker::PhantomData;
-use core::mem::MaybeUninit;
-pub struct Droped<T>(UnsafeCell<MaybeUninit<T>>);
-
-impl<T> Finaly for Droped<T> {
-    #[inline(always)]
-    fn finaly(&self) {
-        unsafe { (*self.0.get()).as_mut_ptr().drop_in_place() };
-    }
-}
-
-pub struct DropedLazy<T, F = fn() -> T, S = NonFinalizedChecker> {
-    value:     Droped<T>,
-    generator: F,
-    manager:   ThreadExitManager,
-    phantom:   PhantomData<S>,
-    #[cfg(debug_mode)]
-    _info:     Option<StaticInfo>,
-}
-
-impl<T, F, S> DropedLazy<T, F, S> {
-    pub const unsafe fn new_static(generator: F) -> Self {
-        Self {
-            value: Droped(UnsafeCell::new(MaybeUninit::uninit())),
-            generator,
-            manager: ThreadExitManager::new(),
-            phantom: PhantomData,
-            #[cfg(debug_mode)]
-            _info: None
-        }
-    }
-    pub const unsafe fn new_static_with_info(generator: F, _info: StaticInfo) -> Self {
-        Self {
-            value: Droped(UnsafeCell::new(MaybeUninit::uninit())),
-            generator,
-            manager: ThreadExitManager::new(),
-            phantom: PhantomData,
-            #[cfg(debug_mode)]
-            _info:Some(_info),
-        }
-    }
-    #[inline(always)]
-    fn register(&self)
-    where
-        T: 'static,
-        F: 'static + Generator<T>,
-        S: 'static + LazyPolicy,
-    {
-        Manager::register(self, S::shall_proceed, |data: &Droped<T>| {
-            // SAFETY
-            // This function is called only once within the register function
-            // Only one thread can ever get this mutable access
-            let d = Generator::generate(&self.generator);
-            unsafe { (*data.0.get()).as_mut_ptr().write(d) };
-        }, false);
-    }
-}
-
-impl<T: 'static, F: 'static + Generator<T>, S: 'static + LazyPolicy> Deref
-    for DropedLazy<T, F, S>
-{
-    type Target = T;
-    #[inline(always)]
-    fn deref(&self) -> &T {
-        self.register();
-        // SAFETY
-        // This is safe as long as the object has been initialized
-        // this is the contract ensured by register. And it is not
-        // in finalization process
-        unsafe { &*(*self.value.0.get()).as_ptr() }
-    }
-}
-
-impl<T: 'static, F: 'static + Generator<T>, S: 'static + LazyPolicy> DerefMut
-    for DropedLazy<T, F, S>
-{
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut T {
-        self.register();
-        unsafe { &mut *(*self.value.0.get()).as_mut_ptr() }
-    }
-}
-
-unsafe impl<F: 'static + Generator<T>, T: 'static, S: 'static + LazyPolicy> Static
-    for DropedLazy<T, F, S>
-{
-    type Data = Droped<T>;
-    type Manager = ThreadExitManager;
-    #[inline(always)]
-    fn manager(this: &Self) -> &Self::Manager {
-        &this.manager
-    }
-    #[inline(always)]
-    fn data(this: &Self) -> &Self::Data {
-        &this.value
-    }
-}

@@ -138,11 +138,15 @@ static mut V3: A = A::new(12);
 #[dynamic(init = 10)]
 static V4: A = A::new(unsafe { V2.0 } - 2);
 
-#[dynamic(init = 5, drop = 5)]
+#[dynamic(init = 5, drop)]
 static V5: A = A::new(unsafe { V4.0 } + 23);
 
 #[dynamic(drop_only = 0)]
 static V6: A = A(33);
+
+#[dynamic(init = 2, drop = 10)]
+static V7: A = A::new(unsafe { V5.0 });
+
 
 #[test]
 fn dynamic_init() {
@@ -159,38 +163,6 @@ fn dynamic_init() {
     }
 }
 
-
-#[cfg(feature = "atexit")]
-mod atexit {
-    use static_init::{destructor, dynamic};
-
-    static mut DROP_V: i32 = 0;
-
-    struct C(i32);
-
-    impl Drop for C {
-        fn drop(&mut self) {
-            unsafe {
-                assert_eq!(self.0, DROP_V);
-                DROP_V += 1;
-            };
-        }
-    }
-
-    #[dynamic(init, drop)]
-    static C3: C = C(0);
-
-    #[dynamic(10, drop)]
-    static C2: C = C(1);
-
-    #[dynamic(20, drop)]
-    static C1: C = C(2);
-
-    #[destructor]
-    extern "C" fn check_drop_v() {
-        unsafe { assert_eq!(DROP_V, 3) }
-    }
-}
 
 #[cfg(feature = "lazy")]
 mod lazy {
