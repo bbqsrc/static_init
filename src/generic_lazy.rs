@@ -120,6 +120,14 @@ impl<T, F, M,S> GenericLazy<T, F, M,S> {
         }
     }
     #[inline(always)]
+    pub fn manager(&self) -> &M {
+        &self.manager
+    }
+    #[inline(always)]
+    pub fn get_raw_data(&self) -> &T {
+        &self.value
+    }
+    #[inline(always)]
     pub fn register(&self)
     where
         T: 'static + LazyData,

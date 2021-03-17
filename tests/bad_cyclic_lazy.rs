@@ -9,7 +9,7 @@
 mod test {
     use static_init::{constructor, dynamic, CyclicPanic};
 
-    #[dynamic(lazy)]
+    #[dynamic(quasi_lazy)]
     static mut V0: i32 = unsafe{*V0};
 
     fn panic_hook(p: &core::panic::PanicInfo<'_>) -> () {

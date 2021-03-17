@@ -239,16 +239,18 @@ mod lazy {
     static mut L0: A = A::new(10);
 
     #[cfg(feature = "atexit")]
-    #[dynamic(lazy, finalize)]
+    #[dynamic(quasi_lazy, finalize)]
     static L3: A = A::new(33);
 
     #[cfg(feature = "atexit")]
-    #[dynamic(lazy, finalize)]
+    #[dynamic(quasi_lazy, finalize)]
     static mut L2: A = A::new(L3.0);
 
     #[test]
     fn lazy_init() {
         unsafe { assert_eq!(L0.0, 10) };
         assert_eq!(L1.0, 11);
+        assert_eq!(unsafe{L2.0}, 33);
+        assert_eq!(L3.0, 33);
     }
 }

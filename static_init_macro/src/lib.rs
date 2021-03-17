@@ -467,6 +467,7 @@ pub fn dynamic(args: TokenStream, input: TokenStream) -> TokenStream {
 enum InitMode {
     Const,
     Lazy,
+    QuasiLazy,
     Dynamic(u16),
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -603,6 +604,9 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
                 }else if id == "lazy" {
                     check_no_init!(id);
                     opt.init = InitMode::Lazy;
+                }else if id == "quasi_lazy" {
+                    check_no_init!(id);
+                    opt.init = InitMode::QuasiLazy;
                 } else {
                     return unexpected_arg!(id);
                 }
@@ -641,11 +645,11 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
             }
         }
     }
-    if opt.init == InitMode::Lazy && !cfg!(feature = "lazy") {
+    if (opt.init == InitMode::Lazy || opt.init == InitMode::QuasiLazy) && !cfg!(feature = "lazy") {
         Err(generate_error!(
             "static_init crate feature `lazy` is not enabled."
         ))
-    } else if opt.init == InitMode::Lazy
+    } else if (opt.init == InitMode::Lazy || opt.init == InitMode::QuasiLazy)
         && !(opt.drop == DropMode::None || opt.drop == DropMode::Finalize || opt.drop == DropMode::Drop)
     {
         Err(generate_error!("Drop mode not supported for lazy statics."))
@@ -707,7 +711,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
 
     let is_thread_local = has_thread_local(&stat.attrs);
 
-    if is_thread_local && options.init != InitMode::Lazy {
+    if is_thread_local && !(options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy){
         return generate_error!(
             "Only statics with `#[dynamic(lazy)]` or `#[dynamic(lazy,drop)]` can also have \
              `#[thread_local]` attribute"
@@ -718,13 +722,13 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             "`#[thread_local] #[dynamic(lazy,drop)]` needs static_init crate `thread_local_drop` feature"
         );
     }
-    if !is_thread_local && options.init == InitMode::Lazy && options.drop == DropMode::Drop {
+    if !is_thread_local && (options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy) && options.drop == DropMode::Drop {
         return generate_error!(
             "A lazy can be `drop` only if it is also thread_local, use `finalize` attribute argument instead and implement Finalize trait for your type."
         );
     }
 
-    let stat_ref: Expr = if options.init != InitMode::Lazy && stat.mutability.is_some() {
+    let stat_ref: Expr = if !(options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy) && stat.mutability.is_some() {
         parse_quote! {
             &mut #stat_name
         }
@@ -742,7 +746,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         };
     }
 
-    let typ: Type = if options.init != InitMode::Lazy {
+    let typ: Type = if !(options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy) {
         if stat.mutability.is_none() {
             into_mutable!();
             parse_quote! {
@@ -765,13 +769,21 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             parse_quote! {
                 ::static_init::LocalLazy::<#stat_typ>
             }
-    } else if options.drop == DropMode::Finalize{
+    } else if options.drop == DropMode::Finalize && options.init == InitMode::QuasiLazy {
         parse_quote! {
-            ::static_init::GlobalLazyFinalize::<#stat_typ>
+            ::static_init::QuasiLazyFinalize::<#stat_typ>
         }
+    } else if options.drop == DropMode::Finalize && options.init == InitMode::Lazy {
+        parse_quote! {
+            ::static_init::LazyFinalize::<#stat_typ>
+        }
+    } else if options.init == InitMode::QuasiLazy {
+         parse_quote! {
+             ::static_init::QuasiLazy::<#stat_typ>
+         }
     } else {
          parse_quote! {
-             ::static_init::GlobalLazy::<#stat_typ>
+             ::static_init::Lazy::<#stat_typ>
          }
     };
 
@@ -824,7 +836,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             })
         }
 
-        InitMode::Lazy if !is_thread_local => Some(quote_spanned! {sp=>
+        InitMode::QuasiLazy if !is_thread_local => Some(quote_spanned! {sp=>
                 #[::static_init::constructor(__lazy_init)]
                 extern "C" fn __static_init_initializer() {
                     #[allow(unused_unsafe)]
@@ -832,7 +844,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 }
         }),
 
-        InitMode::Const | InitMode::Lazy => None,
+        InitMode::Const | InitMode::Lazy | InitMode::QuasiLazy => None,
     };
 
     let droper = if let DropMode::Dynamic(priority) = options.drop {
@@ -852,6 +864,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     let init_priority: Expr = match options.init {
         InitMode::Dynamic(n) => parse_quote!(::static_init::InitMode::ProgramConstructor(#n)),
         InitMode::Lazy => parse_quote!(::static_init::InitMode::Lazy),
+        InitMode::QuasiLazy => parse_quote!(::static_init::InitMode::QuasiLazy),
         InitMode::Const => parse_quote!(::static_init::InitMode::Const),
     };
 
@@ -885,7 +898,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             }
             }
         }
-        InitMode::Lazy if cfg!(debug_mode) => {
+        InitMode::Lazy | InitMode::QuasiLazy if cfg!(debug_mode) => {
             quote_spanned!{sp=>{
                 #initer
 
@@ -894,12 +907,13 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                     #expr
                 }
 
+                #[allow(unused_unsafe)]
                 unsafe{#typ::new_static_with_info(initer,
                     #static_info)}
             }
             }
         }
-        InitMode::Lazy => {
+        InitMode::Lazy | InitMode::QuasiLazy => {
             quote_spanned!{sp=>{
                 #initer
 
@@ -907,7 +921,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 fn initer() -> #stat_typ {
                     #expr
                 }
-
+                #[allow(unused_unsafe)]
                 unsafe{#typ::new_static(initer)}
             }
             }
