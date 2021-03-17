@@ -10,9 +10,7 @@ repository = "https://gitlab.com/okannen/static_init"
 license = "MIT OR Apache-2.0"
 
 [features]
-lazy = []
-atexit = []
-thread_local_drop = []
+global_once = []
 debug_order = []
 
 [lib]

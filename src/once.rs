@@ -1,32 +1,73 @@
-pub use parking_lot::{Once as PkOnce, OnceState};
-
-use super::{ManagerBase, OnceManager, Phase, Static};
+use super::{ManagerBase, OnceManager, Static};
 use core::cell::Cell;
 use core::mem::forget;
-use core::sync::atomic::{fence, AtomicU32, Ordering};
 
 #[cfg(debug_mode)]
 use super::CyclicPanic;
-#[cfg(debug_mode)]
-use core::sync::atomic::AtomicUsize;
 
-#[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
-mod inited {
+mod phase {
+    pub(super) const INITED_BIT: u32 = 1;
+    pub(super) const INITIALIZING_BIT: u32 = 2 * INITED_BIT;
+    pub(super) const INIT_SKIPED_BIT: u32 = 2 * INITIALIZING_BIT;
+    pub(super) const LOCKED_BIT: u32 = 2 * INIT_SKIPED_BIT;
+    pub(super) const PARKED_BIT: u32 = 2 * LOCKED_BIT;
+    pub(super) const REGISTRATING_BIT: u32 = 2 * PARKED_BIT;
+    pub(super) const REGISTERED_BIT: u32 = 2 * REGISTRATING_BIT;
+    pub(super) const FINALIZING_BIT: u32 = 2 * REGISTERED_BIT;
+    pub(super) const FINALIZED_BIT: u32 = 2 * FINALIZING_BIT;
+    pub(super) const FINALIZATION_PANIC_BIT: u32 = 2 * FINALIZED_BIT;
 
-    use core::sync::atomic::{AtomicBool, Ordering};
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub struct Phase(pub(super) u32);
 
-    static LAZY_INIT_ENSURED: AtomicBool = AtomicBool::new(false);
+    impl Phase {
+        pub const fn new() -> Self {
+            Self(0)
+        }
+        pub fn initial_state(self) -> bool {
+            self.0 == 0
+        }
+        /// registration of finaly impossible or initialization paniced
+        pub fn initialization_skiped(self) -> bool {
+            self.0 & INIT_SKIPED_BIT != 0
+        }
+        pub fn registration_attempt_done(self) -> bool {
+            self.0 & REGISTERED_BIT != 0
+        }
+        pub fn unregistrable(self) -> bool {
+            self.0 == REGISTERED_BIT | INIT_SKIPED_BIT
+        }
+        pub fn initialized(self) -> bool {
+            self.0 & INITED_BIT != 0
+        }
+        pub fn finalized(self) -> bool {
+            self.0 & FINALIZED_BIT != 0
+        }
 
-    #[static_init_macro::constructor(__lazy_init_finished)]
-    extern "C" fn mark_inited() {
-        LAZY_INIT_ENSURED.store(true, Ordering::Release);
-    }
+        pub fn registrating(self) -> bool {
+            self.0 & REGISTRATING_BIT != 0  && !self.initialization_skiped()
+        }
+        pub fn registration_panic(self) -> bool {
+            self.0 & REGISTRATING_BIT != 0 && self.initialization_skiped()
+        }
 
-    #[inline(always)]
-    pub(crate) fn global_inited_hint() -> bool {
-        LAZY_INIT_ENSURED.load(Ordering::Acquire)
+        pub fn initializing(self) -> bool {
+            self.0 & INITIALIZING_BIT != 0  && !self.initialization_skiped()
+        }
+        pub fn initialization_panic(self) -> bool {
+            self.0 & INITIALIZING_BIT != 0  && self.initialization_skiped()
+        }
+
+        pub fn finalizing(self) -> bool {
+            self.0 & FINALIZING_BIT != 0
+        }
+        pub fn finalization_panic(self) -> bool {
+            self.0 & FINALIZATION_PANIC_BIT != 0
+        }
+
     }
 }
+pub use phase::Phase;
 
 pub struct LocalManager(Cell<Phase>);
 
@@ -59,7 +100,7 @@ fn register_uninited<T: Static>(
     reg: impl FnOnce(&T) -> bool,
     init_on_reg_failure: bool,
 ) {
-    use crate::phase::*;
+    use phase::*;
 
     //states:
     // 1) 0
@@ -150,7 +191,7 @@ where
     }
 
     fn finalize(s: &T, f: impl FnOnce(&T::Data)) {
-        use crate::phase::*;
+        use phase::*;
 
         let this = Static::manager(s).as_ref();
 
@@ -179,6 +220,36 @@ where
     }
 }
 
+#[cfg(feature="global_once")]
+mod global_once {
+use super::{Phase,phase,ManagerBase, OnceManager, Static};
+use core::mem::forget;
+use core::sync::atomic::{fence, AtomicU32, Ordering};
+
+#[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
+mod inited {
+
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    static LAZY_INIT_ENSURED: AtomicBool = AtomicBool::new(false);
+
+    #[static_init_macro::constructor(__lazy_init_finished)]
+    extern "C" fn mark_inited() {
+        LAZY_INIT_ENSURED.store(true, Ordering::Release);
+    }
+
+    #[inline(always)]
+    pub(crate) fn global_inited_hint() -> bool {
+        LAZY_INIT_ENSURED.load(Ordering::Acquire)
+    }
+}
+
+
+#[cfg(debug_mode)]
+use super::CyclicPanic;
+#[cfg(debug_mode)]
+use core::sync::atomic::AtomicUsize;
+
 #[inline(never)]
 #[cold]
 fn atomic_register_uninited<'a, T: Static, const GLOBAL: bool>(
@@ -193,7 +264,7 @@ fn atomic_register_uninited<'a, T: Static, const GLOBAL: bool>(
     #[cfg(debug_mode)]
     id: &AtomicUsize
 ) -> bool {
-    use crate::phase::*;
+    use phase::*;
 
     use parking_lot_core::SpinWait;
 
@@ -403,7 +474,7 @@ where
         reg: impl FnOnce(&T) -> bool,
         init_on_reg_failure: bool,
     ) -> bool {
-        use crate::phase::*;
+        use phase::*;
 
         let this = Static::manager(s).as_ref();
 
@@ -443,6 +514,7 @@ where
             }
         } else {
             #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
+            {
             if GLOBAL {
                 if inited::global_inited_hint() {
                     debug_assert!(!shall_proceed(Phase(this.0.load(Ordering::Relaxed))));
@@ -453,10 +525,15 @@ where
             } else {
                 unreachable!()
             }
+            }
+            #[cfg(not(all(support_priority, not(feature = "test_no_global_lazy_hint"))))]
+            {
+                unreachable!()
+            }
         }
     }
     fn finalize(s: &T, f: impl FnOnce(&T::Data)) {
-        use crate::phase::*;
+        use phase::*;
 
         let this = Static::manager(s).as_ref();
 
@@ -543,3 +620,6 @@ where
         );
     }
 }
+}
+#[cfg(feature="global_once")]
+pub use global_once::GlobalManager;

@@ -4,7 +4,7 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-#![cfg_attr(feature = "test_thread_local", feature(thread_local))]
+#![cfg_attr(feature = "thread_local", feature(thread_local))]
 
 extern crate static_init;
 use static_init::{constructor, destructor, dynamic, Finaly};
@@ -164,10 +164,11 @@ fn dynamic_init() {
 }
 
 
-#[cfg(feature = "lazy")]
 mod lazy {
+    use static_init::dynamic;
+    use super::A;
 
-    #[cfg(feature = "test_thread_local")]
+    #[cfg(feature = "thread_local")]
     #[test]
     fn thread_local() {
         #[thread_local]
@@ -186,7 +187,7 @@ mod lazy {
         .unwrap();
     }
 
-    #[cfg(all(feature= "thread_local_drop",feature = "test_thread_local"))]
+    #[cfg(all(feature = "thread_local"))]
     #[test]
     fn thread_local_drop() {
         use core::sync::atomic::{AtomicI32, Ordering};
@@ -230,7 +231,9 @@ mod lazy {
         assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 4);
     }
 
-    use super::A;
+#[cfg(feature="global_once")]
+mod global_lazy {
+    use super::super::A;
     use static_init::dynamic;
     #[dynamic(lazy)]
     static L1: A = A::new(unsafe { L0.0 } + 1);
@@ -238,11 +241,9 @@ mod lazy {
     #[dynamic(lazy)]
     static mut L0: A = A::new(10);
 
-    #[cfg(feature = "atexit")]
     #[dynamic(quasi_lazy, finalize)]
     static L3: A = A::new(33);
 
-    #[cfg(feature = "atexit")]
     #[dynamic(quasi_lazy, finalize)]
     static mut L2: A = A::new(L3.0);
 
@@ -253,4 +254,5 @@ mod lazy {
         assert_eq!(unsafe{L2.0}, 33);
         assert_eq!(L3.0, 33);
     }
+}
 }

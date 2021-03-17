@@ -5,10 +5,10 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-#![cfg_attr(not(any(feature = "lazy", feature = "thread_local_drop")), no_std)]
-#![cfg_attr(all(elf), feature(linkage))]
-#![feature(thread_local)]
-#![feature(cfg_target_thread_local)]
+#![cfg_attr(not(any(feature = "global_once", feature = "thread_local_drop")), no_std)]
+#![cfg_attr(all(elf, feature="thread_local"), feature(linkage))]
+#![cfg_attr(feature="thread_local",feature(thread_local),feature(cfg_target_thread_local))]
+
 //! Non const static initialization, and program constructor/destructor code.
 //!
 //! # Lesser Lazy Statics
@@ -523,81 +523,31 @@ mod generic_lazy;
 pub use generic_lazy::{GenericLazy, LazyPolicy, RegisterOnFirstAccess, UnInited,DropedUnInited, LazyData};
 
 mod once;
-pub use once::{GlobalManager, LocalManager};
-//#[cfg(feature = "lazy")]
-//pub use static_lazy::Lazy;
+pub use once::{LocalManager, Phase};
+#[cfg(feature="global_once")]
+pub use once::GlobalManager;
 
+#[cfg(any(elf, mach_o, coff))]
 mod at_exit;
-pub use at_exit::{ExitManager, ThreadExitManager};
+
+#[cfg(any(elf, mach_o, coff))]
+#[cfg(feature="thread_local")]
+pub use at_exit::ThreadExitManager;
+
+#[cfg(any(elf, mach_o, coff))]
+#[cfg(feature="global_once")]
+pub use at_exit::ExitManager;
 
 pub mod lazy;
-pub use lazy::{Lazy,QuasiLazy,LocalLazy,LazyFinalize,QuasiLazyFinalize,LocalLazyFinalize,LocalLazyDroped};
+pub use lazy::LocalLazy;
+#[cfg(feature="thread_local")]
+pub use lazy::{LocalLazyFinalize,LocalLazyDroped};
+#[cfg(feature="global_once")]
+pub use lazy::{Lazy,QuasiLazy,LazyFinalize,QuasiLazyFinalize};
 
+#[cfg(any(elf, mach_o, coff))]
 pub mod raw_static;
 
-pub(crate) mod phase {
-    pub(crate) const INITED_BIT: u32 = 1;
-    pub(crate) const INITIALIZING_BIT: u32 = 2 * INITED_BIT;
-    pub(crate) const INIT_SKIPED_BIT: u32 = 2 * INITIALIZING_BIT;
-    pub(crate) const LOCKED_BIT: u32 = 2 * INIT_SKIPED_BIT;
-    pub(crate) const PARKED_BIT: u32 = 2 * LOCKED_BIT;
-    pub(crate) const REGISTRATING_BIT: u32 = 2 * PARKED_BIT;
-    pub(crate) const REGISTERED_BIT: u32 = 2 * REGISTRATING_BIT;
-    pub(crate) const FINALIZING_BIT: u32 = 2 * REGISTERED_BIT;
-    pub(crate) const FINALIZED_BIT: u32 = 2 * FINALIZING_BIT;
-    pub(crate) const FINALIZATION_PANIC_BIT: u32 = 2 * FINALIZED_BIT;
-
-    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-    pub struct Phase(pub(crate) u32);
-
-    impl Phase {
-        pub const fn new() -> Self {
-            Self(0)
-        }
-        pub fn initial_state(self) -> bool {
-            self.0 == 0
-        }
-        /// registration of finaly impossible or initialization paniced
-        pub fn initialization_skiped(self) -> bool {
-            self.0 & INIT_SKIPED_BIT != 0
-        }
-        pub fn registration_attempt_done(self) -> bool {
-            self.0 & REGISTERED_BIT != 0
-        }
-        pub fn unregistrable(self) -> bool {
-            self.0 == REGISTERED_BIT | INIT_SKIPED_BIT
-        }
-        pub fn initialized(self) -> bool {
-            self.0 & INITED_BIT != 0
-        }
-        pub fn finalized(self) -> bool {
-            self.0 & FINALIZED_BIT != 0
-        }
-
-        pub fn registrating(self) -> bool {
-            self.0 & REGISTRATING_BIT != 0  && !self.initialization_skiped()
-        }
-        pub fn registration_panic(self) -> bool {
-            self.0 & REGISTRATING_BIT != 0 && self.initialization_skiped()
-        }
-
-        pub fn initializing(self) -> bool {
-            self.0 & INITIALIZING_BIT != 0  && !self.initialization_skiped()
-        }
-        pub fn initialization_panic(self) -> bool {
-            self.0 & INITIALIZING_BIT != 0  && self.initialization_skiped()
-        }
-
-        pub fn finalizing(self) -> bool {
-            self.0 & FINALIZING_BIT != 0
-        }
-        pub fn finalization_panic(self) -> bool {
-            self.0 & FINALIZATION_PANIC_BIT != 0
-        }
-
-    }
-}
-pub use phase::Phase;
 
 #[derive(Debug)]
 #[doc(hidden)]

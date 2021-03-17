@@ -17,26 +17,20 @@ members = [
 [features]
 
 # for non thread local lesser lazy statics => requires std library
-lazy = ["static_init_macro/lazy", "parking_lot", "parking_lot_core"]
+global_once = ["static_init_macro/global_once", "parking_lot", "parking_lot_core"]
 
 likely = ["likely_stable"]
-
-# for drops registered with at exit
-atexit = ["static_init_macro/atexit", "libc"]
 
 # for detection of lazy static cyclic initialization 
 # and detection of dynamic statics access while not initialized
 debug_order = ["static_init_macro/debug_order"]
 
-# for thread local lazy static drop capability => requires std library
-thread_local_drop = ["static_init_macro/thread_local_drop"]
-
 # internal feature to enable tests
-test_thread_local = []
+thread_local = []
 test_no_global_lazy_hint = []
 
 
-default = ["lazy", "atexit", "thread_local_drop", "debug_order", "test_thread_local"]
+default = ["global_once", "debug_order"]
 
 [dependencies]
 libc = {version = "0.2", optional=true}

@@ -1,5 +1,6 @@
 #![cfg(any(elf, mach_o, coff))]
 
+#[cfg(feature = "global_once")]
 mod exit_manager {
     use crate::Finaly;
     use crate::GlobalManager as SubManager;
@@ -142,9 +143,13 @@ mod exit_manager {
         }
     }
 }
+#[cfg(feature = "global_once")]
 pub use exit_manager::ExitManager;
 
+#[cfg(feature = "thread_local")]
 pub use local_manager::ThreadExitManager;
+
+#[cfg(feature = "thread_local")]
 mod local_manager {
 
     use crate::LocalManager as SubManager;

@@ -5,7 +5,7 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-#[cfg(all(debug_mode,feature = "lazy"))]
+#[cfg(all(debug_mode,feature = "global_once"))]
 mod test {
     use static_init::{constructor, dynamic, CyclicPanic};
 

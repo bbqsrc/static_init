@@ -1,4 +1,7 @@
-use crate::{Manager, ManagerBase, Static,OnceManager,GlobalManager,LocalManager,ExitManager,ThreadExitManager, GenericLazy, LazyPolicy, UnInited,DropedUnInited, LazyData, Phase,StaticInfo};
+use crate::{Manager, ManagerBase, Static,OnceManager,LocalManager,ThreadExitManager, GenericLazy, LazyPolicy, UnInited,DropedUnInited, LazyData, Phase,StaticInfo};
+
+#[cfg(feature="global_once")]
+use crate::{GlobalManager,ExitManager};
 
 pub struct NonPoisonedChecker;
 
@@ -69,8 +72,10 @@ macro_rules! init_only {
     };
 }
 
+#[cfg(feature="global_once")]
 init_only! {GlobalInitOnlyManager,GlobalManager<true>}
 
+#[cfg(feature="global_once")]
 init_only! {LazyInitOnlyManager,GlobalManager<false>, GlobalManager::new_lazy()}
 
 init_only! {LocalInitOnlyManager,LocalManager}
@@ -146,10 +151,19 @@ macro_rules! impl_lazy {
         }
     };
 }
+
+#[cfg(feature="global_once")]
 impl_lazy! {Lazy,LazyInitOnlyManager,NonPoisonedChecker,UnInited::<T>}
+
+#[cfg(feature="global_once")]
 impl_lazy! {unsafe QuasiLazy,GlobalInitOnlyManager,NonPoisonedChecker,UnInited::<T>}
+
+#[cfg(feature="global_once")]
 impl_lazy! {unsafe LazyFinalize,ExitManager<false>,NonPoisonedChecker,UnInited::<T>,ExitManager::new_lazy()}
+
+#[cfg(feature="global_once")]
 impl_lazy! {unsafe QuasiLazyFinalize,ExitManager<true>,NonPoisonedChecker,UnInited::<T>}
+
 impl_lazy! {LocalLazy,LocalInitOnlyManager,NonPoisonedChecker,UnInited::<T>}
 impl_lazy! {unsafe LocalLazyFinalize,ThreadExitManager,NonPoisonedChecker,UnInited::<T>}
 impl_lazy! {unsafe LocalLazyDroped,ThreadExitManager,NonFinalizedChecker,DropedUnInited::<T>}
@@ -169,6 +183,7 @@ impl<T,G> Drop for LocalLazy<T,G> {
     }
 }
 
+#[cfg(feature="global_once")]
 #[cfg(test)]
 mod test_lazy {
     use super::Lazy;
@@ -180,6 +195,7 @@ mod test_lazy {
     }
 }
 
+#[cfg(feature="global_once")]
 //#[cfg(test)]
 //mod test_quasi_lazy {
 //    use super::QuasiLazy;
@@ -203,6 +219,7 @@ mod test_local_lazy {
         assert_eq!(*_X, 22);
     }
 }
+#[cfg(feature="global_once")]
 #[cfg(test)]
 mod test_lazy_finalize {
     use crate::Finaly;
@@ -218,6 +235,7 @@ mod test_lazy_finalize {
         assert_eq!((*_X).0, 22);
     }
 }
+#[cfg(feature="global_once")]
 //#[cfg(test)]
 //mod test_quasi_lazy_finalize {
 //    use crate::Finaly;

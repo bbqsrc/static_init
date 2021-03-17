@@ -587,19 +587,9 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
                     opt.init = InitMode::Dynamic(0);
                 } else if id == "drop" {
                     check_no_drop!(id);
-                    if !cfg!(feature = "atexit") {
-                        return Err(
-                            generate_error!(id.span()=>"static_init crate feature `atexit` is not enabled.",id),
-                        );
-                    }
                     opt.drop = DropMode::Drop;
                 } else if id == "finalize" {
                     check_no_drop!(id);
-                    if !cfg!(feature = "atexit") {
-                        return Err(
-                            generate_error!(id.span()=>"static_init crate feature `atexit` is not enabled.",id),
-                        );
-                    }
                     opt.drop = DropMode::Finalize;
                 }else if id == "lazy" {
                     check_no_init!(id);
@@ -645,11 +635,7 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
             }
         }
     }
-    if (opt.init == InitMode::Lazy || opt.init == InitMode::QuasiLazy) && !cfg!(feature = "lazy") {
-        Err(generate_error!(
-            "static_init crate feature `lazy` is not enabled."
-        ))
-    } else if (opt.init == InitMode::Lazy || opt.init == InitMode::QuasiLazy)
+    if (opt.init == InitMode::Lazy || opt.init == InitMode::QuasiLazy)
         && !(opt.drop == DropMode::None || opt.drop == DropMode::Finalize || opt.drop == DropMode::Drop)
     {
         Err(generate_error!("Drop mode not supported for lazy statics."))
@@ -717,14 +703,9 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
              `#[thread_local]` attribute"
         );
     }
-    if is_thread_local && (options.drop == DropMode::Finalize || options.drop == DropMode::Drop) && !cfg!(feature = "thread_local_drop") {
+    if !is_thread_local && (options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy) && cfg!(not(feature="global_once")) {
         return generate_error!(
-            "`#[thread_local] #[dynamic(lazy,drop)]` needs static_init crate `thread_local_drop` feature"
-        );
-    }
-    if !is_thread_local && (options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy) && options.drop == DropMode::Drop {
-        return generate_error!(
-            "A lazy can be `drop` only if it is also thread_local, use `finalize` attribute argument instead and implement Finalize trait for your type."
+            "non thread_local lazy only supported with feature 'global_once'"
         );
     }
 
