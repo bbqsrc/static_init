@@ -57,41 +57,65 @@ fn register_uninited<T: Static>(
     s: &T,
     init: impl FnOnce(&<T as Static>::Data),
     reg: impl FnOnce(&T) -> bool,
+    init_on_reg_failure: bool,
 ) {
     use crate::phase::*;
 
     //states:
     // 1) 0
-    // 2) REGISTRATING
-    // 3) REGISTRATING|POISON (final)
-    //    REGISTRATING|REGISTERED|INITIALIZING
-    //    REGISTERED (final)
-    // 4) REGISTRATING|REGISTERED|INITIALIZING|POISON (final)
+    // 2) REGISTRATING|LOCKED_BIT (|PARKED_BIT)
+    // 3)    REGISTRATING|INIT_SKIPED (final)
+    //    a) REGISTRATING|REGISTERED|INITIALIZING|LOCKED (|PARKED)
+    //    b) REGISTRATING|INITIALIZING|LOCKED (|PARKED)
+    //       REGISTERED|INIT_SKIPED (final)
+    // branch a):
+    // 4) REGISTRATING|REGISTERED|INITIALIZING|INIT_SKIPED (final)
     //    REGISTRATING|REGISTERED|INITIALIZED
     // 5) REGISTRATING|REGISTERED|INITIALIZED|FINALIZING
     // 6) REGISTRATING|REGISTERED|INITIALIZED|FINALIZED (final)
-    // 6) REGISTRATING|REGISTERED|INITIALIZED|FINALIZATION_PANIC(final)
+    //    REGISTRATING|REGISTERED|INITIALIZED|FINALIZATION_PANIC(final)
+    // branch b):
+    // 4) REGISTRATING|INITIALIZING|INIT_SKIPED (final)
+    //    REGISTRATING|INITIALIZED (final)
+    // 5) REGISTRATING|INITIALIZED|FINALIZING (if manualy finalize)
+    // 6) REGISTRATING|INITIALIZED|FINALIZED (final)
+    //    REGISTRATING|INITIALIZED|FINALIZATION_PANIC(final)
 
     this.0.set(Phase(REGISTRATING_BIT));
-    let guard = Guard(&this.0, Phase(REGISTRATING_BIT | POISON_BIT));
+    let guard = Guard(&this.0, Phase(REGISTRATING_BIT | INIT_SKIPED_BIT));
     let cond = reg(s);
     forget(guard);
 
     if cond {
         this.0
-            .set(Phase(INITIALIZING_BIT | REGISTRATING_BIT | REGISTERED_BIT));
+            .set(Phase(INITIALIZING_BIT | REGISTERED_BIT));
         let guard = Guard(
             &this.0,
-            Phase(REGISTRATING_BIT | REGISTERED_BIT | INITIALIZING_BIT | POISON_BIT),
+            Phase(REGISTERED_BIT | INITIALIZING_BIT | INIT_SKIPED_BIT),
         );
 
         init(Static::data(s));
 
         forget(guard);
         this.0
-            .set(Phase(INITED_BIT | REGISTERED_BIT | REGISTRATING_BIT));
+            .set(Phase(INITED_BIT | REGISTERED_BIT));
+    } else if init_on_reg_failure {
+        this.0
+            .set(Phase(INITIALIZING_BIT));
+        let guard = Guard(
+            &this.0,
+            Phase(INITIALIZING_BIT | INIT_SKIPED_BIT),
+        );
+
+        init(Static::data(s));
+
+        forget(guard);
+
+        this.0
+            .set(Phase(INITED_BIT));
+
     } else {
-        this.0.set(Phase(REGISTERED_BIT|POISON_BIT));
+        this.0.set(Phase(REGISTERED_BIT|INIT_SKIPED_BIT));
     }
 }
 
@@ -105,13 +129,23 @@ where
         shall_proceed: impl Fn(Phase) -> bool,
         init: impl FnOnce(&<T as Static>::Data),
         reg: impl FnOnce(&T) -> bool,
-    ) {
+        init_on_reg_failure: bool
+    ) -> bool {
         let this = Static::manager(s).as_ref();
 
         let cur = this.0.get();
 
         if shall_proceed(cur) {
-            register_uninited(this, s, init, reg);
+            #[cfg(debug_mode)]
+            {
+                if cur.initializing() || cur.registrating() {
+                    std::panic::panic_any(CyclicPanic);
+                }
+            }
+            register_uninited(this, s, init, reg, init_on_reg_failure);
+            shall_proceed(this.0.get())
+        } else {
+            false
         }
     }
 
@@ -124,15 +158,14 @@ where
         impl<'a> Drop for Guard<'a> {
             fn drop(&mut self) {
                 // Mark the state as poisoned, unlock it and unpark all threads.
-                let man = self.0;
-                man.set(Phase(
-                    INITED_BIT | REGISTERED_BIT | REGISTRATING_BIT | FINALIZATION_PANIC_BIT,
-                ));
+                let p = self.0;
+                p.set(Phase(p.get().0 ^ (FINALIZING_BIT | FINALIZATION_PANIC_BIT)));
             }
         }
-        if this.0.get().0 == INITED_BIT | REGISTRATING_BIT | REGISTERED_BIT {
+        if this.0.get().0 & INIT_SKIPED_BIT == 0 {
+            assert_eq!(this.0.get().0 & (FINALIZING_BIT | FINALIZED_BIT | FINALIZATION_PANIC_BIT),0);
             this.0.set(Phase(
-                FINALIZING_BIT | INITED_BIT | REGISTRATING_BIT | REGISTERED_BIT,
+                this.0.get().0 | FINALIZING_BIT,
             ));
 
             let guard = Guard(&this.0);
@@ -141,16 +174,8 @@ where
 
             forget(guard);
 
-            this.0.set(Phase(
-                FINALIZED_BIT | INITED_BIT | REGISTERED_BIT | REGISTRATING_BIT,
-            ));
-        } else {
-            if  ! (this.0.get()
-                    == Phase(REGISTRATING_BIT | REGISTERED_BIT | INITIALIZING_BIT | POISON_BIT)
-                    || this.0.get() == Phase(REGISTERED_BIT|POISON_BIT)){
-            panic!("{:?}",this.0.get());
-            }
-        }
+            this.0.set(Phase( this.0.get().0 ^ (FINALIZING_BIT |FINALIZED_BIT)));
+        }     
     }
 }
 
@@ -162,11 +187,12 @@ fn atomic_register_uninited<'a, T: Static, const GLOBAL: bool>(
     shall_proceed: impl Fn(Phase) -> bool,
     init: impl FnOnce(&<T as Static>::Data),
     reg: impl FnOnce(&T) -> bool,
+    init_on_reg_failure: bool,
     park: impl Fn(),
     unpark: impl Fn() + Copy,
     #[cfg(debug_mode)]
     id: &AtomicUsize
-) {
+) -> bool {
     use crate::phase::*;
 
     use parking_lot_core::SpinWait;
@@ -178,12 +204,12 @@ fn atomic_register_uninited<'a, T: Static, const GLOBAL: bool>(
     loop {
         if !shall_proceed(Phase(cur)) {
             fence(Ordering::Acquire);
-            return;
+            return false;
         }
         if cur & LOCKED_BIT == 0 {
             match this.0.compare_exchange_weak(
                 cur,
-                (cur | LOCKED_BIT | REGISTRATING_BIT) & !POISON_BIT,
+                (cur | LOCKED_BIT | REGISTRATING_BIT) & !INIT_SKIPED_BIT,
                 Ordering::Acquire,
                 Ordering::Relaxed,
             ) {
@@ -209,7 +235,7 @@ fn atomic_register_uninited<'a, T: Static, const GLOBAL: bool>(
         }
         #[cfg(debug_mode)]
         {
-        let id = id.load(Ordering::Release);
+        let id = id.load(Ordering::Relaxed);
         if id != 0 {
             use parking_lot::lock_api::GetThreadId;
             if id == parking_lot::RawThreadId.nonzero_thread_id().into() {
@@ -264,16 +290,24 @@ fn atomic_register_uninited<'a, T: Static, const GLOBAL: bool>(
     //states:
     // 1) 0
     // 2) REGISTRATING|LOCKED_BIT (|PARKED_BIT)
-    // 3) REGISTRATING|POISON (final)
-    //    REGISTRATING|REGISTERED|INITIALIZING|LOCKED (|PARKED)
-    //    REGISTERED|POISON (final)
-    // 4) REGISTRATING|REGISTERED|INITIALIZING|POISON (final)
-    //    REGISTRATING|REGISTERED|INITIALIZED
-    // 5) REGISTRATING|REGISTERED|INITIALIZED|FINALIZING
-    // 6) REGISTRATING|REGISTERED|INITIALIZED|FINALIZED (final)
-    // 6) REGISTRATING|REGISTERED|INITIALIZED|FINALIZING|POISON(final)
+    // 3)    REGISTRATING|INIT_SKIPED (final)
+    //    a) REGISTERED|INITIALIZING|LOCKED (|PARKED)
+    //    b) INITIALIZING|LOCKED (|PARKED)
+    //       REGISTERED|INIT_SKIPED (final)
+    // branch a):
+    // 4) REGISTERED|INITIALIZING|INIT_SKIPED (final)
+    //    REGISTERED|INITIALIZED
+    // 5) REGISTERED|INITIALIZED|FINALIZING
+    // 6) REGISTERED|INITIALIZED|FINALIZED (final)
+    //    REGISTERED|INITIALIZED|FINALIZATION_PANIC(final)
+    // branch b):
+    // 4) INITIALIZING|INIT_SKIPED (final)
+    //    INITIALIZED (final)
+    // 5) INITIALIZED|FINALIZING (if manualy finalize)
+    // 6) INITIALIZED|FINALIZED (final)
+    //    INITIALIZED|FINALIZATION_PANIC(final)
 
-    let guard = UnparkGuard(&this, unpark, REGISTRATING_BIT | POISON_BIT);
+    let guard = UnparkGuard(&this, unpark, REGISTRATING_BIT | INIT_SKIPED_BIT);
     let cond = reg(s);
     forget(guard);
 
@@ -281,27 +315,54 @@ fn atomic_register_uninited<'a, T: Static, const GLOBAL: bool>(
         let guard = UnparkGuard(
             &this,
             unpark,
-            REGISTRATING_BIT | REGISTERED_BIT | INITIALIZING_BIT | POISON_BIT,
+            REGISTERED_BIT | INITIALIZING_BIT | INIT_SKIPED_BIT,
         );
         this.0
-            .fetch_or(REGISTERED_BIT | INITIALIZING_BIT, Ordering::Release);
+            .fetch_xor(REGISTRATING_BIT | REGISTERED_BIT | INITIALIZING_BIT, Ordering::Release);
 
         init(Static::data(s));
 
         forget(guard);
 
         let prev = this.0.swap(
-            INITED_BIT | REGISTRATING_BIT | REGISTERED_BIT,
+            INITED_BIT | REGISTERED_BIT,
             Ordering::Release,
         );
         if prev & PARKED_BIT != 0 {
             unpark()
         }
-    } else {
-        let prev = this.0.swap(REGISTERED_BIT|POISON_BIT, Ordering::Release);
+        return shall_proceed(Phase(INITED_BIT | REGISTERED_BIT));
+    } else if init_on_reg_failure {
+
+        let guard = UnparkGuard(
+            &this,
+            unpark,
+            INITIALIZING_BIT | INIT_SKIPED_BIT,
+        );
+
+        this.0
+            .fetch_xor(REGISTRATING_BIT|INITIALIZING_BIT, Ordering::Release);
+
+        init(Static::data(s));
+
+        forget(guard);
+
+        let prev = this.0.swap(
+            INITED_BIT,
+            Ordering::Release,
+        );
         if prev & PARKED_BIT != 0 {
             unpark()
         }
+        return shall_proceed(Phase(INITED_BIT));
+
+    } else {
+
+        let prev = this.0.swap(REGISTERED_BIT|INIT_SKIPED_BIT, Ordering::Release);
+        if prev & PARKED_BIT != 0 {
+            unpark()
+        }
+        return shall_proceed(Phase(REGISTERED_BIT | INIT_SKIPED_BIT));
     }
 }
 
@@ -340,7 +401,8 @@ where
         shall_proceed: impl Fn(Phase) -> bool,
         init: impl FnOnce(&<T as Static>::Data),
         reg: impl FnOnce(&T) -> bool,
-    ) {
+        init_on_reg_failure: bool,
+    ) -> bool {
         use crate::phase::*;
 
         let this = Static::manager(s).as_ref();
@@ -375,16 +437,21 @@ where
             let cur = this.0.load(Ordering::Acquire);
 
             if shall_proceed(Phase(cur)) {
-                atomic_register_uninited(this, s, shall_proceed, init, reg, parker, unpark, #[cfg(debug_mode)] &this.1);
+                atomic_register_uninited(this, s, shall_proceed, init, reg,init_on_reg_failure, parker, unpark, #[cfg(debug_mode)] &this.1)
+            } else {
+                false
             }
         } else {
             #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
             if GLOBAL {
                 if inited::global_inited_hint() {
-                    debug_assert!(!shall_proceed(Phase(this.0.load(Ordering::Relaxed))))
+                    debug_assert!(!shall_proceed(Phase(this.0.load(Ordering::Relaxed))));
+                    false
                 } else {
-                    atomic_register_uninited(this, s, shall_proceed, init, reg, parker, unpark, #[cfg(debug_mode)] &this.1);
+                    atomic_register_uninited(this, s, shall_proceed, init, reg,init_on_reg_failure, parker, unpark, #[cfg(debug_mode)] &this.1)
                 }
+            } else {
+                unreachable!()
             }
         }
     }
@@ -398,8 +465,8 @@ where
             fn drop(&mut self) {
                 // Mark the state as poisoned, unlock it and unpark all threads.
                 let man = self.0;
-                man.0.store(
-                    INITED_BIT | REGISTRATING_BIT | REGISTERED_BIT | FINALIZATION_PANIC_BIT,
+                man.0.fetch_xor(
+                    FINALIZATION_PANIC_BIT|FINALIZING_BIT,
                     Ordering::Relaxed,
                 );
             }
@@ -428,12 +495,13 @@ where
         };
 
         loop {
-            if cur & POISON_BIT != 0 {
+            if cur & INIT_SKIPED_BIT != 0 {
                 return;
             }
+            assert_eq!(cur & (FINALIZING_BIT | FINALIZED_BIT | FINALIZATION_PANIC_BIT), 0);
             match this.0.compare_exchange_weak(
-                INITED_BIT | REGISTRATING_BIT | REGISTERED_BIT,
-                INITED_BIT | REGISTRATING_BIT | REGISTERED_BIT | FINALIZING_BIT,
+                cur & !(LOCKED_BIT|PARKED_BIT),
+                cur & !(LOCKED_BIT|PARKED_BIT) | FINALIZING_BIT,
                 Ordering::Acquire,
                 Ordering::Relaxed,
             ) {
@@ -469,8 +537,8 @@ where
 
         forget(guard);
 
-        this.0.store(
-            INITED_BIT | REGISTRATING_BIT | REGISTERED_BIT | FINALIZED_BIT,
+        this.0.fetch_xor(
+            FINALIZING_BIT | FINALIZED_BIT,
             Ordering::Release,
         );
     }

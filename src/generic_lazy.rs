@@ -8,10 +8,9 @@ use core::marker::PhantomData;
 #[cfg(debug_mode)]
 use crate::CyclicPanic;
 
-pub trait PhaseChecker {
+pub trait LazyPolicy {
+    const INIT_ON_REG_FAILURE:bool;
     fn shall_proceed(_:Phase) -> bool;
-    #[inline(always)]
-    fn is_in_cycle(_:Phase)->bool {false}
 }
 
 pub struct RegisterOnFirstAccess<T,S> {
@@ -25,19 +24,19 @@ impl<T,S> RegisterOnFirstAccess<T,S> {
     }
 }
 
-impl<M: Manager<T>, T: Static<Manager = M>, S:PhaseChecker> Deref for RegisterOnFirstAccess<T,S> {
+impl<M: Manager<T>, T: Static<Manager = M>, S:LazyPolicy> Deref for RegisterOnFirstAccess<T,S> {
     type Target = T;
     #[inline(always)]
     fn deref(&self) -> &T {
-        Manager::register(&self.value, S::shall_proceed, |_| (),);
+        Manager::register(&self.value, S::shall_proceed, |_| (),true);
         &self.value
     }
 }
 
-impl<M: Manager<T>, T: Static<Manager = M>, S:PhaseChecker> DerefMut for RegisterOnFirstAccess<T,S> {
+impl<M: Manager<T>, T: Static<Manager = M>, S:LazyPolicy> DerefMut for RegisterOnFirstAccess<T,S> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut T {
-        Manager::register(&self.value, S::shall_proceed, |_| ());
+        Manager::register(&self.value, S::shall_proceed, |_| (),true);
         &mut self.value
     }
 }
@@ -92,12 +91,8 @@ impl<T, F, M,S> GenericLazy<T, F, M,S> {
         T: 'static,
         M: 'static + Manager<Self>,
         F: 'static + Generator<T>,
-        S: 'static + PhaseChecker
+        S: 'static + LazyPolicy
     {
-        #[cfg(debug_mode)]
-        if S::is_in_cycle(self.manager.phase()) {
-            panic!("Circular initialization of {:#?}",self._info);
-        }
         #[cfg(not(debug_mode))]
         {
         Manager::register(
@@ -110,11 +105,13 @@ impl<T, F, M,S> GenericLazy<T, F, M,S> {
                 let d = Generator::generate(&self.generator);
                 unsafe { (*data.0.get()).as_mut_ptr().write(d) };
             },
+            S::INIT_ON_REG_FAILURE,
         );
         }
         #[cfg(debug_mode)]
         {
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Manager::register(
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| 
+        Manager::register(
             self,
             S::shall_proceed,
             |data: &UnInited<T>| {
@@ -124,10 +121,15 @@ impl<T, F, M,S> GenericLazy<T, F, M,S> {
                 let d = Generator::generate(&self.generator);
                 unsafe { (*data.0.get()).as_mut_ptr().write(d) };
             },
-        ))) {
+            S::INIT_ON_REG_FAILURE,
+        )
+        )) {
             Ok(_) => (),
             Err(x) => if x.is::<CyclicPanic>() { 
-                panic!("Circular initialization of {:#?}", self._info);
+                match &self._info {
+                    Some(info) => panic!("Circular initialization of {:#?}", info),
+                    None => panic!("Circular lazy initialization detected"),
+                }
             } else {
                 std::panic::resume_unwind(x)
             }
@@ -136,7 +138,7 @@ impl<T, F, M,S> GenericLazy<T, F, M,S> {
     }
 }
 
-impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, S:'static+PhaseChecker> Deref
+impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, S:'static+LazyPolicy> Deref
     for GenericLazy<T, F, M, S>
 {
     type Target = T;
@@ -150,7 +152,7 @@ impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, S:'static+
     }
 }
 
-impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, S:'static+PhaseChecker> DerefMut
+impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, S:'static+LazyPolicy> DerefMut
     for GenericLazy<T, F, M,S>
 {
     #[inline(always)]
@@ -160,7 +162,7 @@ impl<M: 'static+Manager<Self>, T: 'static, F: 'static + Generator<T>, S:'static+
     }
 }
 
-unsafe impl<F: 'static + Generator<T>, T: 'static, M: 'static, S:'static+PhaseChecker> Static
+unsafe impl<F: 'static + Generator<T>, T: 'static, M: 'static, S:'static+LazyPolicy> Static
     for GenericLazy<T, F, M, S>
 {
     type Data = UnInited<T>;

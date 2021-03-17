@@ -9,15 +9,24 @@
 
 #[cfg(all(feature = "test_thread_local", debug_mode))]
 mod test {
-    use static_init::{constructor, dynamic};
+    use static_init::{constructor, dynamic, CyclicPanic};
 
     #[thread_local]
     #[dynamic(lazy)]
-    static mut V0: i32 = unsafe{*V0};
+    static V0: i32 = *V0;
 
     fn panic_hook(p: &core::panic::PanicInfo<'_>) -> () {
-        println!("Panic caught {}", p);
-        std::process::exit(0)
+        if p.payload().is::<CyclicPanic>() {
+            println!("Cyclic Panic running");
+        } else {
+            println!("Panic expectedly caught {:?}", p);
+            std::process::exit(0)
+        }
+    }
+
+    #[constructor(5)]
+    extern "C" fn touch() {
+        &*V0;
     }
 
     #[constructor(10)]

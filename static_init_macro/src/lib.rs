@@ -751,14 +751,14 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             parse_quote! {
                 ::static_init::LocalLazyFinalize::<#stat_typ>
             }
-    } else if is_thread_local && !(options.drop == DropMode::Finalize){
-            parse_quote! {
-                ::static_init::LocalLazy::<#stat_typ>
-            }
     } else if is_thread_local && options.drop == DropMode::Drop{
         parse_quote! {
             ::static_init::DropedLazy::<#stat_typ>
         }
+    } else if is_thread_local {
+            parse_quote! {
+                ::static_init::LocalLazy::<#stat_typ>
+            }
     } else if options.drop == DropMode::Finalize{
         parse_quote! {
             ::static_init::GlobalLazyFinalize::<#stat_typ>

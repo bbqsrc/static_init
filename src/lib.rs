@@ -448,9 +448,10 @@ pub unsafe trait Manager<T: Static<Manager = Self>>: 'static + Sized + ManagerBa
     /// or on_registration_failure paniqued
     fn register(
         s: &T,
-        on_uninited: impl Fn(Phase) -> bool,
+        shall_proceed: impl Fn(Phase) -> bool,
         init: impl FnOnce(&<T as Static>::Data),
-    );
+        init_on_reg_failure: bool,
+    ) -> bool;
 }
 pub unsafe trait OnceManager<T: Static>: 'static + Sized + ManagerBase {
     /// Execute once init and, depending on the manager register <T as Finaly>::finaly
@@ -475,7 +476,8 @@ pub unsafe trait OnceManager<T: Static>: 'static + Sized + ManagerBase {
         on_uninited: impl Fn(Phase) -> bool,
         init: impl FnOnce(&<T as Static>::Data),
         reg: impl FnOnce(&T) -> bool,
-    );
+        shall_proceed: bool,
+    ) -> bool;
     fn finalize(s: &T, f: impl FnOnce(&T::Data));
 }
 
@@ -503,7 +505,8 @@ pub trait Finaly {
 }
 
 #[cfg(debug_mode)]
-struct CyclicPanic;
+#[derive(Debug)]
+pub struct CyclicPanic;
 
 mod details {}
 
@@ -517,7 +520,7 @@ pub use static_init_macro::destructor;
 pub use static_init_macro::dynamic;
 
 mod generic_lazy;
-pub use generic_lazy::{GenericLazy, PhaseChecker, RegisterOnFirstAccess, UnInited};
+pub use generic_lazy::{GenericLazy, LazyPolicy, RegisterOnFirstAccess, UnInited};
 
 mod once;
 pub use once::{GlobalManager, LocalManager};
@@ -532,8 +535,8 @@ pub mod raw_static;
 pub mod phase {
     pub(crate) const INITED_BIT: u32 = 1;
     pub(crate) const INITIALIZING_BIT: u32 = 2 * INITED_BIT;
-    pub(crate) const POISON_BIT: u32 = 2 * INITIALIZING_BIT;
-    pub(crate) const LOCKED_BIT: u32 = 2 * POISON_BIT;
+    pub(crate) const INIT_SKIPED_BIT: u32 = 2 * INITIALIZING_BIT;
+    pub(crate) const LOCKED_BIT: u32 = 2 * INIT_SKIPED_BIT;
     pub(crate) const PARKED_BIT: u32 = 2 * LOCKED_BIT;
     pub(crate) const REGISTRATING_BIT: u32 = 2 * PARKED_BIT;
     pub(crate) const REGISTERED_BIT: u32 = 2 * REGISTRATING_BIT;
@@ -552,21 +555,14 @@ pub mod phase {
             self.0 == 0
         }
         /// registration of finaly impossible or initialization paniced
-        pub fn poisoned(self) -> bool {
-            self.0 & POISON_BIT != 0
-        }
-        pub fn registrating(self) -> bool {
-            self.0 & !(LOCKED_BIT | PARKED_BIT) == REGISTRATING_BIT
-        }
-        pub fn initializing(self) -> bool {
-            self.0 & !(LOCKED_BIT | PARKED_BIT)
-                == REGISTRATING_BIT | REGISTERED_BIT | INITIALIZING_BIT
+        pub fn initialization_skiped(self) -> bool {
+            self.0 & INIT_SKIPED_BIT != 0
         }
         pub fn registration_attempt_done(self) -> bool {
             self.0 & REGISTERED_BIT != 0
         }
         pub fn unregistrable(self) -> bool {
-            self.0 == REGISTERED_BIT | POISON_BIT
+            self.0 == REGISTERED_BIT | INIT_SKIPED_BIT
         }
         pub fn initialized(self) -> bool {
             self.0 & INITED_BIT != 0
@@ -574,18 +570,28 @@ pub mod phase {
         pub fn finalized(self) -> bool {
             self.0 & FINALIZED_BIT != 0
         }
-        pub fn finalizing(self) -> bool {
-            self.0 == REGISTRATING_BIT | REGISTERED_BIT | INITIALIZING_BIT | FINALIZING_BIT
-        }
-        pub fn finalization_panic(self) -> bool {
-            self.0 == REGISTRATING_BIT | REGISTERED_BIT | INITIALIZING_BIT | FINALIZATION_PANIC_BIT
-        }
-        pub fn initialization_panic(self) -> bool {
-            self.0 == (REGISTRATING_BIT | REGISTERED_BIT | INITIALIZING_BIT | POISON_BIT)
+
+        pub fn registrating(self) -> bool {
+            self.0 & REGISTRATING_BIT != 0  && !self.initialization_skiped()
         }
         pub fn registration_panic(self) -> bool {
-            self.0 == (REGISTRATING_BIT | POISON_BIT)
+            self.0 & REGISTRATING_BIT != 0 && self.initialization_skiped()
         }
+
+        pub fn initializing(self) -> bool {
+            self.0 & INITIALIZING_BIT != 0  && !self.initialization_skiped()
+        }
+        pub fn initialization_panic(self) -> bool {
+            self.0 & INITIALIZING_BIT != 0  && self.initialization_skiped()
+        }
+
+        pub fn finalizing(self) -> bool {
+            self.0 & FINALIZING_BIT != 0
+        }
+        pub fn finalization_panic(self) -> bool {
+            self.0 & FINALIZATION_PANIC_BIT != 0
+        }
+
     }
 }
 pub use phase::Phase;
@@ -619,59 +625,30 @@ pub struct StaticInfo {
 }
 
 pub struct NonPoisonedChecker;
-impl PhaseChecker for NonPoisonedChecker {
+impl LazyPolicy for NonPoisonedChecker {
+    const INIT_ON_REG_FAILURE: bool = false;
     #[inline(always)]
     fn shall_proceed(p: Phase) -> bool {
         if p.initialized() {
             false
         } else {
-            assert!(!p.poisoned());
+            assert!(!p.initialization_skiped());
             true
         }
-    }
-}
-pub struct NonPoisonedCheckerTL;
-impl PhaseChecker for NonPoisonedCheckerTL {
-    #[inline(always)]
-    fn shall_proceed(p: Phase) -> bool {
-        if p.initialized() {
-            false
-        } else {
-            assert!(!p.poisoned());
-            true
-        }
-    }
-    fn is_in_cycle(p: Phase) -> bool {
-        p.initializing() || p.registrating() 
     }
 }
 pub struct NonFinalizedChecker;
-impl PhaseChecker for NonFinalizedChecker {
+impl LazyPolicy for NonFinalizedChecker {
+    const INIT_ON_REG_FAILURE: bool = false;
     #[inline(always)]
     fn shall_proceed(p: Phase) -> bool {
         if p.initialized() {
             assert!(!p.finalized());
             false
         } else {
-            assert!(!p.poisoned());
+            assert!(!p.initialization_skiped());
             true
         }
-    }
-}
-pub struct NonFinalizedCheckerTL;
-impl PhaseChecker for NonFinalizedCheckerTL {
-    #[inline(always)]
-    fn shall_proceed(p: Phase) -> bool {
-        if p.initialized() {
-            assert!(!p.finalized());
-            false
-        } else {
-            assert!(!p.poisoned());
-            true
-        }
-    }
-    fn is_in_cycle(p: Phase) -> bool {
-        p.initializing() || p.registrating() 
     }
 }
 
@@ -706,8 +683,9 @@ macro_rules! init_only {
                 s: &T,
                 on_uninited: impl Fn(Phase) -> bool,
                 init: impl FnOnce(&<T as Static>::Data),
-            ) {
-                <$sub as OnceManager<T>>::register(s, on_uninited, init, |_| true)
+                init_on_reg_failure: bool,
+            ) -> bool {
+                <$sub as OnceManager<T>>::register(s, on_uninited, init, |_| true, init_on_reg_failure)
             }
         }
     };
@@ -780,10 +758,10 @@ macro_rules! impl_lazy {
 }
 impl_lazy! {Lazy,LazyInitOnlyManager,NonPoisonedChecker}
 impl_lazy! {GlobalLazy,GlobalInitOnlyManager,NonPoisonedChecker}
-impl_lazy! {LocalLazy,LocalInitOnlyManager,NonPoisonedCheckerTL}
+impl_lazy! {LocalLazy,LocalInitOnlyManager,NonPoisonedChecker}
 impl_lazy! {LazyFinalize,ExitManager<false>,NonPoisonedChecker,ExitManager::new_lazy()}
 impl_lazy! {GlobalLazyFinalize,ExitManager<true>,NonPoisonedChecker}
-impl_lazy! {LocalLazyFinalize,ThreadExitManager,NonPoisonedCheckerTL}
+impl_lazy! {LocalLazyFinalize,ThreadExitManager,NonPoisonedChecker}
 
 #[cfg(test)]
 mod test_lazy {
@@ -908,14 +886,14 @@ impl<T, F, S> DropedLazy<T, F, S> {
             _info: None
         }
     }
-    pub const unsafe fn new_static_with_info(generator: F, _info: Option<StaticInfo>) -> Self {
+    pub const unsafe fn new_static_with_info(generator: F, _info: StaticInfo) -> Self {
         Self {
             value: Droped(UnsafeCell::new(MaybeUninit::uninit())),
             generator,
             manager: ThreadExitManager::new(),
             phantom: PhantomData,
             #[cfg(debug_mode)]
-            _info,
+            _info:Some(_info),
         }
     }
     #[inline(always)]
@@ -923,24 +901,19 @@ impl<T, F, S> DropedLazy<T, F, S> {
     where
         T: 'static,
         F: 'static + Generator<T>,
-        S: 'static + PhaseChecker,
+        S: 'static + LazyPolicy,
     {
-        #[cfg(debug_mode)]
-        if S::is_in_cycle(self.manager.phase()) {
-            panic!("Circular initialization of {:#?}",self._info);
-        }
-
         Manager::register(self, S::shall_proceed, |data: &Droped<T>| {
             // SAFETY
             // This function is called only once within the register function
             // Only one thread can ever get this mutable access
             let d = Generator::generate(&self.generator);
             unsafe { (*data.0.get()).as_mut_ptr().write(d) };
-        });
+        }, false);
     }
 }
 
-impl<T: 'static, F: 'static + Generator<T>, S: 'static + PhaseChecker> Deref
+impl<T: 'static, F: 'static + Generator<T>, S: 'static + LazyPolicy> Deref
     for DropedLazy<T, F, S>
 {
     type Target = T;
@@ -955,7 +928,7 @@ impl<T: 'static, F: 'static + Generator<T>, S: 'static + PhaseChecker> Deref
     }
 }
 
-impl<T: 'static, F: 'static + Generator<T>, S: 'static + PhaseChecker> DerefMut
+impl<T: 'static, F: 'static + Generator<T>, S: 'static + LazyPolicy> DerefMut
     for DropedLazy<T, F, S>
 {
     #[inline(always)]
@@ -965,7 +938,7 @@ impl<T: 'static, F: 'static + Generator<T>, S: 'static + PhaseChecker> DerefMut
     }
 }
 
-unsafe impl<F: 'static + Generator<T>, T: 'static, S: 'static + PhaseChecker> Static
+unsafe impl<F: 'static + Generator<T>, T: 'static, S: 'static + LazyPolicy> Static
     for DropedLazy<T, F, S>
 {
     type Data = Droped<T>;

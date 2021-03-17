@@ -118,12 +118,14 @@ mod exit_manager {
             st: &T,
             on_uninited: impl Fn(Phase) -> bool,
             init: impl FnOnce(&<T as Static>::Data),
-        ) {
+            init_on_reg_failure: bool,
+        ) -> bool {
             <SubManager<G> as OnceManager<T>>::register(
                 st,
                 on_uninited,
                 init,
                 reg::register,
+                init_on_reg_failure,
             )
         }
     }
@@ -196,12 +198,14 @@ mod local_manager {
             st: &T,
             on_uninited: impl Fn(Phase) -> bool,
             init: impl FnOnce(&<T as Static>::Data),
-        ) {
+            init_on_reg_failure: bool,
+        ) -> bool {
             <SubManager as OnceManager<T>>::register(
                 st,
                 on_uninited,
                 init,
                 register,
+                init_on_reg_failure,
             )
         }
     }

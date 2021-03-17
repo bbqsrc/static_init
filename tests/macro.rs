@@ -222,7 +222,7 @@ mod lazy {
         #[dynamic(lazy, drop)]
         static TH_LOCAL_UNSAFE: i32 = 10;
 
-        assert_eq!(unsafe { *TH_LOCAL_UNSAFE }, 10);
+        assert_eq!(*TH_LOCAL_UNSAFE, 10);
 
         static DROP_COUNT: AtomicI32 = AtomicI32::new(0);
 

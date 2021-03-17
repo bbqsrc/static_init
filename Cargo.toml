@@ -36,7 +36,7 @@ test_thread_local = []
 test_no_global_lazy_hint = []
 
 
-default = ["lazy", "atexit", "thread_local_drop"]
+default = ["lazy", "atexit", "thread_local_drop", "debug_order", "test_thread_local"]
 
 [dependencies]
 libc = {version = "0.2", optional=true}
