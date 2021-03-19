@@ -5,203 +5,17 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-#![cfg_attr(not(any(feature = "global_once", feature = "thread_local_drop")), no_std)]
-#![cfg_attr(all(elf, feature="thread_local"), feature(linkage))]
-#![cfg_attr(feature="thread_local",feature(thread_local),feature(cfg_target_thread_local))]
-
-//! Non const static initialization, and program constructor/destructor code.
-//!
-//! # Lesser Lazy Statics
-//!
-//! This crate provides *lazy statics* on all plateforms.
-//!
-//! On unixes and windows *lesser lazy statics* are *lazy* during program startup phase
-//! (before `main` is called). Once main is called, those statics are all guaranteed to be
-//! initialized and any access to them is as fast as any access to regular const initialized
-//! statics. Benches sho that usual lazy statics, as those provided by `std::lazy::*` or from
-//! [lazy_static][1] crate, suffer from a 2ns access penalty.
-//!
-//! *Lesser lazy statics* can optionaly be dropped at program destruction
-//! (after main exit but before the program stops).
-//!
-//! *Lesser lazy statics* require the standard library and are enabled by default
-//! crate features `lazy` and `atexit`.
-//! ```rust
-//! use static_init::{dynamic};
-//!
-//! #[dynamic] //equivalent to #[dynamic(lazy)]
-//! static L1: Vec<i32> = unsafe{L0.clone()};
-//!
-//! #[dynamic(drop)] //equivalent to #[dynamic(lazy,drop)]
-//! static L0: Vec<i32> = vec![1,2,3];
-//!
-//! #[dynamic(drop)]
-//! static mut L2: Vec<i32> = L1.clone();
-//! #
-//! # assert_eq!(L1[0], 1);
-//! # unsafe {
-//! #     assert_eq!(L2[1], 2);
-//! #     L2[1] = 42;
-//! #     assert_eq!(L2[1], 42);
-//! #     }
-//! #     
-//! ```
-//! As can be seen above accesses to *lazy static* that are dropped must be within unsafe
-//! blocks. The reason is that it is possible at program destruction to access already dropped
-//! lazy statics.
-//!
-//! # Dynamic statics: statics initialized at program startup
-//!
-//! On plateforms that support it (unixes, mac, windows), this crate provides *dynamic statics*: statics that are
-//! initialized at program startup. This feature is `no_std`.
-//!
-//! ```rust
-//! use static_init::{dynamic};
-//!
-//! #[dynamic(0)]
-//! //equivalent to #[dynamic(init=0)]
-//! static D1: Vec<i32> = vec![1,2,3];
-//!
-//! assert_eq!(unsafe{D1[0]}, 1);
-//! ```
-//! As can be seen above, even if D1 is not mutable, access to it must be performed in unsafe
-//! blocks. The reason is that during startup phase, accesses to *dynamic statics* may cause
-//! *undefined behavior*: *dynamic statics* may be in a zero initialized state.
-//!
-//! To prevent such hazardeous accesses, on unixes and window plateforms, a priority can be
-//! specified. Dynamic static initializations with higher priority are sequenced before dynamic
-//! static initializations with lower priority. Dynamic static initializations with the same
-//! priority are underterminately sequenced.
-//!
-//! ```rust
-//! use static_init::{dynamic};
-//!
-//! // D2 initialization is sequenced before D1 initialization
-//! #[dynamic(0)]
-//! static mut D1: Vec<i32> = unsafe{D2.clone()};
-//!
-//! #[dynamic(10)]
-//! static D2: Vec<i32> = vec![1,2,3];
-//! #
-//! # unsafe{assert_eq!(D1[0], 1)};
-//! ```
-//!
-//! *Dynamic statics* can be dropped at program destruction phase: they are dropped after main
-//! exit:
-//!
-//! ```rust
-//! use static_init::{dynamic};
-//!
-//! // D2 initialization is sequenced before D1 initialization
-//! // D1 drop is sequenced before D2 drop.
-//! #[dynamic(init=0,drop=0)]
-//! static mut D1: Vec<i32> = unsafe {D2.clone()};
-//!
-//! #[dynamic(init=10,drop=10)]
-//! static D2: Vec<i32> = vec![1,2,3];
-//! ```
-//! The priority act on drop in reverse order. *Dynamic statics* drops with a lower priority are
-//! sequenced before *dynamic statics* drops with higher priority.
-//!
-//! Finally, if the feature `atexit` is enabled, *dynamic statics* drop can be registered with
-//! `libc::atexit`. *lazy dynamic statics* and *dynamic statics* with `drop_reverse` attribute
-//! argument are destroyed in the reverse order of their construction. Functions registered with
-//! `atexit` are executed before program destructors and drop of *dynamic statics* that use the
-//! `drop` attribute argument. Drop is registered with at `atexit` if no priority if given to the
-//! `drop` attribute argument.
-//!
-//! ```rust
-//! use static_init::{dynamic};
-//!
-//! //D1 is dropped before D2 because
-//! //it is initialized before D2
-//! #[dynamic(lazy,drop)]
-//! static D1: Vec<i32> = vec![0,1,2];
-//!
-//! #[dynamic(10,drop)]
-//! static D2: Vec<i32> = unsafe{D1.clone()};
-//!
-//! //D3 is initilized after D1 and D2 initializations
-//! //and it is dropped after D1 and D2 drops
-//! #[dynamic(5,drop)]
-//! static D3: Vec<i32> = unsafe{D1.clone()};
-//! ```
-//!
-//! # Constructor and Destructor
-//!
-//! On plateforms that support it (unixes, mac, windows), this crate provides a way to declare
-//! *constructors*: a function called before main is called. This feature is `no_std`.
-//!
-//! ```rust
-//! use static_init::{constructor};
-//!
-//! //called before main
-//! #[constructor] //equivalent to #[constructor(0)]
-//! extern "C" fn some_init() {}
-//! ```
-//!
-//! Constructors also support priorities. Sequencement rules applies also between constructor calls and
-//! between *dynamic statics* initialization and *constructor* calls.
-//!
-//! *destructors* are called at program destruction. They also support priorities.
-//!
-//! ```rust
-//! use static_init::{constructor, destructor};
-//!
-//! //called before some_init
-//! #[constructor(10)]
-//! extern "C" fn pre_init() {}
-//!
-//! //called before main
-//! #[constructor]
-//! extern "C" fn some_init() {}
-//!
-//! //called after main
-//! #[destructor]
-//! extern "C" fn first_destructor() {}
-//!
-//! //called after first_destructor
-//! #[destructor(10)]
-//! extern "C" fn last_destructor() {}
-//! ```
-//!
-//! # Thread Local Support
-//!
-//! Variable declared with `#[dynamic(lazy)]` can also be declared `#[thread_local]`. These
-//! variable will behave as regular *lazy statics*.
-//! ```ignore
-//! #[thread_local]
-//! #[dynamic(lazy)]
-//! static mut X: Vec<i32> = vec![1,2,3];
-//! ```
-//! These variables can also be droped on thread exit.
-//! ```ignore
-//! #[thread_local]
-//! #[dynamic(lazy,drop)]
-//! static X: Vec<i32> = vec![1,2,3];
-//!
-//! assert!(unsafe{X[1] == 2});
-//! ```
-//!
-//! Accessing a thread local *lazy statics* that should drop during the phase where thread_locals are
-//! droped may cause *undefined behavior*. For this reason any access to a thread local lazy static
-//! that is dropped will require an unsafe block, even if the static is const.
-//!
-//!
-//! # Debuging initialization order
-//!
-//! If the feature `debug_order` is enabled, attempts to access `dynamic statics` that are
-//! uninitialized or whose initialization is undeterminately sequenced with the access will cause
-//! a panic with a message specifying which statics was tentatively accessed and how to change this
-//! *dynamic static* priority to fix this issue.
-//!
-//! Run `cargo test` in this crate directory to see message examples.
-//!
-//! All implementations of lazy statics may suffer from circular initialization dependencies. Those
-//! circular dependencies will cause either a dead lock or an infinite loop. If the feature `debug_order` is
-//! enabled, atemp are made to detect those circular dependencies. In most case they will be detected.
-//!
-//! [1]: https://crates.io/crates/lazy_static
+#![cfg_attr(
+    not(any(feature = "global_once", feature = "thread_local_drop")),
+    no_std
+)]
+#![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]
+#![cfg_attr(
+    feature = "thread_local",
+    feature(thread_local),
+    feature(cfg_target_thread_local)
+)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[doc(hidden)]
 /// # Details and implementation documentation.
@@ -265,222 +79,81 @@
 ///  those with a priority `p` in `format!(".CRT$XCTZ{:05}",65535-p)`. Destructors without priority
 ///  are placed in ".CRT$XPU" and those with a priority in `format!(".CRT$XPTZ{:05}",65535-p)`.
 ///
-// # Potential usages:
-//
-// ## Initialization of a runtime as a static object
-//
-// Pros:
-//
-//   - Access to runtime is done through the static object which
-//   simplify program code: there is no need to pass the runtime
-//   as an argument.
-//
-// Cons with Lazy:
-//
-//   - Slow down due to recurring check to see weither the static is initialized or not
-//
-//   - Lazy may lead to cycles which will lock the program, but that can be detected in debug mode
-//
-// Cons with QuasiLazy:
-//
-//   - Non optional initialization of the runtime so it is better not used in a library
-//   or only as a opt-in feature.
-//
-//   - Fall back to Lazy on mach and plateforms that are not unixes or windows
-//
-//   - Same trouble with cycles
-//
-// Cons with Dynamic Static:
-//
-//   - Undefined behavior if combined with other dynamic statics that try to access it: it
-//   should only be used in final executable crate: but this can be detected in debug mode
-//
-//   - Only on windows
-//
-// Pros with const initialized lazy:
-//
-//   - the object is const initialized but uses a initialization function which can fails
-//   so that the object works in degradated mod.
-//
-//   - it should be possible in this case to try again initialization
-//
-//   - or to know if it has succeeded or not (but leave this as an option)
-//
-// Pros with const initialized lazy:
-//
-//   - Any access time cost may actualy be forwarded to
-//   of the runtime static object if it must adapt its behavior
-//   on its initialization state. But for the case that interest me
-//   the object may but itself in uninitialized state during normal
-//   execution so there are no cost of such const initialization. For
-//   this object the const initialization consist in registrating the destructor.
-//   On the other hand, trial to check this registration on each access is unusefull
-//   and could be done when the object detect itself it is in an uninitialized state.
-//
-//   More over the object needs to know if registration not even initialization cause
-//   a recursion and it is perfectly able to avoid dead lock in this case as it fallback
-//   to a degradated mode.
-//
-//
-//
-//
-// On the usage of drop:
-//
-//   - drop may be used to for logging, releasing resources etc.
-//
-//   - it is guaranteed to be executed once, this is what is interesting
-//
-//   - it potentitialy leave the object in an invalid state, this is obsolutely
-//   unusefull and only leads to UB.
-//
-//   - So either drop is used for finalization and any access to the object after
-//   that finalization should lead to panic => runtime cost for checking object
-//   state
-//
-//   - Or we use a more invariant friendly drop => Finaly trait that takes a const
-//   object.
-//
-// ## Initialization of a runtime as a thread local object
-//
-// A thread local runtime is interesting in the case where access to the runtime object
-// may needs synchronization. In this case some of the synchronization primitive may be
-// avoided.
-//
-// As it is not possible to declare an initialization at thread start up (though it could
-// be implemented in the standard library quite easily for windows and unixes)
-//
-// The initialized runtime thread local object may want to release resources at thread exit
-// so it needs a finalization phase.
-//
-// The actual thread_local! implementation in the library may leads to resources leak as
-// thread_local object destructor may not be called.
-//
-// So the crate provides a thread_local implementation that is safer that the one of the standard
-// library:
-//
-//   - registration success of a finalization steps guarantee it will be run.
-//
-//   - registration failure is reported
-//
-// What about const initialized const finalized in may case:
-//   - actuellement l'objet détecte si il est dans un état non initialisé et essaie la
-//   registration du destructeur dans ce cas. Il enregistre le fait qu'il essaie de s'enregistrer.
-//   Si la registration est en cours et qu'il est appelé de façon cyclique il sait comment
-//   s'adapter. Donc les accèss cyclique sont parfaitement acceptable et ne devrait pas causer
-//   de blocage. Deplus il faut que quand il détecte que la registration forme un cycle, il soit
-//   garanti que celle-ci réussise et que le destructeur soir appellé. Deplus une fois que le
-//   destructeur est appellé, il ne faut pas qu'il essait de s'enregistrer à nouveau et qu'il
-//   fonctionne en mode dégradé.
-//
-//   Il me faut donc plus de souplesse dans l'éplémentation, un tel objet aurait besoin d'accéder
-//   directement le at_exit. Le problème est le cractère unsafe de la registration qui est laissée
-//   à l'utilisateur final. Comment faire. Le statut doit être dans les méthodes de l'objet.
-//
-//   Donc il faut:
-//     - Fournir de façon publique l'objet qui assure le management et que l'interface
-//     de cette objet permette à l'utilisateur de connaitre lui-même la phase dans laquelle est
-//     l'objet.
-//     - Le wrapper fournit par le crate accèderai alors à cette objet via un trait que
-//     l'utilisateur implémenterai lui-meme. De sorte que les macros de la librairie serait
-//     ensuite les seules responsable des phases dangereuses?
-//
-//  Comment faire dans mon cas: c'est l'objet lui-meme qui demande la registration et il faut
-//  fournir cette possibilité à l'utilisateur final de façon safe. Il s'assurer que l'objet
-//  ne puisse être construit qu'au travers de la librairie.
-//
-//  Comment résoud cela la librairie standard: elle déclare l'objet comme un objet normal
-//  accessible uniquement de facon statique et dont l'initializer est "caché". Deplus
-//  au lieu d'implémenter deref, elle implémente "with" comme une méthode n'acceptant que les objet
-//  statiques.
-//
-//  Le problème est qu'il est impossible de fournir une méthode deref dans ce cas.
-//
-//  Donc autant déclarer un fonction new as unsafe, pour créer l'objet. La macro ne
-//  se prive pas de le créer puisque qu'elle assurera qu'il soit thread_local.
-/// Manager and Data should refer to object that are parts of Self structure.
+mod details {}
+
+/// A trait for objects that are intinded to transition between phasis.
 ///
-/// Moreover, to be usable the type should provide an associated function of signature:
-/// `unsafe const fn new_static(<init_expr>, _:Manager) -> Self` which is safe to call as long as
-/// the target object is a static.
+/// The trait is ensafe because the implementor must ensure:
 ///
-/// The data refered by manager should not be modified by the implementor
-/// of the trait (for example through a union).
-pub unsafe trait Static: 'static + Sized {
-    type Data: 'static;
-    type Manager: 'static;
-    fn manager(this: &Self) -> &Self::Manager;
+/// - the value returned by sequentializer refer to a memory
+///    that as the same lifetime as the data and
+///
+/// - the sequentializer object returned shall be only returned for
+/// the "self" object.
+///
+/// It is thus safe to implement this trait if sequentializer and
+/// data refer to different field of the same object.
+pub unsafe trait Sequential {
+    type Data;
+    type Sequentializer;
+    fn sequentializer(this: &Self) -> &Self::Sequentializer;
     fn data(this: &Self) -> &Self::Data;
 }
-//Le manager est une struct publique,
-//avec une interface qui est safe, mais
-//dont la safety n'est assuré que dans la mesure
-//ou le manager et donc l'objet qui le contient
-//est thread local.
-//
-//Il faut donc que l'objet propose une fonction new_managed
-//qui soit unsafe et const. Et celle si doit produire un objet
-//contenant the manager qui est référencé par les appel à `manager`.
-//le unsafe const new_managed(<Self as Deref>::Target,Manager)
 
-pub trait ManagerBase {
+/// Trait for objects that know in which phase they are
+pub trait Phased {
     /// return the current phase
-    fn phase(&self) -> Phase;
+    fn phase(this: &Self) -> Phase;
 }
-/// The trait is unsafe because the panic requirement of register
-/// is not part of its signature
-pub unsafe trait Manager<T: Static<Manager = Self>>: 'static + Sized + ManagerBase {
-    /// Execute once init and, depending on the manager register <T as Finaly>::finaly
-    /// for execution at program exit or thread exit.
+
+impl<T> Phased for T
+where
+    T: Sequential,
+    T::Sequentializer: Phased,
+{
+    fn phase(this: &Self) -> Phase {
+        Phased::phase(Sequential::sequentializer(this))
+    }
+}
+
+/// A [Sequentializer] ensure sequential phase transition of the object it sequentialize
+pub trait Sequentializer<T: Sequential<Sequentializer = Self>>: 'static + Sized + Phased {
+    /// When called on the Sequential object, it will ensure that the phase transition
+    /// in order.
     ///
-    /// will panic if previous attempt to initialize
-    /// leed to a panic
-    ///
-    /// the `init` function is run before registration
-    /// of Finally::finaly for this type target. If it
-    /// returns false, registration of finaly is skiped.
-    ///
-    /// if registration fails for some reason 'on_registration_failure'
-    /// is run.
-    ///
-    /// Panic requirement:
-    ///
-    /// Call to this function will through a panic if a previous call to init
-    /// or on_registration_failure paniqued
-    fn register(
+    /// Decition to perform transition is conditionned by the shall_proceed funciton and
+    /// init_on_reg_failure boolean. The init function is intended to be the function that
+    /// transition the object to the initialized Phase.
+    fn init(
         s: &T,
         shall_proceed: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&<T as Static>::Data),
+        init: impl FnOnce(&<T as Sequential>::Data),
         init_on_reg_failure: bool,
     ) -> bool;
 }
-pub unsafe trait OnceManager<T: Static>: 'static + Sized + ManagerBase {
-    /// Execute once init and, depending on the manager register <T as Finaly>::finaly
-    /// for execution at program exit or thread exit.
+/// A [SplitedSequentializer] ensure two sequences of sequencial phase transtion: init and finalize
+trait SplitedSequentializer<T: Sequential>: 'static + Sized + Phased {
+    /// When called on the Sequential object, it will ensure that the phase transition
+    /// in order.
     ///
-    /// will panic if previous attempt to initialize
-    /// leed to a panic
+    /// Decition to perform transition is conditionned by the shall_proceed funciton and
+    /// init_on_reg_failure boolean. The init function is intended to be the function that
+    /// transition the object to the initialized Phase.
     ///
-    /// the `init` function is run before registration
-    /// of Finally::finaly for this type target. If it
-    /// returns false, registration of finaly is skiped.
-    ///
-    /// if registration fails for some reason 'on_registration_failure'
-    /// is run.
-    ///
-    /// Panic requirement:
-    ///
-    /// Call to this function will through a panic if a previous call to init
-    /// or on_registration_failure paniqued
-    fn register(
+    /// The reg argument is supposed to store the `finalize_callback` method as a callback that will
+    /// be run latter during program execution.
+    fn init(
         s: &T,
-        on_uninited: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&<T as Static>::Data),
+        shall_proceed: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&<T as Sequential>::Data),
         reg: impl FnOnce(&T) -> bool,
-        shall_proceed: bool,
+        init_on_reg_failure: bool,
     ) -> bool;
-    fn finalize(s: &T, f: impl FnOnce(&T::Data));
+    /// A callback that is intened to be stored by the `reg` argument of `init` method.
+    fn finalize_callback(s: &T, f: impl FnOnce(&T::Data));
 }
 
+/// Generates a value of type `T`
 pub trait Generator<T> {
     fn generate(&self) -> T;
 }
@@ -490,25 +163,90 @@ impl<U, T: Fn() -> U> Generator<U> for T {
         self()
     }
 }
-pub trait Recoverer<T> {
-    fn recover(&self, _: &T);
-}
 
-impl<T: Fn(&T)> Recoverer<T> for T {
-    fn recover(&self, data: &T) {
-        self(data)
-    }
-}
-
+/// A Drop replacement that does not change the state of the object
 pub trait Finaly {
     fn finaly(&self);
 }
 
+#[cfg_attr(docsrs, doc(cfg(debug_mode)))]
 #[cfg(debug_mode)]
+#[doc(hidden)]
 #[derive(Debug)]
+/// Used to passe errors
 pub struct CyclicPanic;
 
-mod details {}
+/// phases and bits to manipulate them;
+pub mod phase {
+    pub const INITED_BIT: u32 = 1;
+    pub const INITIALIZING_BIT: u32 = 2 * INITED_BIT;
+    pub const INITIALIZING_PANICKED_BIT: u32 = 2 * INITIALIZING_BIT;
+    pub const INIT_SKIPED_BIT: u32 = 2 * INITIALIZING_PANICKED_BIT;
+    pub const LOCKED_BIT: u32 = 2 * INIT_SKIPED_BIT;
+    pub const PARKED_BIT: u32 = 2 * LOCKED_BIT;
+    pub const REGISTRATING_BIT: u32 = 2 * PARKED_BIT;
+    pub const REGISTRATING_PANIC_BIT: u32 = 2 * REGISTRATING_BIT;
+    pub const REGISTRATION_REFUSED_BIT: u32 = 2 * REGISTRATING_PANIC_BIT;
+    pub const REGISTERED_BIT: u32 = 2 * REGISTRATION_REFUSED_BIT;
+    pub const FINALIZING_BIT: u32 = 2 * REGISTERED_BIT;
+    pub const FINALIZED_BIT: u32 = 2 * FINALIZING_BIT;
+    pub const FINALIZATION_PANIC_BIT: u32 = 2 * FINALIZED_BIT;
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    /// Phases of a Sequential
+    pub struct Phase(pub u32);
+
+    impl Phase {
+        pub const fn new() -> Self {
+            Self(0)
+        }
+
+        pub fn initial_state(self) -> bool {
+            self.0 == 0
+        }
+
+        pub fn finalize_registration(self) -> bool {
+            self.0 & REGISTRATING_BIT != 0
+        }
+        pub fn finalize_registration_panicked(self) -> bool {
+            self.0 & REGISTRATING_PANIC_BIT != 0
+        }
+        pub fn finalize_registration_refused(self) -> bool {
+            self.0 & REGISTRATION_REFUSED_BIT != 0
+        }
+        pub fn finalize_registration_failed(self) -> bool {
+            self.0 & (REGISTRATION_REFUSED_BIT | REGISTRATING_PANIC_BIT) != 0
+        }
+        pub fn finalize_registrated(self) -> bool {
+            self.0 & REGISTERED_BIT != 0
+        }
+
+        pub fn initialization(self) -> bool {
+            self.0 & INITIALIZING_BIT != 0
+        }
+        pub fn initialization_panicked(self) -> bool {
+            self.0 & INITIALIZING_PANICKED_BIT != 0
+        }
+        pub fn initialization_skiped(self) -> bool {
+            self.0 & INIT_SKIPED_BIT != 0
+        }
+        pub fn initialized(self) -> bool {
+            self.0 & INITED_BIT != 0
+        }
+
+        pub fn finalizing(self) -> bool {
+            self.0 & FINALIZING_BIT != 0
+        }
+        pub fn finalization_panic(self) -> bool {
+            self.0 & FINALIZATION_PANIC_BIT != 0
+        }
+        pub fn finalized(self) -> bool {
+            self.0 & FINALIZED_BIT != 0
+        }
+    }
+}
+#[doc(inline)]
+pub use phase::Phase;
 
 #[doc(inline)]
 pub use static_init_macro::constructor;
@@ -519,35 +257,31 @@ pub use static_init_macro::destructor;
 #[doc(inline)]
 pub use static_init_macro::dynamic;
 
-mod generic_lazy;
-pub use generic_lazy::{GenericLazy, LazyPolicy, RegisterOnFirstAccess, UnInited,DropedUnInited, LazyData};
+/// Provides policy types for implementation of various lazily initialized types.
+pub mod generic_lazy;
 
-mod once;
-pub use once::{LocalManager, Phase};
-#[cfg(feature="global_once")]
-pub use once::GlobalManager;
+/// Provides two sequentializer, one that is Sync, and the other that is not Sync.
+pub mod splited_sequentializer;
 
 #[cfg(any(elf, mach_o, coff))]
-mod at_exit;
+/// Provides functionnality to execute callback at process/thread exit and sequentializer using
+/// those events.
+pub mod at_exit;
 
-#[cfg(any(elf, mach_o, coff))]
-#[cfg(feature="thread_local")]
-pub use at_exit::ThreadExitManager;
-
-#[cfg(any(elf, mach_o, coff))]
-#[cfg(feature="global_once")]
-pub use at_exit::ExitManager;
-
+/// Provides various implementation of lazily initialized types
 pub mod lazy;
-pub use lazy::LocalLazy;
-#[cfg(feature="thread_local")]
-pub use lazy::{LocalLazyFinalize,LocalLazyDroped};
-#[cfg(feature="global_once")]
-pub use lazy::{Lazy,QuasiLazy,LazyFinalize,QuasiLazyFinalize};
+#[cfg(feature = "global_once")]
+#[doc(inline)]
+pub use lazy::Lazy;
+#[doc(inline)]
+pub use lazy::UnSyncLazy;
 
 #[cfg(any(elf, mach_o, coff))]
+/// Provides types for statics that are meant to run code before main start or after it exit.
 pub mod raw_static;
 
+mod futex;
+mod spinwait;
 
 #[derive(Debug)]
 #[doc(hidden)]
@@ -577,5 +311,3 @@ pub struct StaticInfo {
     pub init_mode:     InitMode,
     pub drop_mode:     FinalyMode,
 }
-
-

@@ -3,8 +3,8 @@
 #[cfg(feature = "global_once")]
 mod exit_manager {
     use crate::Finaly;
-    use crate::GlobalManager as SubManager;
-    use crate::{Manager, ManagerBase, OnceManager, Phase, Static};
+    use crate::splited_sequentializer::SyncSequentializer as SubSequentializer;
+    use crate::{Sequentializer, Phased, SplitedSequentializer, Phase, Sequential};
 
     use core::cell::Cell;
     use core::ptr::NonNull;
@@ -16,17 +16,18 @@ mod exit_manager {
 
     type Node = dyn 'static + OnExit + Sync;
 
-    /// Opaque type used for registration management
-    /// To be used with GlobalRegister
-    pub struct ExitManager<const G:bool> {
-        sub:  SubManager<G>,
+    #[cfg_attr(docsrs, doc(cfg(feature="global_once")))]
+    /// A sequentializer that store finalize_callback  
+    /// for execution at program exit
+    pub struct ExitSequentializer<const G:bool> {
+        sub:  SubSequentializer<G>,
         next: Cell<Option<NonNull<Node>>>,
     }
 
     mod reg {
 
-        use super::{ExitManager, Node};
-        use crate::{destructor, Finaly, Static};
+        use super::{ExitSequentializer, Node};
+        use crate::{destructor, Finaly, Sequential};
 
         use parking_lot::{lock_api::RawMutex, Mutex};
 
@@ -57,13 +58,16 @@ mod exit_manager {
             }
         }
 
-        pub fn register<T: Static<Manager = ExitManager<G>> + Sync,const G:bool>(st: &T) -> bool
+        #[cfg_attr(docsrs, doc(cfg(feature="global_once")))]
+        /// Store a reference of the static for execution of the
+        /// finalize call back at program exit 
+        pub fn finalize_at_exit<T: 'static+Sequential<Sequentializer = ExitSequentializer<G>> + Sync,const G:bool>(st: &T) -> bool
         where
-            T::Data: Finaly,
+            T::Data: 'static+Finaly,
         {
             let mut l = REGISTER.lock();
             if l.1 {
-                Static::manager(st).next.set(l.0.take().map(|w| w.0));
+                Sequential::sequentializer(st).next.set(l.0.take().map(|w| w.0));
                 *l = (Some(Wrap((st as &Node).into())), true);
                 true
             } else {
@@ -71,89 +75,90 @@ mod exit_manager {
             }
         }
     }
+    pub use reg::finalize_at_exit;
 
-    const GLOBAL_INIT: ExitManager<true> = ExitManager {
-        sub:  SubManager::new(),
+    const GLOBAL_INIT: ExitSequentializer<true> = ExitSequentializer {
+        sub:  SubSequentializer::new(),
         next: Cell::new(None),
     };
-    const GLOBAL_INIT_LAZY: ExitManager<false> = ExitManager {
-        sub:  SubManager::new_lazy(),
+    const GLOBAL_INIT_LAZY: ExitSequentializer<false> = ExitSequentializer {
+        sub:  SubSequentializer::new_lazy(),
         next: Cell::new(None),
     };
 
-    impl ExitManager<true> {
+    impl ExitSequentializer<true> {
         pub const unsafe fn new() -> Self {
             GLOBAL_INIT
         }
     }
-    impl ExitManager<false> {
+    impl ExitSequentializer<false> {
         pub const unsafe fn new_lazy() -> Self {
             GLOBAL_INIT_LAZY
         }
     }
 
-    impl<const G:bool> AsRef<SubManager<G>> for ExitManager<G> {
-        fn as_ref(&self) -> &SubManager<G> {
+    impl<const G:bool> AsRef<SubSequentializer<G>> for ExitSequentializer<G> {
+        fn as_ref(&self) -> &SubSequentializer<G> {
             &self.sub
         }
     }
 
     //All access of next are done when REGISTER is locked
     //or when the access is exclusive in execute_at_exit
-    unsafe impl<const G:bool> Sync for ExitManager<G> {}
+    unsafe impl<const G:bool> Sync for ExitSequentializer<G> {}
 
-    impl<const G:bool> ManagerBase for ExitManager<G> {
-        fn phase(&self) -> Phase {
-            self.sub.phase()
+    impl<const G:bool> Phased for ExitSequentializer<G> {
+        fn phase(this: &Self) -> Phase {
+            Phased::phase(&this.sub)
         }
     }
 
-    unsafe impl<T: Static<Manager = Self>,const G:bool> Manager<T> for ExitManager<G>
+    impl<T: Sequential<Sequentializer = Self>,const G:bool> Sequentializer<T> for ExitSequentializer<G>
     where
-        T: Sync,
-        T::Data: Finaly,
+        T: 'static+Sync,
+        T::Data: 'static+Finaly,
     {
         #[inline(always)]
 
-        fn register(
+        fn init(
             st: &T,
             on_uninited: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&<T as Static>::Data),
+            init: impl FnOnce(&<T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) -> bool {
-            <SubManager<G> as OnceManager<T>>::register(
+            <SubSequentializer<G> as SplitedSequentializer<T>>::init(
                 st,
                 on_uninited,
                 init,
-                reg::register,
+                finalize_at_exit,
                 init_on_reg_failure,
             )
         }
     }
 
-    impl<T: Static<Manager = ExitManager<G>>, const G:bool> OnExit for T
+    impl<T: Sequential<Sequentializer = ExitSequentializer<G>>, const G:bool> OnExit for T
     where
-        T::Data: Finaly,
+        T::Data: 'static+Finaly,
     {
         fn get_next(&self) -> Option<NonNull<Node>> {
-            Static::manager(self).next.get()
+            Sequential::sequentializer(self).next.get()
         }
         fn execute(&self) {
-            <SubManager<G> as OnceManager<T>>::finalize(self, Finaly::finaly);
+            <SubSequentializer<G> as SplitedSequentializer<T>>::finalize_callback(self, Finaly::finaly);
         }
     }
 }
 #[cfg(feature = "global_once")]
-pub use exit_manager::ExitManager;
+pub use exit_manager::{finalize_at_exit,ExitSequentializer};
 
 #[cfg(feature = "thread_local")]
-pub use local_manager::ThreadExitManager;
+pub use local_manager::{finalize_at_thread_exit,ThreadExitSequentializer};
 
 #[cfg(feature = "thread_local")]
 mod local_manager {
 
-    use crate::LocalManager as SubManager;
-    use crate::{Finaly, Manager, ManagerBase, OnceManager, Phase, Static};
+    use crate::splited_sequentializer::UnSyncSequentializer as SubSequentializer;
+    use crate::{Finaly, Sequentializer, Phased, SplitedSequentializer, Phase, Sequential};
 
     use core::cell::Cell;
     use core::ptr::NonNull;
@@ -165,90 +170,90 @@ mod local_manager {
 
     type Node = dyn 'static + OnExit;
 
-    pub struct ThreadExitManager {
-        sub:  SubManager,
+    #[cfg_attr(docsrs, doc(cfg(feature="thread_local")))]
+    /// A sequentializer that store finalize_callback  
+    /// for execution at thread exit
+    pub struct ThreadExitSequentializer {
+        sub:  SubSequentializer,
         next: Cell<Option<NonNull<Node>>>,
     }
 
-    const LOCAL_INIT: ThreadExitManager = ThreadExitManager {
-        sub:  SubManager::new(),
+    const LOCAL_INIT: ThreadExitSequentializer = ThreadExitSequentializer {
+        sub:  SubSequentializer::new(),
         next: Cell::new(None),
     };
 
-    impl ThreadExitManager {
+    impl ThreadExitSequentializer {
         pub const unsafe fn new() -> Self {
             LOCAL_INIT
         }
     }
 
-    impl AsRef<SubManager> for ThreadExitManager {
-        fn as_ref(&self) -> &SubManager {
+    impl AsRef<SubSequentializer> for ThreadExitSequentializer {
+        fn as_ref(&self) -> &SubSequentializer {
             &self.sub
         }
     }
 
-    impl ManagerBase for ThreadExitManager {
-        fn phase(&self) -> Phase {
-            self.sub.phase()
+    impl Phased for ThreadExitSequentializer {
+        fn phase(this: &Self) -> Phase {
+            Phased::phase(&this.sub)
         }
     }
 
-    unsafe impl<T: Static<Manager = Self>> Manager<T> for ThreadExitManager
+    impl<T: 'static+Sequential<Sequentializer = Self>> Sequentializer<T> for ThreadExitSequentializer
     where
-        T::Data: Finaly,
+        T::Data: 'static+Finaly,
     {
         #[inline(always)]
 
-        fn register(
+        fn init(
             st: &T,
             on_uninited: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&<T as Static>::Data),
+            init: impl FnOnce(&<T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) -> bool {
-            <SubManager as OnceManager<T>>::register(
+            <SubSequentializer as SplitedSequentializer<T>>::init(
                 st,
                 on_uninited,
                 init,
-                register,
+                finalize_at_thread_exit,
                 init_on_reg_failure,
             )
         }
     }
 
-    impl<T: Static<Manager = ThreadExitManager>> OnExit for T
+    impl<T: 'static+Sequential<Sequentializer = ThreadExitSequentializer>> OnExit for T
     where
-        T::Data: Finaly,
+        T::Data: 'static+Finaly,
     {
         fn get_next(&self) -> Option<NonNull<Node>> {
-            Static::manager(self).next.get()
+            Sequential::sequentializer(self).next.get()
         }
         fn execute(&self) {
-            <SubManager as OnceManager<T>>::finalize(self, Finaly::finaly);
+            <SubSequentializer as SplitedSequentializer<T>>::finalize_callback(self, Finaly::finaly);
         }
     }
 
     #[cfg(coff_thread_at_exit)]
     mod windows {
-        use super::{Node, ThreadExitManager};
-        use crate::{Finaly, Static};
+        use super::{Node, ThreadExitSequentializer};
+        use crate::{Finaly, Sequential};
         use core::cell::Cell;
         use core::ptr::NonNull;
 
-        #[cfg(target_arch = "x86_64")]
-        type Reason = u64;
-        #[cfg(target_arch = "i686")]
-        type Reason = u32;
+        use winapi::shared::minwindef::{LPVOID,DWORD};
+        use winapi::um::winnt::{DLL_THREAD_DETACH,DLL_PROCESS_DETACH};
+
         //On thread exit
         //non nul pointers between .CRT$XLA and .CRT$XLZ will be
         //run... => So we could implement thread_local drop without
         //registration...
         #[link_section = ".CRT$XLAZ"] //do this after the standard library
         #[used]
-        pub static AT_THEAD_EXIT: extern "system" fn(*mut u8, Reason, *mut u8) = destroy;
+        pub static AT_THEAD_EXIT: extern "system" fn(LPVOID, DWORD, LPVOID) = destroy;
 
-        extern "system" fn destroy(_: *mut u8, reason: Reason, _: *mut u8) {
-            const DLL_THREAD_DETACH: Reason = 3;
-            const DLL_PROCESS_DETACH: Reason = 0;
+        extern "system" fn destroy(_: LPVOID, reason: DWORD, _: LPVOID) {
             if reason == DLL_THREAD_DETACH || reason == DLL_PROCESS_DETACH {
                 let mut o_ptr = REGISTER.take();
                 while let Some(ptr) = o_ptr {
@@ -284,26 +289,29 @@ mod local_manager {
         #[thread_local]
         static DONE: Cell<bool> = Cell::new(false);
 
-        pub(super) fn register<T: Static<Manager = ThreadExitManager>>(st: &T) -> bool
+        #[cfg_attr(docsrs, doc(cfg(feature="thread_local")))]
+        /// Store a reference of the thread local static for execution of the
+        /// finalize call back at thread exit
+        pub fn finalize_at_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer>>(st: &T) -> bool
         where
-            T::Data: Finaly,
+            T::Data: 'static+Finaly,
         {
             if DONE.get() {
                 false
             } else {
-                unsafe { Static::manager(st).next.set(REGISTER.take()) };
+                unsafe { Sequential::manager(st).next.set(REGISTER.take()) };
                 REGISTER.set(Some((st as &Node).into()));
                 true
             }
         }
     }
     #[cfg(coff_thread_at_exit)]
-    use windows::register;
+    pub use windows::finalize_at_thread_exit;
 
     #[cfg(cxa_thread_at_exit)]
     mod cxa {
-        use super::{Node, ThreadExitManager};
-        use crate::{Finaly, Static};
+        use super::{Node, ThreadExitSequentializer};
+        use crate::{Finaly, Sequential};
         use core::cell::Cell;
         use core::ptr::{null_mut, NonNull};
 
@@ -347,13 +355,16 @@ mod local_manager {
             }
             DESTROYING.set(false);
         }
-        pub(super) fn register<T: Static<Manager = ThreadExitManager>>(st: &T) -> bool
+        #[cfg_attr(docsrs, doc(cfg(feature="thread_local")))]
+        /// Store a reference of the thread local static for execution of the
+        /// finalize call back at thread exit
+        pub fn finalize_at_thread_exit<T: 'static + Sequential<Sequentializer = ThreadExitSequentializer>>(st: &T) -> bool
         where
-            T::Data: Finaly,
+            T::Data: 'static+Finaly,
         {
             let old = REGISTER.take();
             if let Some(old) = old {
-                Static::manager(st).next.set(Some(old));
+                Sequential::sequentializer(st).next.set(Some(old));
             } else if !DESTROYING.get() {
                 at_thread_exit(execute_destroy, null_mut())
             }
@@ -362,12 +373,12 @@ mod local_manager {
         }
     }
     #[cfg(cxa_thread_at_exit)]
-    use cxa::register;
+    pub use cxa::finalize_at_thread_exit;
 
     #[cfg(pthread_thread_at_exit)]
     mod pthread {
-        use super::{Node, ThreadExitManager};
-        use crate::{Finaly, Static};
+        use super::{Node, ThreadExitSequentializer};
+        use crate::{Finaly, Sequential};
 
         use core::cell::Cell;
         use core::ffi::c_void;
@@ -441,12 +452,12 @@ mod local_manager {
             }
             Some(key as pthread_key_t)
         }
-        pub(super) fn register_on_thread_exit<T: Static<Manager = ThreadExitManager>>(
+        fn register_on_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer>>(
             st: &T,
             key: pthread_key_t,
         ) -> bool
         where
-            T::Data: Finaly,
+            T::Data: 'static+Finaly,
         {
             let specific = unsafe { pthread_getspecific(key) };
 
@@ -462,17 +473,18 @@ mod local_manager {
                 }
             }
 
-            unsafe { Static::manager(st).next.set(REGISTER.take()) };
+            unsafe { Sequential::manager(st).next.set(REGISTER.take()) };
 
             REGISTER.set(Some((st as &Node).into()));
             true
         }
 
-        pub struct LocalRegister;
-
-        pub(super) fn register<T: Static<Manager = ThreadExitManager>>(st: &T) -> bool
+        #[cfg_attr(docsrs, doc(cfg(feature="thread_local")))]
+        /// Store a reference of the thread local static for execution of the
+        /// finalize call back at thread exit
+        pub fn finalize_at_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer>>(st: &T) -> bool
         where
-            T::Data: Finaly,
+            T::Data: 'static+Finaly,
         {
             match get_key() {
                 Some(key) => register_on_thread_exit(st, key),
@@ -481,5 +493,5 @@ mod local_manager {
         }
     }
     #[cfg(pthread_thread_at_exit)]
-    use pthread::LocalRegister;
+    pub use pthread::finalize_at_thread_exit;
 }

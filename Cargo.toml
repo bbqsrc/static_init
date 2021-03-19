@@ -17,25 +17,22 @@ members = [
 [features]
 
 # for non thread local lesser lazy statics => requires std library
-global_once = ["static_init_macro/global_once", "parking_lot", "parking_lot_core"]
+global_once = ["static_init_macro/global_once", "parking_lot_core", "libc", "winapi"]
 
 likely = ["likely_stable"]
 
 # for detection of lazy static cyclic initialization 
 # and detection of dynamic statics access while not initialized
-debug_order = ["static_init_macro/debug_order"]
+debug_order = ["static_init_macro/debug_order","parking_lot"]
 
 # internal feature to enable tests
-thread_local = []
+thread_local = ["winapi"]
 test_no_global_lazy_hint = []
 
 
-default = ["global_once", "debug_order"]
+default = ["global_once"]
 
 [dependencies]
-libc = {version = "0.2", optional=true}
-parking_lot = {version = "0.11", optional=true}
-parking_lot_core = {version = "0.8", optional=true}
 likely_stable = {version = "0.1", optional=true}
 
 [dependencies.static_init_macro]
@@ -55,3 +52,26 @@ lto = true
 
 [profile.dev]
 panic="abort"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[target.'cfg(target_os="windows")'.dependencies.winapi]
+version = "0.3"
+features = ["minwindef", "winnt", "winbase","synchapi"]
+optional = true
+
+[target.'cfg(target_os="linux")'.dependencies.libc]
+version = "0.2"
+optional=true
+default-features = false
+
+[target.'cfg(target_os="android")'.dependencies.libc]
+version = "0.2"
+optional=true
+default-features = false
+
+[target.'cfg(not(any(target_os="linux",target_os="windows",target_os="android")))'.dependencies]
+parking_lot = {version = "0.11", optional=true}
+parking_lot_core = {version = "0.8", optional=true}

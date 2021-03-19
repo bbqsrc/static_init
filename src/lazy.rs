@@ -1,11 +1,14 @@
-use crate::{Manager, ManagerBase, Static,OnceManager,LocalManager,ThreadExitManager, GenericLazy, LazyPolicy, UnInited,DropedUnInited, LazyData, Phase,StaticInfo};
+use crate::{Sequentializer, Phased, Sequential,SplitedSequentializer,splited_sequentializer::UnSyncSequentializer, generic_lazy::{GenericLazy, LazyPolicy, UnInited, LazyData}, Phase,StaticInfo};
+
+#[cfg(feature="thread_local")]
+use crate::{at_exit::ThreadExitSequentializer,generic_lazy::DropedUnInited};
 
 #[cfg(feature="global_once")]
-use crate::{GlobalManager,ExitManager};
+use crate::{splited_sequentializer::SyncSequentializer,at_exit::ExitSequentializer};
 
-pub struct NonPoisonedChecker;
+pub struct InitializedChecker;
 
-impl LazyPolicy for NonPoisonedChecker {
+impl LazyPolicy for InitializedChecker {
     const INIT_ON_REG_FAILURE: bool = false;
     #[inline(always)]
     fn shall_proceed(p: Phase) -> bool {
@@ -18,8 +21,8 @@ impl LazyPolicy for NonPoisonedChecker {
     }
 }
 
-pub struct NonFinalizedChecker;
-impl LazyPolicy for NonFinalizedChecker {
+pub struct InitializedAndNonFinalizedChecker;
+impl LazyPolicy for InitializedAndNonFinalizedChecker {
     const INIT_ON_REG_FAILURE: bool = false;
     #[inline(always)]
     fn shall_proceed(p: Phase) -> bool {
@@ -53,50 +56,60 @@ macro_rules! init_only {
             }
         }
 
-        impl ManagerBase for $typ {
-            fn phase(&self) -> Phase {
-                self.0.phase()
+        impl Phased for $typ {
+            fn phase(this: &Self) -> Phase {
+                Phased::phase(&this.0)
             }
         }
 
-        unsafe impl<T: Static<Manager = Self>> Manager<T> for $typ {
-            fn register(
+        impl<T: Sequential<Sequentializer = Self>> Sequentializer<T> for $typ {
+            fn init(
                 s: &T,
                 on_uninited: impl Fn(Phase) -> bool,
-                init: impl FnOnce(&<T as Static>::Data),
+                init: impl FnOnce(&<T as Sequential>::Data),
                 init_on_reg_failure: bool,
             ) -> bool {
-                <$sub as OnceManager<T>>::register(s, on_uninited, init, |_| true, init_on_reg_failure)
+                <$sub as SplitedSequentializer<T>>::init(s, on_uninited, init, |_| true, init_on_reg_failure)
             }
         }
     };
 }
 
 #[cfg(feature="global_once")]
-init_only! {GlobalInitOnlyManager,GlobalManager<true>}
+init_only! {StartUpInitedNonFinalizedSyncSequentializer,SyncSequentializer<true>}
 
 #[cfg(feature="global_once")]
-init_only! {LazyInitOnlyManager,GlobalManager<false>, GlobalManager::new_lazy()}
+init_only! {NonFinalizedSyncSequentializer,SyncSequentializer<false>, SyncSequentializer::new_lazy()}
 
-init_only! {LocalInitOnlyManager,LocalManager}
+init_only! {NonFinalizedUnSyncSequentializer,UnSyncSequentializer}
 
 use core::ops::{Deref, DerefMut};
 macro_rules! impl_lazy {
-    ($tp:ident, $man:ty, $checker:ty, $data:ty) => {
-        impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()}
+    ($tp:ident, $man:ty, $checker:ty, $data:ty, $doc:literal $(cfg($attr:meta))?) => {
+        impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new(),$doc $(cfg($attr))?}
     };
-    (unsafe $tp:ident, $man:ty, $checker:ty, $data:ty) => {
-        impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new(), unsafe}
+    (unsafe $tp:ident, $man:ty, $checker:ty, $data:ty,$doc:literal $(cfg($attr:meta))?) => {
+        impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new(),$doc $(cfg($attr))?, unsafe}
     };
-    ($tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr) => {
-        impl_lazy! {@proc $tp,$man,$checker,$data,$init}
+    ($tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr,$doc:literal $(cfg($attr:meta))?) => {
+        impl_lazy! {@proc $tp,$man,$checker,$data,$init,$doc $(cfg($attr))?}
     };
-    (unsafe $tp:ident, $man:ty, $checker:ty, $data:ty,$init:expr) => {
-        impl_lazy! {@proc $tp,$man,$checker,$data,$init, unsafe}
+    (unsafe $tp:ident, $man:ty, $checker:ty, $data:ty,$init:expr,$doc:literal $(cfg($attr:meta))?) => {
+        impl_lazy! {@proc $tp,$man,$checker,$data,$init, $doc $(cfg($attr))?,unsafe}
     };
-    (@proc $tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr $(,$safe:ident)?) => {
+    (@proc $tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr,$doc:literal $(cfg($attr:meta))? $(,$safe:ident)?) => {
+        #[doc=$doc]
+        $(#[cfg_attr(docsrs,doc(cfg($attr)))])?
         pub struct $tp<T, G = fn() -> T> {
             __private: GenericLazy<$data, G, $man, $checker>,
+        }
+        impl<T, G> Phased for $tp<T, G>
+        where
+            GenericLazy<$data, G, $man, $checker>: Phased,
+        {
+            fn phase(this: &Self) -> Phase {
+                Phased::phase(&this.__private)
+            }
         }
 
         impl<T, G> Deref for $tp<T, G>
@@ -137,12 +150,12 @@ macro_rules! impl_lazy {
 
         impl<T, G> $tp<T, G>
         where
-            GenericLazy<$data, G, $man, $checker>: Deref + Static,
-            <GenericLazy<$data, G, $man, $checker> as Static>::Manager: ManagerBase,
+            GenericLazy<$data, G, $man, $checker>: Deref + Sequential,
+            <GenericLazy<$data, G, $man, $checker> as Sequential>::Sequentializer: Phased,
         {
             #[inline(always)]
             pub fn phase(&self) -> Phase {
-                Static::manager(&self.__private).phase()
+                Phased::phase(Sequential::sequentializer(&self.__private))
             }
             #[inline(always)]
             pub fn register(&self) {
@@ -153,32 +166,49 @@ macro_rules! impl_lazy {
 }
 
 #[cfg(feature="global_once")]
-impl_lazy! {Lazy,LazyInitOnlyManager,NonPoisonedChecker,UnInited::<T>}
+impl_lazy! {Lazy,NonFinalizedSyncSequentializer,InitializedChecker,UnInited::<T>,
+"A type that initialize it self only once on the first access" cfg(feature="global_once")}
 
 #[cfg(feature="global_once")]
-impl_lazy! {unsafe QuasiLazy,GlobalInitOnlyManager,NonPoisonedChecker,UnInited::<T>}
+impl_lazy! {unsafe QuasiLazy,StartUpInitedNonFinalizedSyncSequentializer,InitializedChecker,UnInited::<T>,
+"The actual type of statics attributed with #[dynamic(quasi_lazy)]" cfg(feature="global_once")
+}
 
 #[cfg(feature="global_once")]
-impl_lazy! {unsafe LazyFinalize,ExitManager<false>,NonPoisonedChecker,UnInited::<T>,ExitManager::new_lazy()}
+impl_lazy! {unsafe LazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,ExitSequentializer::new_lazy(),
+"The actual type of statics attributed with #[dynamic(lazy,finalize)]" cfg(feature="global_once")
+}
 
 #[cfg(feature="global_once")]
-impl_lazy! {unsafe QuasiLazyFinalize,ExitManager<true>,NonPoisonedChecker,UnInited::<T>}
+impl_lazy! {unsafe QuasiLazyFinalize,ExitSequentializer<true>,InitializedChecker,UnInited::<T>,
+"The actual type of statics attributed with #[dynamic(quasi_lazy,finalize)]" cfg(feature="global_once")
+}
 
-impl_lazy! {LocalLazy,LocalInitOnlyManager,NonPoisonedChecker,UnInited::<T>}
-impl_lazy! {unsafe LocalLazyFinalize,ThreadExitManager,NonPoisonedChecker,UnInited::<T>}
-impl_lazy! {unsafe LocalLazyDroped,ThreadExitManager,NonFinalizedChecker,DropedUnInited::<T>}
+impl_lazy! {UnSyncLazy,NonFinalizedUnSyncSequentializer,InitializedChecker,UnInited::<T>,
+"A version of [Lazy] whose reference can not be passed to other thread"
+}
 
+#[cfg(feature="thread_local")]
+impl_lazy! {unsafe UnSyncLazyFinalize,ThreadExitSequentializer,InitializedChecker,UnInited::<T>,
+"The actual type of thread_local statics attributed with #[dynamic(lazy,finalize)]" cfg(feature="thread_local")
+}
+#[cfg(feature="thread_local")]
+impl_lazy! {unsafe UnSyncLazyDroped,ThreadExitSequentializer,InitializedAndNonFinalizedChecker,DropedUnInited::<T>,
+"The actual type of thread_local statics attributed with #[dynamic(lazy,drop)]" cfg(feature="thread_local")
+}
+
+#[cfg(feature="global_once")]
 impl<T,G> Drop for Lazy<T,G> { 
     fn drop(&mut self) {
-        if self.__private.manager().phase().initialized() {
-           unsafe {self.__private.get_raw_data().get().drop_in_place()}
+        if Phased::phase(GenericLazy::sequentializer(&self.__private)).initialized() {
+           unsafe {GenericLazy::get_raw_data(&self.__private).get().drop_in_place()}
         }
     }
 }
-impl<T,G> Drop for LocalLazy<T,G> { 
+impl<T,G> Drop for UnSyncLazy<T,G> { 
     fn drop(&mut self) {
-        if self.__private.manager().phase().initialized() {
-           unsafe {self.__private.get_raw_data().get().drop_in_place() }
+        if Phased::phase(GenericLazy::sequentializer(&self.__private)).initialized() {
+           unsafe {GenericLazy::get_raw_data(&self.__private).get().drop_in_place() }
         }
     }
 }
@@ -209,11 +239,11 @@ mod test_lazy {
 //        assert_eq!(*_X, 22);
 //    }
 //}
-#[cfg(test)]
+#[cfg(all(test,feature="thread_local"))]
 mod test_local_lazy {
-    use super::LocalLazy;
+    use super::UnSyncLazy;
     #[thread_local]
-    static _X: LocalLazy<u32, fn() -> u32> =  LocalLazy::new_static(|| 22);
+    static _X: UnSyncLazy<u32, fn() -> u32> =  UnSyncLazy::new_static(|| 22);
     #[test]
     fn test() {
         assert_eq!(*_X, 22);
@@ -252,29 +282,29 @@ mod test_lazy_finalize {
 //        assert_eq!((*_X).0, 22);
 //    }
 //}
-#[cfg(test)]
+#[cfg(all(test,feature="thread_local"))]
 mod test_local_lazy_finalize {
     use crate::Finaly;
-    use super::LocalLazyFinalize;
+    use super::UnSyncLazyFinalize;
     #[derive(Debug)]
     struct A(u32);
     impl Finaly for A {
         fn finaly(&self) {}
     }
     #[thread_local]
-    static _X: LocalLazyFinalize<A, fn() -> A> = unsafe { LocalLazyFinalize::new_static(|| A(22)) };
+    static _X: UnSyncLazyFinalize<A, fn() -> A> = unsafe { UnSyncLazyFinalize::new_static(|| A(22)) };
     #[test]
     fn test() {
         assert_eq!((*_X).0, 22);
     }
 }
-#[cfg(test)]
+#[cfg(all(test,feature="thread_local"))]
 mod test_droped_local_lazy_finalize {
-    use super::LocalLazyDroped;
+    use super::UnSyncLazyDroped;
     #[derive(Debug)]
     struct A(u32);
     #[thread_local]
-    static _X: LocalLazyDroped<A> = unsafe { LocalLazyDroped::new_static(|| A(22)) };
+    static _X: UnSyncLazyDroped<A> = unsafe { UnSyncLazyDroped::new_static(|| A(22)) };
     #[test]
     fn test() {
         assert_eq!(_X.0, 22);

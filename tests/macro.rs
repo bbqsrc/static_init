@@ -165,7 +165,9 @@ fn dynamic_init() {
 
 
 mod lazy {
+    #[cfg(any(feature = "thread_local"))]
     use static_init::dynamic;
+    #[cfg(any(feature = "thread_local"))]
     use super::A;
 
     #[cfg(feature = "thread_local")]

@@ -1,5 +1,4 @@
-//use crate::{AtThreadExit, LocalManager};
-use crate::{Finaly, Generator, Manager, Static, StaticInfo, Phase};
+use crate::{Finaly, Generator, Sequentializer, Sequential, StaticInfo, Phase};
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
@@ -8,39 +7,16 @@ use core::marker::PhantomData;
 #[cfg(debug_mode)]
 use crate::CyclicPanic;
 
+/// Policy for lazy initialization
 pub trait LazyPolicy {
+    /// Shall the initialization be performed if the finalization callback failed to be registred
     const INIT_ON_REG_FAILURE:bool;
+    /// shall the initialization be performed (tested at each access)
     fn shall_proceed(_:Phase) -> bool;
 }
 
-pub struct RegisterOnFirstAccess<T,S> {
-    value: T,
-    phantom: PhantomData<S>,
-}
-
-impl<T,S> RegisterOnFirstAccess<T,S> {
-    pub const fn new(value: T) -> Self {
-        Self { value , phantom:PhantomData}
-    }
-}
-
-impl<M: Manager<T>, T: Static<Manager = M>, S:LazyPolicy> Deref for RegisterOnFirstAccess<T,S> {
-    type Target = T;
-    #[inline(always)]
-    fn deref(&self) -> &T {
-        Manager::register(&self.value, S::shall_proceed, |_| (),true);
-        &self.value
-    }
-}
-
-impl<M: Manager<T>, T: Static<Manager = M>, S:LazyPolicy> DerefMut for RegisterOnFirstAccess<T,S> {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut T {
-        Manager::register(&self.value, S::shall_proceed, |_| (),true);
-        &mut self.value
-    }
-}
-
+/// Generic lazy interior data storage, uninitialized with interior mutability data storage
+/// that call T::finaly when finalized
 pub struct UnInited<T>(UnsafeCell<MaybeUninit<T>>);
 
 impl<T: Finaly> Finaly for UnInited<T> {
@@ -50,6 +26,8 @@ impl<T: Finaly> Finaly for UnInited<T> {
     }
 }
 
+/// Generic lazy interior data storage, uninitialized with interior mutability data storage
+/// that call drop when finalized
 pub struct DropedUnInited<T>(UnsafeCell<MaybeUninit<T>>);
 
 impl<T> Finaly for DropedUnInited<T> {
@@ -59,6 +37,10 @@ impl<T> Finaly for DropedUnInited<T> {
     }
 }
 
+/// Trait implemented by generic lazy inner data.
+/// 
+/// Dereferencement of generic lazy will return a reference to
+/// the inner data returned by the get method
 pub trait LazyData {
     type Target;
     const INIT: Self;
@@ -82,11 +64,13 @@ impl<T> LazyData for DropedUnInited<T> {
     }
 }
 
-
+/// A type that wrap a Sequentializer and a raw data, and that may
+/// initialize the data, at each access depending on the LazyPolicy
+/// provided as generic argument.
 pub struct GenericLazy<T, F, M, S> {
     value:     T,
     generator: F,
-    manager:   M,
+    sequentializer:   M,
     phantom: PhantomData<S>,
     #[cfg(debug_mode)]
     _info:     Option<StaticInfo>,
@@ -94,57 +78,65 @@ pub struct GenericLazy<T, F, M, S> {
 unsafe impl<T: Sync, F: Sync, M: Sync, S> Sync for GenericLazy<T, F, M,S> {}
 
 impl<T, F, M,S> GenericLazy<T, F, M,S> {
-    pub const unsafe fn new_static(generator: F, manager: M, value: T) -> Self {
+    /// const initialize the lazy, the inner data may be in an uninitialized state
+    pub const unsafe fn new_static(generator: F, sequentializer: M, value: T) -> Self {
         Self {
             value,
             generator,
-            manager,
+            sequentializer,
             phantom:PhantomData,
             #[cfg(debug_mode)]
             _info: None
         }
     }
+    /// const initialize the lazy, the inner data may be in an uninitialized state and
+    /// store some debuging informations
     pub const unsafe fn new_static_with_info(
         generator: F,
-        manager: M,
+        sequentializer: M,
         value: T,
         _info: StaticInfo,
     ) -> Self {
         Self {
             value,
             generator,
-            manager,
+            sequentializer,
             phantom:PhantomData,
             #[cfg(debug_mode)]
             _info:Some(_info),
         }
     }
     #[inline(always)]
-    pub fn manager(&self) -> &M {
-        &self.manager
+    ///get access to the sequentializer
+    pub fn sequentializer(this: &Self) -> &M {
+        &this.sequentializer
     }
     #[inline(always)]
-    pub fn get_raw_data(&self) -> &T {
-        &self.value
+    ///get a pointer to the raw data
+    pub fn get_raw_data(this :&Self) -> &T {
+        &this.value
     }
     #[inline(always)]
-    pub fn register(&self)
-    where
+    /// potentialy initialize the inner data
+    ///
+    /// this method is called every time the generic lazy is dereferenced
+    pub fn init(this: &Self)
+    where 
         T: 'static + LazyData,
-        M: 'static + Manager<Self>,
+        M: 'static + Sequentializer<Self>,
         F: 'static + Generator<T::Target>,
         S: 'static + LazyPolicy
     {
         #[cfg(not(debug_mode))]
         {
-        Manager::register(
-            self,
+        Sequentializer::init(
+            this,
             S::shall_proceed,
             |data: &T| {
                 // SAFETY
-                // This function is called only once within the register function
+                // This function is called only once within the init function
                 // Only one thread can ever get this mutable access
-                let d = Generator::generate(&self.generator);
+                let d = Generator::generate(&this.generator);
                 unsafe { data.get().write(d) };
             },
             S::INIT_ON_REG_FAILURE,
@@ -153,14 +145,14 @@ impl<T, F, M,S> GenericLazy<T, F, M,S> {
         #[cfg(debug_mode)]
         {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| 
-        Manager::register(
-            self,
+        <M as Sequentializer<Self>>::init(
+            this,
             S::shall_proceed,
             |data: &T| {
                 // SAFETY
-                // This function is called only once within the register function
+                // This function is called only once within the init function
                 // Only one thread can ever get this mutable access
-                let d = Generator::generate(&self.generator);
+                let d = Generator::generate(&this.generator);
                 unsafe { data.get().write(d) };
             },
             S::INIT_ON_REG_FAILURE,
@@ -168,7 +160,7 @@ impl<T, F, M,S> GenericLazy<T, F, M,S> {
         )) {
             Ok(_) => (),
             Err(x) => if x.is::<CyclicPanic>() { 
-                match &self._info {
+                match &this._info {
                     Some(info) => panic!("Circular initialization of {:#?}", info),
                     None => panic!("Circular lazy initialization detected"),
                 }
@@ -180,38 +172,38 @@ impl<T, F, M,S> GenericLazy<T, F, M,S> {
     }
 }
 
-impl<M: 'static+Manager<Self>, T: 'static + LazyData, F: 'static + Generator<T::Target>, S:'static+LazyPolicy> Deref
+impl<M: 'static+Sequentializer<Self>, T: 'static + LazyData, F: 'static + Generator<T::Target>, S:'static+LazyPolicy> Deref
     for GenericLazy<T, F, M, S>
 {
     type Target = T::Target;
     #[inline(always)]
     fn deref(&self) -> &T::Target {
-        self.register();
+        Self::init(self);
         // SAFETY
         // This is safe as long as the object has been initialized
-        // this is the contract ensured by register.
+        // this is the contract ensured by init.
         unsafe { &*self.value.get() }
     }
 }
 
-impl<M: 'static+Manager<Self>, T: 'static + LazyData, F: 'static + Generator<T::Target>, S:'static+LazyPolicy> DerefMut
+impl<M: 'static+Sequentializer<Self>, T: 'static + LazyData, F: 'static + Generator<T::Target>, S:'static+LazyPolicy> DerefMut
     for GenericLazy<T, F, M,S>
 {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut T::Target {
-        self.register();
+        Self::init(self);
         unsafe { &mut *self.value.get() }
     }
 }
 
-unsafe impl<F: 'static + Generator<T::Target>, T: 'static + LazyData, M: 'static, S:'static+LazyPolicy> Static
+unsafe impl<F: 'static + Generator<T::Target>, T: 'static + LazyData, M: 'static, S:'static+LazyPolicy> Sequential
     for GenericLazy<T, F, M, S>
 {
     type Data = T;
-    type Manager = M;
+    type Sequentializer = M;
     #[inline(always)]
-    fn manager(this: &Self) -> &Self::Manager {
-        &this.manager
+    fn sequentializer(this: &Self) -> &Self::Sequentializer {
+        &this.sequentializer
     }
     #[inline(always)]
     fn data(this: &Self) -> &Self::Data {

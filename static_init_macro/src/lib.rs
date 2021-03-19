@@ -433,7 +433,7 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// A thread_local *lazy static* that is *not mutable* and that will be dropped is wrapped in a *mutable* thread_local static
 /// of type `static_init::ThreadLocalConstLazy`. Otherwise the mutability is unchanged and the
-/// static is wrapped in a `static_init::ThreadLocalLazy`.
+/// static is wrapped in a `static_init::ThreadUnSyncLazy`.
 ///
 /// A *lazy static* that is *not mutable* and that will be dropped is wrapped in a *mutable* static
 /// of type `static_init::ConstLazy`. Otherwise the mutability is unchanged and the
@@ -740,31 +740,31 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         }
     } else if is_thread_local && options.drop == DropMode::Finalize {
             parse_quote! {
-                ::static_init::LocalLazyFinalize::<#stat_typ>
+                ::static_init::lazy::UnSyncLazyFinalize::<#stat_typ>
             }
     } else if is_thread_local && options.drop == DropMode::Drop{
         parse_quote! {
-            ::static_init::LocalLazyDroped::<#stat_typ>
+            ::static_init::lazy::UnSyncLazyDroped::<#stat_typ>
         }
     } else if is_thread_local {
             parse_quote! {
-                ::static_init::LocalLazy::<#stat_typ>
+                ::static_init::lazy::UnSyncLazy::<#stat_typ>
             }
     } else if options.drop == DropMode::Finalize && options.init == InitMode::QuasiLazy {
         parse_quote! {
-            ::static_init::QuasiLazyFinalize::<#stat_typ>
+            ::static_init::lazy::QuasiLazyFinalize::<#stat_typ>
         }
     } else if options.drop == DropMode::Finalize && options.init == InitMode::Lazy {
         parse_quote! {
-            ::static_init::LazyFinalize::<#stat_typ>
+            ::static_init::lazy::LazyFinalize::<#stat_typ>
         }
     } else if options.init == InitMode::QuasiLazy {
          parse_quote! {
-             ::static_init::QuasiLazy::<#stat_typ>
+             ::static_init::lazy::QuasiLazy::<#stat_typ>
          }
     } else {
          parse_quote! {
-             ::static_init::Lazy::<#stat_typ>
+             ::static_init::lazy::Lazy::<#stat_typ>
          }
     };
 
