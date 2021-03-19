@@ -280,8 +280,7 @@ pub use lazy::UnSyncLazy;
 /// Provides types for statics that are meant to run code before main start or after it exit.
 pub mod raw_static;
 
-mod futex;
-mod spinwait;
+mod mutex;
 
 #[derive(Debug)]
 #[doc(hidden)]

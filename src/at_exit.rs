@@ -29,7 +29,7 @@ mod exit_manager {
         use super::{ExitSequentializer, Node};
         use crate::{destructor, Finaly, Sequential};
 
-        use parking_lot::{lock_api::RawMutex, Mutex};
+        use crate::mutex::Mutex;
 
         use core::ptr::NonNull;
 
@@ -37,8 +37,7 @@ mod exit_manager {
 
         unsafe impl Send for Wrap{}
 
-        static REGISTER: Mutex<(Option<Wrap>, bool)> =
-            Mutex::const_new(RawMutex::INIT, (None, true));
+        static REGISTER: Mutex<(Option<Wrap>, bool)> = Mutex::new((None, true));
 
         #[destructor(0)]
         extern "C" fn execute_at_exit() {

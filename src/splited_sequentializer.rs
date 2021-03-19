@@ -142,8 +142,7 @@ where
 #[cfg(feature="global_once")]
 mod global_once {
 use super::{Phase,phase,Phased, SplitedSequentializer, Sequential};
-use core::mem::forget;
-use core::sync::atomic::{fence, AtomicU32, Ordering};
+use crate::mutex::{PhasedLocker, PhaseGuard};
 
 #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
 mod inited {
@@ -183,100 +182,12 @@ fn atomic_register_uninited<'a, T: Sequential, const GLOBAL: bool>(
 ) -> bool {
     use phase::*;
 
-    use crate::spinwait::SpinWait;
-
-    use crate::futex::{park,unpark_all};
-
-    let mut spin_wait = SpinWait::new();
-
-    let mut cur = this.0.load(Ordering::Relaxed);
-
-    loop {
-        if !shall_proceed(Phase(cur & !(PARKED_BIT|LOCKED_BIT))) {
-            fence(Ordering::Acquire);
-            return false;
-        }
-        if cur & LOCKED_BIT == 0 {
-            match this.0.compare_exchange_weak(
-                cur,
-                cur | LOCKED_BIT | REGISTRATING_BIT,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(x) => cur = x,
-            }
-            continue;
-        }
-        if cur & PARKED_BIT == 0 && spin_wait.spin() {
-            cur = this.0.load(Ordering::Relaxed);
-            continue;
-        }
-        if cur & PARKED_BIT == 0 {
-            if let Err(x) = this.0.compare_exchange_weak(
-                cur,
-                cur | PARKED_BIT,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                cur = x;
-                continue;
-            }
-        }
-        #[cfg(debug_mode)]
-        {
-        let id = id.load(Ordering::Relaxed);
-        if id != 0 {
-            use parking_lot::lock_api::GetThreadId;
-            if id == parking_lot::RawThreadId.nonzero_thread_id().into() {
-                std::panic::panic_any(CyclicPanic);
-            }
-        }
-        }
-
-        park(&this.0,cur|PARKED_BIT);
-        spin_wait.reset();
-        cur = this.0.load(Ordering::Relaxed);
-    }
-
-    let _debug_guard = 
-    {
-        #[cfg(debug_mode)]
-        {
-        use parking_lot::lock_api::GetThreadId;
-        id.store(parking_lot::RawThreadId.nonzero_thread_id().into(),Ordering::Relaxed); 
-        struct Guard<'a>(&'a AtomicUsize);
-        impl<'a> Drop for Guard<'a> {
-            fn drop(&mut self) {
-                self.0.store(0,Ordering::Relaxed);
-            }
-        }
-        Guard(id)
-        }
-        #[cfg(not(debug_mode))]
-        ()
+    let mut phase_guard = match this.0.lock(s,&shall_proceed) {
+        None => return false,
+        Some(l) => l,
     };
 
-    struct UnparkGuard<'a, const G: bool>(&'a SyncSequentializer<G>, u32);
-    impl<'a, const G: bool> Drop for UnparkGuard<'a, G> {
-        fn drop(&mut self) {
-            // Mark the state as poisoned, unlock it and unpark all threads.
-            let man = self.0;
-            let cur = man.0.swap(self.1, Ordering::Release);
-            if cur & PARKED_BIT != 0 {
-                unpark_all(&man.0)
-            }
-        }
-    }
 
-    struct Guard<'a, const G: bool>(&'a SyncSequentializer<G>, u32);
-    impl<'a, const G: bool> Drop for Guard<'a, G> {
-        fn drop(&mut self) {
-            // Mark the state as poisoned, unlock it and unpark all threads.
-            let man = self.0;
-            man.0.store(self.1, Ordering::Release);
-        }
-    }
     //states:
     // 1) 0
     // 2) REGISTRATING|LOCKED_BIT (|PARKED_BIT)
@@ -297,60 +208,55 @@ fn atomic_register_uninited<'a, T: Sequential, const GLOBAL: bool>(
     // 6) INITIALIZED|FINALIZED (final)
     //    INITIALIZED|FINALIZATION_PANIC(final)
 
-    let guard = UnparkGuard(&this, REGISTRATING_PANIC_BIT | INIT_SKIPED_BIT);
-    let cond = reg(s);
-    forget(guard);
+    let cur = phase_guard.phase().0;
+
+    let registrating = cur | REGISTRATING_BIT;
+
+    let registration_finished = cur;
+
+    let registration_failed = cur |REGISTRATING_PANIC_BIT|INIT_SKIPED_BIT;
+    
+    phase_guard.set_phase_committed(Phase(registrating));
+
+    let cond = phase_guard.transition(reg
+        ,Phase(registration_finished)
+        ,Phase(registration_failed));
+
 
     if cond {
-        let guard = UnparkGuard(
-            &this,
-            REGISTERED_BIT | INITIALIZING_PANICKED_BIT | INIT_SKIPED_BIT,
-        );
-        this.0
-            .fetch_xor(REGISTRATING_BIT | REGISTERED_BIT | INITIALIZING_BIT, Ordering::Release);
+        let initializing = registration_finished | REGISTERED_BIT | INITIALIZING_BIT;
+        let initialized = registration_finished | REGISTERED_BIT | INITED_BIT;
+        let initialization_panic = registration_finished | REGISTERED_BIT | INITIALIZING_PANICKED_BIT | INIT_SKIPED_BIT;
 
-        init(Sequential::data(s));
+        phase_guard.set_phase_committed(Phase(initializing));
 
-        forget(guard);
+        phase_guard.transition(|s| init(Sequential::data(s)),
+            Phase(initialized),
+            Phase(initialization_panic)
+            );
 
-        let prev = this.0.swap(
-            INITED_BIT | REGISTERED_BIT,
-            Ordering::Release,
-        );
-        if prev & PARKED_BIT != 0 {
-            unpark_all(&this.0)
-        }
-        return shall_proceed(Phase(INITED_BIT | REGISTERED_BIT));
+        return shall_proceed(Phase(initialized));
     } else if init_on_reg_failure {
+        
+        let initializing = registration_finished | REGISTRATION_REFUSED_BIT | INITIALIZING_BIT;
+        let initialized = registration_finished | REGISTRATION_REFUSED_BIT | INITED_BIT;
+        let initialization_panic = registration_finished | REGISTRATION_REFUSED_BIT | INITIALIZING_PANICKED_BIT | INIT_SKIPED_BIT;
 
-        let guard = UnparkGuard(
-            &this,
-            REGISTRATION_REFUSED_BIT | INITIALIZING_PANICKED_BIT | INIT_SKIPED_BIT,
-        );
+        phase_guard.set_phase_committed(Phase(initializing));
 
-        this.0
-            .fetch_xor(REGISTRATING_BIT|REGISTRATION_REFUSED_BIT|INITIALIZING_BIT, Ordering::Release);
+        phase_guard.transition(|s| init(Sequential::data(s)),
+            Phase(initialized),
+            Phase(initialization_panic)
+            );
 
-        init(Sequential::data(s));
-
-        forget(guard);
-
-        let prev = this.0.swap(
-            REGISTRATION_REFUSED_BIT|INITED_BIT,
-            Ordering::Release,
-        );
-        if prev & PARKED_BIT != 0 {
-            unpark_all(&this.0)
-        }
         return shall_proceed(Phase(REGISTRATION_REFUSED_BIT|INITED_BIT));
 
     } else {
+        let no_init = registration_finished | REGISTRATION_REFUSED_BIT | INIT_SKIPED_BIT;
 
-        let prev = this.0.swap(REGISTERED_BIT|INIT_SKIPED_BIT, Ordering::Release);
-        if prev & PARKED_BIT != 0 {
-            unpark_all(&this.0)
-        }
-        return shall_proceed(Phase(REGISTERED_BIT | INIT_SKIPED_BIT));
+        phase_guard.set_phase_committed(Phase(no_init));
+
+        return shall_proceed(Phase(no_init));
     }
 }
 
@@ -418,19 +324,19 @@ fn atomic_register_uninited<'a, T: Sequential, const GLOBAL: bool>(
 ///
 ///     b. Finalization panicked
 ///
-pub struct SyncSequentializer<const GLOBAL: bool>(AtomicU32,
+pub struct SyncSequentializer<const GLOBAL: bool>(PhasedLocker,
 #[cfg(debug_mode)] AtomicUsize);
 
 impl<const GLOBAL: bool> Phased for SyncSequentializer<GLOBAL> {
     #[inline(always)]
     fn phase(this: &Self) -> Phase {
-        Phase(this.0.load(Ordering::Acquire))
+        this.0.phase()
     }
 }
 impl SyncSequentializer<true> {
     #[inline(always)]
     pub const fn new() -> Self {
-        Self(AtomicU32::new(0),
+        Self(PhasedLocker::new(Phase(0)),
 #[cfg(debug_mode)] AtomicUsize::new(0))
 
     }
@@ -438,7 +344,7 @@ impl SyncSequentializer<true> {
 impl SyncSequentializer<false> {
     #[inline(always)]
     pub const fn new_lazy() -> Self {
-        Self(AtomicU32::new(0),
+        Self(PhasedLocker::new(Phase(0)),
 #[cfg(debug_mode)] AtomicUsize::new(0))
     }
 }
@@ -455,8 +361,6 @@ where
         reg: impl FnOnce(&T) -> bool,
         init_on_reg_failure: bool,
     ) -> bool {
-        use phase::*;
-
         let this = Sequential::sequentializer(s).as_ref();
 
         if cfg!(not(all(
@@ -464,9 +368,9 @@ where
             not(feature = "test_no_global_lazy_hint")
         ))) || !GLOBAL
         {
-            let cur = this.0.load(Ordering::Acquire);
+            let cur = this.0.phase();
 
-            if shall_proceed(Phase(cur)) {
+            if shall_proceed(cur) {
                 atomic_register_uninited(this, s, shall_proceed, init, reg,init_on_reg_failure, #[cfg(debug_mode)] &this.1)
             } else {
                 false
@@ -476,7 +380,7 @@ where
             {
             if GLOBAL {
                 if inited::global_inited_hint() {
-                    debug_assert!(!shall_proceed(Phase(this.0.load(Ordering::Relaxed))));
+                    debug_assert!(!shall_proceed(this.0.phase()));
                     false
                 } else {
                     atomic_register_uninited(this, s, shall_proceed, init, reg,init_on_reg_failure, #[cfg(debug_mode)] &this.1)
@@ -496,75 +400,26 @@ where
 
         let this = Sequential::sequentializer(s).as_ref();
 
-        struct Guard<'a, const G: bool>(&'a SyncSequentializer<G>);
-        impl<'a, const G: bool> Drop for Guard<'a, G> {
-            fn drop(&mut self) {
-                // Mark the state as poisoned, unlock it and unpark all threads.
-                let man = self.0;
-                man.0.fetch_xor(
-                    FINALIZATION_PANIC_BIT|FINALIZING_BIT,
-                    Ordering::Relaxed,
-                );
-            }
-        }
+        let mut phase_guard = match this.0.lock(Sequential::data(s),
+            |p| {p.0 & (FINALIZING_BIT | FINALIZED_BIT | FINALIZATION_PANIC_BIT|INIT_SKIPED_BIT) == 0})
+            {
+            None => return,
+            Some(l) => l,
+        };
+    
+        let cur = phase_guard.phase().0;
 
-        this.0.load(Ordering::Relaxed);
+        let finalizing = cur | FINALIZING_BIT;
 
-        use crate::spinwait::SpinWait;
-        use crate::futex::park;
+        let finalizing_success = cur | FINALIZED_BIT;
 
-        let mut spin_wait = SpinWait::new();
+        let finalizing_failed = cur | FINALIZATION_PANIC_BIT;
 
-        let mut cur = this.0.load(Ordering::Relaxed);
-
-
-        loop {
-            if cur & (FINALIZING_BIT | FINALIZED_BIT | FINALIZATION_PANIC_BIT|INIT_SKIPED_BIT) != 0 {
-                return;
-            }
-            assert!(cur & INITED_BIT != 0);
-            match this.0.compare_exchange_weak(
-                cur & !(LOCKED_BIT|PARKED_BIT),
-                cur & !(LOCKED_BIT|PARKED_BIT) | FINALIZING_BIT,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(x) => cur = x,
-            }
-            if cur & LOCKED_BIT == 0 {
-                continue;
-            }
-            if cur & PARKED_BIT == 0 && spin_wait.spin() {
-                cur = this.0.load(Ordering::Relaxed);
-                continue;
-            }
-            if cur & PARKED_BIT == 0 {
-                if let Err(x) = this.0.compare_exchange_weak(
-                    cur,
-                    cur | PARKED_BIT,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
-                    cur = x;
-                    continue;
-                }
-            }
-            park(&this.0, cur | PARKED_BIT);
-            spin_wait.reset();
-            cur = this.0.load(Ordering::Relaxed);
-        }
-
-        let guard = Guard(this);
-
-        f(Sequential::data(s));
-
-        forget(guard);
-
-        this.0.fetch_xor(
-            FINALIZING_BIT | FINALIZED_BIT,
-            Ordering::Release,
-        );
+        phase_guard.set_phase_committed(Phase(finalizing
+        ));
+        phase_guard.transition(f
+            ,Phase(finalizing_success)
+            ,Phase(finalizing_failed));
     }
 }
 }
