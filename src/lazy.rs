@@ -12,10 +12,10 @@ impl LazyPolicy for InitializedChecker {
     const INIT_ON_REG_FAILURE: bool = false;
     #[inline(always)]
     fn shall_proceed(p: Phase) -> bool {
-        if p.initialized() {
+        if p.intersects(Phase::INITIALIZED) {
             false
         } else {
-            assert!(!p.initialization_skiped());
+            assert!(!p.intersects(Phase::INITIALIZATION_SKIPED));
             true
         }
     }
@@ -26,11 +26,11 @@ impl LazyPolicy for InitializedAndNonFinalizedChecker {
     const INIT_ON_REG_FAILURE: bool = false;
     #[inline(always)]
     fn shall_proceed(p: Phase) -> bool {
-        if p.initialized() {
-            assert!(!p.finalized());
+        if p.intersects(Phase::INITIALIZED) {
+            assert!(!p.intersects(Phase::FINALIZED));
             false
         } else {
-            assert!(!p.initialization_skiped());
+            assert!(!p.intersects(Phase::INITIALIZATION_SKIPED));
             true
         }
     }
@@ -200,14 +200,14 @@ impl_lazy! {unsafe UnSyncLazyDroped,ThreadExitSequentializer,InitializedAndNonFi
 #[cfg(feature="global_once")]
 impl<T,G> Drop for Lazy<T,G> { 
     fn drop(&mut self) {
-        if Phased::phase(GenericLazy::sequentializer(&self.__private)).initialized() {
+        if Phased::phase(GenericLazy::sequentializer(&self.__private)).intersects(Phase::INITIALIZED) {
            unsafe {GenericLazy::get_raw_data(&self.__private).get().drop_in_place()}
         }
     }
 }
 impl<T,G> Drop for UnSyncLazy<T,G> { 
     fn drop(&mut self) {
-        if Phased::phase(GenericLazy::sequentializer(&self.__private)).initialized() {
+        if Phased::phase(GenericLazy::sequentializer(&self.__private)).intersects(Phase::INITIALIZED) {
            unsafe {GenericLazy::get_raw_data(&self.__private).get().drop_in_place() }
         }
     }

@@ -119,9 +119,17 @@ impl SpinWait {
 
 }
 }
+use super::Phase;
 
+pub trait PhaseGuard<T:?Sized> {
+     fn set_phase(&mut self,p: Phase);
+     fn set_phase_committed(&mut self, p:Phase);
+     fn phase(&self) -> Phase;
+     fn transition<R>(&mut self,f: impl FnOnce(&T)->R, on_success:Phase, on_panic: Phase) -> R;
+}
 
 mod mutex {
+    use super::PhaseGuard;
     use super::spin_wait::SpinWait;
     use super::{park, unpark_all};
     use crate::phase::*;
@@ -130,9 +138,9 @@ mod mutex {
     use core::cell::UnsafeCell;
     use core::ops::{Deref,DerefMut};
 
-    pub(crate) struct PhasedLocker(AtomicU32);
+    pub(crate) struct SyncPhasedLocker(AtomicU32);
 
-    pub(crate) struct Mutex<T>(UnsafeCell<T>,PhasedLocker);
+    pub(crate) struct Mutex<T>(UnsafeCell<T>,SyncPhasedLocker);
 
     unsafe impl<T:Send> Sync for Mutex<T> {}
 
@@ -144,33 +152,35 @@ mod mutex {
     }
     pub(crate) struct MutexGuard<'a,T>(&'a mut T,Lock<'a>);
 
-    pub struct PhaseGuard<'a,T:?Sized>(&'a T,Lock<'a>);
+    pub struct SyncPhaseGuard<'a,T:?Sized>(&'a T,Lock<'a>);
 
-    impl<'a,T> Deref for PhaseGuard<'a,T> {
+    impl<'a,T> Deref for SyncPhaseGuard<'a,T> {
         type Target = T;
         fn deref(&self) -> &T {
             self.0
         }
     }
 
-    impl<'a,T:?Sized> PhaseGuard<'a,T> {
-        pub(crate) fn new(r: &'a T, lock: Lock<'a>) -> Self {
+    impl<'a,T:?Sized> SyncPhaseGuard<'a,T> {
+        fn new(r: &'a T, lock: Lock<'a>) -> Self {
             Self(r,lock)
         }
-        pub fn set_phase(&mut self,p: Phase) {
+    }
+    impl<'a,T:?Sized> PhaseGuard<T> for SyncPhaseGuard<'a,T> {
+        fn set_phase(&mut self,p: Phase) {
             self.1.on_unlock = p;
         }
-        pub fn set_phase_committed(&mut self, p:Phase) {
+        fn set_phase_committed(&mut self, p:Phase) {
             //Butter fly trick
-            let to_xor = self.1.on_unlock.0 ^ p.0;
-            self.1.xor_phase(Phase(to_xor & !(PARKED_BIT|LOCKED_BIT)));
+            let to_xor = self.1.on_unlock ^ p;
+            self.1.xor_phase(to_xor);
 
-            self.1.on_unlock = Phase(p.0 & !(PARKED_BIT|LOCKED_BIT));
+            self.1.on_unlock = p;
         }
-        pub fn phase(&self) -> Phase { 
+        fn phase(&self) -> Phase { 
             self.1.on_unlock
         }
-        pub fn transition<R>(&mut self,f: impl FnOnce(&T)->R, on_success:Phase, on_panic: Phase) -> R {
+        fn transition<R>(&mut self,f: impl FnOnce(&T)->R, on_success:Phase, on_panic: Phase) -> R {
             self.1.on_unlock = on_panic;
             let res = f(self.0);
             self.1.on_unlock = on_success;
@@ -180,7 +190,7 @@ mod mutex {
 
     impl<T> Mutex<T> {
         pub(crate) const fn new(value: T) -> Self {
-            Self(UnsafeCell::new(value), PhasedLocker::new(Phase(0)))
+            Self(UnsafeCell::new(value), SyncPhasedLocker::new(Phase::empty()))
         }
         pub(crate) fn lock(&self) -> MutexGuard<'_,T> {
             MutexGuard(unsafe{&mut *self.0.get()},self.1.raw_lock(|_p| {true}).unwrap())
@@ -201,16 +211,15 @@ mod mutex {
 
     impl<'a> Lock<'a> {
         pub fn xor_phase(&self, xor: Phase) -> Phase {
-            let xor = xor.0 & !(PARKED_BIT | LOCKED_BIT);
-            let v = self.state.fetch_xor(xor, Ordering::Release);
-            Phase(v ^ xor)
+            let v = self.state.fetch_xor(xor.bits(), Ordering::Release);
+            Phase::from_bits_truncate(v) ^ xor
         }
     }
 
     impl<'a> Drop for Lock<'a> {
         fn drop(&mut self) {
             let prev = self.state.swap(
-                self.on_unlock.0 & !(PARKED_BIT | LOCKED_BIT),
+                self.on_unlock.bits(),
                 Ordering::Release,
             );
             if prev & PARKED_BIT != 0 {
@@ -219,15 +228,15 @@ mod mutex {
         }
     }
 
-    impl PhasedLocker {
+    impl SyncPhasedLocker {
         pub const fn new(p: Phase) -> Self {
-            PhasedLocker(AtomicU32::new(p.0 & !(PARKED_BIT | LOCKED_BIT)))
+            SyncPhasedLocker(AtomicU32::new(p.bits()))
         }
         pub fn phase(&self) -> Phase {
-            Phase(self.0.load(Ordering::Acquire))
+            Phase::from_bits_truncate(self.0.load(Ordering::Acquire))
         }
-        pub fn lock<'a,T:?Sized>(&'a self,v: &'a T,shall_proceed: impl Fn(Phase)->bool) -> Option<PhaseGuard<'_,T>> {
-            self.raw_lock(shall_proceed).map(|l| PhaseGuard::new(v,l))
+        pub fn lock<'a,T:?Sized>(&'a self,v: &'a T,shall_proceed: impl Fn(Phase)->bool) -> Option<SyncPhaseGuard<'_,T>> {
+            self.raw_lock(shall_proceed).map(|l| SyncPhaseGuard::new(v,l))
         }
         fn raw_lock(
             &self,
@@ -240,7 +249,7 @@ mod mutex {
             let mut cur = self.0.load(Ordering::Relaxed);
 
             loop {
-                if !shall_proceed(Phase(cur & !(PARKED_BIT | LOCKED_BIT))) {
+                if !shall_proceed(Phase::from_bits_truncate(cur)) {
                     fence(Ordering::Acquire);
                     return None;
                 }
@@ -291,10 +300,76 @@ mod mutex {
             }
             Some(Lock {
                 state:     &self.0,
-                on_unlock: Phase(cur),
+                on_unlock: Phase::from_bits_truncate(cur),
             })
         }
     }
 }
-pub(crate) use mutex::{PhasedLocker,Mutex};
-pub use mutex::{PhaseGuard};
+pub(crate) use mutex::{SyncPhasedLocker,Mutex};
+pub use mutex::{SyncPhaseGuard};
+
+mod local_mutex {
+    use super::PhaseGuard;
+    use crate::Phase;
+    use core::ops::Deref;
+    use core::cell::Cell;
+
+    pub(crate) struct UnSyncPhaseLocker(Cell<Phase>);
+
+    pub struct UnSyncSyncPhaseGuard<'a,T:?Sized>(&'a T,&'a Cell<Phase>, Phase);
+
+    impl<'a,T> Deref for UnSyncSyncPhaseGuard<'a,T> {
+        type Target = T;
+        fn deref(&self) -> &T {
+            self.0
+        }
+    }
+
+    impl<'a,T:?Sized> UnSyncSyncPhaseGuard<'a,T> {
+        pub(crate) fn new(r: &'a T, p: &'a Cell<Phase>) -> Self {
+            Self(r,p, p.get())
+        }
+    }
+    impl<'a,T:?Sized> PhaseGuard<T> for UnSyncSyncPhaseGuard<'a,T> {
+        fn set_phase(&mut self,p: Phase) {
+            self.2 = p;
+        }
+        fn set_phase_committed(&mut self, p:Phase) {
+            self.1.set(p);
+            self.2 = p;
+        }
+        fn phase(&self) -> Phase { 
+            self.2
+        }
+        fn transition<R>(&mut self,f: impl FnOnce(&T)->R, on_success:Phase, on_panic: Phase) -> R {
+            self.2 = on_panic;
+            let res = f(self.0);
+            self.2 = on_success;
+            res
+        }
+    }
+
+    impl<'a, T:?Sized> Drop for UnSyncSyncPhaseGuard<'a,T> {
+        fn drop(&mut self) {
+            self.1.set(self.2);
+        }
+    }
+
+    impl UnSyncPhaseLocker {
+        pub const fn new(p: Phase) -> Self {
+            Self(Cell::new(p))
+        }
+        pub fn phase(&self) -> Phase {
+            self.0.get()
+        }
+        pub fn lock<'a,T:?Sized>(&'a self,v: &'a T,shall_proceed: impl Fn(Phase)->bool) -> Option<UnSyncSyncPhaseGuard<'_,T>> {
+            if shall_proceed(self.phase()) {
+                Some(UnSyncSyncPhaseGuard::new(v, &self.0))
+            } else {
+                None
+            }
+        }
+    }
+}
+pub(crate) use local_mutex::UnSyncPhaseLocker;
+pub use local_mutex::{UnSyncSyncPhaseGuard};

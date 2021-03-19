@@ -178,70 +178,49 @@ pub struct CyclicPanic;
 
 /// phases and bits to manipulate them;
 pub mod phase {
-    pub const INITED_BIT: u32 = 1;
-    pub const INITIALIZING_BIT: u32 = 2 * INITED_BIT;
-    pub const INITIALIZING_PANICKED_BIT: u32 = 2 * INITIALIZING_BIT;
-    pub const INIT_SKIPED_BIT: u32 = 2 * INITIALIZING_PANICKED_BIT;
-    pub const LOCKED_BIT: u32 = 2 * INIT_SKIPED_BIT;
-    pub const PARKED_BIT: u32 = 2 * LOCKED_BIT;
-    pub const REGISTRATING_BIT: u32 = 2 * PARKED_BIT;
-    pub const REGISTRATING_PANIC_BIT: u32 = 2 * REGISTRATING_BIT;
-    pub const REGISTRATION_REFUSED_BIT: u32 = 2 * REGISTRATING_PANIC_BIT;
-    pub const REGISTERED_BIT: u32 = 2 * REGISTRATION_REFUSED_BIT;
-    pub const FINALIZING_BIT: u32 = 2 * REGISTERED_BIT;
-    pub const FINALIZED_BIT: u32 = 2 * FINALIZING_BIT;
-    pub const FINALIZATION_PANIC_BIT: u32 = 2 * FINALIZED_BIT;
+    use bitflags::bitflags;
+    pub(crate) const LOCKED_BIT: u32 = 0b1000_0000_0000_0000_0000_0000_0000_0000;
+    pub(crate) const PARKED_BIT: u32 = 0b0100_0000_0000_0000_0000_0000_0000_0000;
 
-    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-    /// Phases of a Sequential
-    pub struct Phase(pub u32);
+    bitflags! {
+        pub struct Phase: u32 {
+            const INITIALIZED               = 0b0000_0000_0000_0000_0000_0000_0000_0001;
+            const INITIALIZATION            = 0b0000_0000_0000_0000_0000_0000_0000_0010;
+            const INITIALIZATION_PANICKED   = 0b0000_0000_0000_0000_0000_0000_0000_0100;
+            const INITIALIZATION_SKIPED     = 0b0000_0000_0000_0000_0000_0000_0000_1000;
 
-    impl Phase {
-        pub const fn new() -> Self {
-            Self(0)
-        }
+            const REGISTERED                = 0b0000_0000_0000_0000_0000_0000_0001_0000;
+            const REGISTRATION              = 0b0000_0000_0000_0000_0000_0000_0010_0000;
+            const REGISTRATION_PANICKED     = 0b0000_0000_0000_0000_0000_0000_0100_0000;
+            const REGISTRATION_REFUSED      = 0b0000_0000_0000_0000_0000_0000_1000_0000;
 
-        pub fn initial_state(self) -> bool {
-            self.0 == 0
-        }
+            const FINALIZED                 = 0b0000_0000_0000_0000_0000_0001_0000_0000;
+            const FINALIZATION              = 0b0000_0000_0000_0000_0000_0010_0000_0000;
+            const FINALIZATION_PANICKED     = 0b0000_0000_0000_0000_0000_0100_0000_0000;
+            const UNUSED_1                  = 0b0000_0000_0000_0000_0000_1000_0000_0000;
 
-        pub fn finalize_registration(self) -> bool {
-            self.0 & REGISTRATING_BIT != 0
-        }
-        pub fn finalize_registration_panicked(self) -> bool {
-            self.0 & REGISTRATING_PANIC_BIT != 0
-        }
-        pub fn finalize_registration_refused(self) -> bool {
-            self.0 & REGISTRATION_REFUSED_BIT != 0
-        }
-        pub fn finalize_registration_failed(self) -> bool {
-            self.0 & (REGISTRATION_REFUSED_BIT | REGISTRATING_PANIC_BIT) != 0
-        }
-        pub fn finalize_registrated(self) -> bool {
-            self.0 & REGISTERED_BIT != 0
-        }
+            const UNUSED_2                  = 0b0000_0000_0000_0000_0001_0000_0000_0000;
+            const UNUSED_3                  = 0b0000_0000_0000_0000_0010_0000_0000_0000;
+            const UNUSED_4                  = 0b0000_0000_0000_0000_0100_0000_0000_0000;
+            const UNUSED_5                  = 0b0000_0000_0000_0000_1000_0000_0000_0000;
 
-        pub fn initialization(self) -> bool {
-            self.0 & INITIALIZING_BIT != 0
-        }
-        pub fn initialization_panicked(self) -> bool {
-            self.0 & INITIALIZING_PANICKED_BIT != 0
-        }
-        pub fn initialization_skiped(self) -> bool {
-            self.0 & INIT_SKIPED_BIT != 0
-        }
-        pub fn initialized(self) -> bool {
-            self.0 & INITED_BIT != 0
-        }
+            const UNUSED_6                  = 0b0000_0000_0000_0001_0000_0000_0000_0000;
+            const UNUSED_7                  = 0b0000_0000_0000_0010_0000_0000_0000_0000;
+            const UNUSED_8                  = 0b0000_0000_0000_0100_0000_0000_0000_0000;
+            const UNUSED_9                  = 0b0000_0000_0000_1000_0000_0000_0000_0000;
 
-        pub fn finalizing(self) -> bool {
-            self.0 & FINALIZING_BIT != 0
-        }
-        pub fn finalization_panic(self) -> bool {
-            self.0 & FINALIZATION_PANIC_BIT != 0
-        }
-        pub fn finalized(self) -> bool {
-            self.0 & FINALIZED_BIT != 0
+            const UNUSED_10                 = 0b0000_0000_0001_0000_0000_0000_0000_0000;
+            const UNUSED_11                 = 0b0000_0000_0010_0000_0000_0000_0000_0000;
+            const UNUSED_12                 = 0b0000_0000_0100_0000_0000_0000_0000_0000;
+            const UNUSED_13                 = 0b0000_0000_1000_0000_0000_0000_0000_0000;
+
+            const UNUSED_14                 = 0b0000_0001_0000_0000_0000_0000_0000_0000;
+            const UNUSED_15                 = 0b0000_0010_0000_0000_0000_0000_0000_0000;
+            const UNUSED_16                 = 0b0000_0100_0000_0000_0000_0000_0000_0000;
+            const UNUSED_17                 = 0b0000_1000_0000_0000_0000_0000_0000_0000;
+
+            const UNUSED_18                 = 0b0001_0000_0000_0000_0000_0000_0000_0000;
+            const UNUSED_19                 = 0b0010_0000_0000_0000_0000_0000_0000_0000;
         }
     }
 }
