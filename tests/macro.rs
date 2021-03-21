@@ -258,3 +258,22 @@ mod global_lazy {
     }
 }
 }
+
+#[cfg(feature = "global_once")]
+#[cfg(test)]
+mod test_mut_lazy_finalize {
+    use static_init::lazy::MutLazyFinalize;
+    use static_init::Finaly;
+    #[derive(Debug)]
+    struct A(u32);
+    impl Finaly for A {
+        fn finaly(&self) {}
+    }
+    static _X: MutLazyFinalize<A, fn() -> A> = unsafe{MutLazyFinalize::new_static(|| A(22))};
+    #[test]
+    fn test() {
+        assert!(_X.read_lock().0 == 22);
+        *_X.write_lock() = A(33);
+        assert_eq!(_X.read_lock().0, 33);
+    }
+}

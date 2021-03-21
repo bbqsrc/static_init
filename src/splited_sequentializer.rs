@@ -1,4 +1,4 @@
-use crate::mutex::{PhaseGuard, UnSyncPhaseGuard, UnSyncPhaseLocker};
+use crate::mutex::{PhaseGuard, UnSyncPhaseGuard, UnSyncPhaseLocker, UnSyncReadPhaseGuard};
 use crate::{Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer};
 
 #[cfg(debug_mode)]
@@ -27,11 +27,17 @@ where
     T::Sequentializer: AsRef<UnSyncSequentializer>,
 {
     type Guard = Option<UnSyncPhaseGuard<'a, T>>;
+    type ReadGuard = Option<UnSyncReadPhaseGuard<'a, T>>;
 
     fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::Guard {
         let this = Sequential::sequentializer(s).as_ref();
 
         this.0.lock(s, &shall_proceed)
+    }
+    fn read_lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::ReadGuard {
+        let this = Sequential::sequentializer(s).as_ref();
+
+        this.0.read_lock(s, &shall_proceed)
     }
 }
 
@@ -80,7 +86,7 @@ where
 mod global_once {
     use super::{lazy_finalization, lazy_initialization};
     use super::{Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer};
-    use crate::mutex::{SyncPhaseGuard, SyncPhasedLocker as PhasedLocker};
+    use crate::mutex::{SyncPhaseGuard, SyncReadPhaseGuard, SyncPhasedLocker as PhasedLocker};
 
     #[cfg(debug_mode)]
     use super::CyclicPanic;
@@ -197,11 +203,17 @@ mod global_once {
         T::Sequentializer: AsRef<SyncSequentializer>,
     {
         type Guard = Option<SyncPhaseGuard<'a, T>>;
+        type ReadGuard = Option<SyncReadPhaseGuard<'a, T>>;
 
         fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::Guard {
             let this = Sequential::sequentializer(s).as_ref();
 
             this.0.lock(s, &shall_proceed)
+        }
+        fn read_lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::ReadGuard {
+            let this = Sequential::sequentializer(s).as_ref();
+
+            this.0.read_lock(s, &shall_proceed)
         }
     }
 
@@ -273,7 +285,8 @@ fn lazy_initialization<P: PhaseGuard<S>, S: Sequential>(
 
     let registration_failed = cur | Phase::REGISTRATION_PANICKED | Phase::INITIALIZATION_SKIPED;
 
-    phase_guard.set_phase_committed(registrating);
+    phase_guard.set_phase(registrating);
+    phase_guard.commit_phase();
 
     let cond = phase_guard.transition(reg, registration_finished, registration_failed);
 
@@ -285,7 +298,8 @@ fn lazy_initialization<P: PhaseGuard<S>, S: Sequential>(
             | Phase::INITIALIZATION_PANICKED
             | Phase::INITIALIZATION_SKIPED;
 
-        phase_guard.set_phase_committed(initializing);
+        phase_guard.set_phase(initializing);
+        phase_guard.commit_phase();
 
         phase_guard.transition(
             |s| init(Sequential::data(s)),
@@ -301,7 +315,8 @@ fn lazy_initialization<P: PhaseGuard<S>, S: Sequential>(
             | Phase::INITIALIZATION_PANICKED
             | Phase::INITIALIZATION_SKIPED;
 
-        phase_guard.set_phase_committed(initializing);
+        phase_guard.set_phase(initializing);
+        phase_guard.commit_phase();
 
         phase_guard.transition(
             |s| init(Sequential::data(s)),
@@ -312,7 +327,8 @@ fn lazy_initialization<P: PhaseGuard<S>, S: Sequential>(
         let no_init =
             registration_finished | Phase::REGISTRATION_REFUSED | Phase::INITIALIZATION_SKIPED;
 
-        phase_guard.set_phase_committed(no_init);
+        phase_guard.set_phase(no_init);
+        phase_guard.commit_phase();
     }
     phase_guard
 }
@@ -326,6 +342,7 @@ fn lazy_finalization<T, P: PhaseGuard<T>>(mut phase_guard: P, f: impl FnOnce(&T)
 
     let finalizing_failed = cur | Phase::FINALIZATION_PANICKED;
 
-    phase_guard.set_phase_committed(finalizing);
+    phase_guard.set_phase(finalizing);
+    phase_guard.commit_phase();
     phase_guard.transition(f, finalizing_success, finalizing_failed);
 }

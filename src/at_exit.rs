@@ -5,7 +5,7 @@ mod exit_manager {
     use crate::Finaly;
     use crate::splited_sequentializer::SyncSequentializer as SubSequentializer;
     use crate::{Sequentializer, Phased, LazySequentializer, SplitedLazySequentializer, Phase, Sequential};
-    use crate::mutex::SyncPhaseGuard;
+    use crate::mutex::{SyncPhaseGuard,SyncReadPhaseGuard};
 
     use core::cell::Cell;
     use core::ptr::NonNull;
@@ -109,11 +109,20 @@ mod exit_manager {
         T::Data: 'static+Finaly,
     {
         type Guard = Option<SyncPhaseGuard<'a,T>>;
+        type ReadGuard = Option<SyncReadPhaseGuard<'a,T>>;
         fn lock(
             st: &'a T,
             shall_proceed: impl Fn(Phase) -> bool,
             ) -> Self::Guard {
             <SubSequentializer as Sequentializer<T>>::lock(
+                st,
+                shall_proceed)
+            }
+        fn read_lock(
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> bool,
+            ) -> Self::ReadGuard {
+            <SubSequentializer as Sequentializer<T>>::read_lock(
                 st,
                 shall_proceed)
             }
@@ -168,7 +177,7 @@ mod local_manager {
     use core::cell::Cell;
     use core::ptr::NonNull;
 
-    use crate::mutex::UnSyncPhaseGuard;
+    use crate::mutex::{UnSyncPhaseGuard,UnSyncReadPhaseGuard};
 
     trait OnExit {
         fn get_next(&self) -> Option<NonNull<Node>>;
@@ -212,12 +221,21 @@ mod local_manager {
         T::Data: 'static+Finaly,
     {
         type Guard = Option<UnSyncPhaseGuard<'a,T>>;
+        type ReadGuard = Option<UnSyncReadPhaseGuard<'a,T>>;
 
         #[inline(always)]
         fn lock(
             st: &'a T,
             shall_proceed: impl Fn(Phase) -> bool)-> Self::Guard {
             <SubSequentializer as Sequentializer<T>>::lock(
+                st,
+                shall_proceed)
+            }
+        #[inline(always)]
+        fn read_lock(
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> bool)-> Self::ReadGuard {
+            <SubSequentializer as Sequentializer<T>>::read_lock(
                 st,
                 shall_proceed)
             }

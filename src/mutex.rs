@@ -123,7 +123,7 @@ use super::Phase;
 
 pub trait PhaseGuard<T:?Sized> {
      fn set_phase(&mut self,p: Phase);
-     fn set_phase_committed(&mut self, p:Phase);
+     fn commit_phase(&mut self);
      fn phase(&self) -> Phase;
      fn transition<R>(&mut self,f: impl FnOnce(&T)->R, on_success:Phase, on_panic: Phase) -> R;
 }
@@ -138,6 +138,7 @@ mod mutex {
     use core::cell::UnsafeCell;
     use core::ops::{Deref,DerefMut};
     use core::hint;
+    use core::mem::forget;
 
     /// peut être pas un bon choix pour un static donnant un accès dérière un lock;
     /// un rwlock serait aussi un bon choix puisque dans ce cas tous les readlock synchronize
@@ -177,12 +178,11 @@ mod mutex {
         fn set_phase(&mut self,p: Phase) {
             self.1.on_unlock = p;
         }
-        fn set_phase_committed(&mut self, p:Phase) {
+        fn commit_phase(&mut self) {
             //Butter fly trick
-            let to_xor = self.1.on_unlock ^ p;
+            let cur = self.1.phase();
+            let to_xor = self.1.on_unlock ^ cur;
             self.1.xor_phase(to_xor);
-
-            self.1.on_unlock = p;
         }
         fn phase(&self) -> Phase { 
             self.1.on_unlock
@@ -209,6 +209,11 @@ mod mutex {
             Self(r,lock)
         }
     }
+    impl<'a,T> Into<SyncReadPhaseGuard<'a,T>> for SyncPhaseGuard<'a,T> {
+        fn into(self) -> SyncReadPhaseGuard<'a,T> {
+            SyncReadPhaseGuard(self.0,self.1.into())
+        }
+    }
 
     impl<T> Mutex<T> {
         pub(crate) const fn new(value: T) -> Self {
@@ -232,6 +237,10 @@ mod mutex {
     }
 
     impl<'a> Lock<'a> {
+        pub fn phase(&self) -> Phase {
+            let v = self.state.load(Ordering::Relaxed);
+            Phase::from_bits_truncate(v)
+        }
         pub fn xor_phase(&self, xor: Phase) -> Phase {
             let v = self.state.fetch_xor(xor.bits(), Ordering::Release);
             Phase::from_bits_truncate(v) ^ xor
@@ -250,10 +259,25 @@ mod mutex {
         }
     }
 
+    impl<'a> Into<ReadLock<'a>> for Lock<'a> {
+       fn into(self) -> ReadLock<'a> { 
+           let p = self.phase();
+           let xorp = p ^ self.on_unlock;
+           let xor_state = xorp.bits() | LOCKED_BIT | READER_UNITY;
+           let x = self.state.fetch_xor(xor_state,Ordering::AcqRel);
+           debug_assert_ne!(x & LOCKED_BIT, 0);
+           debug_assert_eq!(x & READER_BITS, 0);
+           let r = ReadLock{state:self.state};
+           forget(self);
+           r
+       }
+    }
+
     impl<'a> Drop for ReadLock<'a> {
         fn drop(&mut self) {
             let mut cur = self.state.load(Ordering::Relaxed);
-            let mut target = 0;
+            let mut target;
+            assert!(cur & READER_BITS != 0, "XXXXXXXXXXXXXXXXXXXX");
             loop {
                 if (cur & READER_BITS) == READER_UNITY {
                     target = cur & !(READER_BITS|PARKED_BIT)
@@ -370,10 +394,9 @@ mod mutex {
                     return None;
                 }
                 if cur & (LOCKED_BIT|PARKED_BIT) == 0 && ((cur & READER_BITS) != READER_BITS){
-                    let count = (cur | READER_BITS) + READER_UNITY;
                     match self.0.compare_exchange_weak(
                         cur,
-                        cur | count,
+                        cur + READER_UNITY,
                         Ordering::Acquire,
                         Ordering::Relaxed,
                     ) {
@@ -422,20 +445,21 @@ mod mutex {
     }
 }
 pub(crate) use mutex::{SyncPhasedLocker,Mutex};
-pub use mutex::{SyncPhaseGuard};
+pub use mutex::{SyncPhaseGuard,SyncReadPhaseGuard};
 
 mod local_mutex {
     use super::PhaseGuard;
     use crate::Phase;
     use core::ops::Deref;
     use core::cell::Cell;
+    use core::mem::forget;
     use crate::phase::*;
 
     pub(crate) struct UnSyncPhaseLocker(Cell<u32>);
 
     pub struct UnSyncPhaseGuard<'a,T:?Sized>(&'a T,&'a Cell<u32>, Phase);
 
-    pub struct UnSyncReadPhaseGuard<'a,T:?Sized>(&'a T,&'a Cell<u32>, Phase);
+    pub struct UnSyncReadPhaseGuard<'a,T:?Sized>(&'a T,&'a Cell<u32>);
 
     impl<'a,T> Deref for UnSyncPhaseGuard<'a,T> {
         type Target = T;
@@ -449,13 +473,13 @@ mod local_mutex {
             Self(r,p, Phase::from_bits_truncate(p.get()))
         }
     }
+
     impl<'a,T:?Sized> PhaseGuard<T> for UnSyncPhaseGuard<'a,T> {
         fn set_phase(&mut self,p: Phase) {
             self.2 = p;
         }
-        fn set_phase_committed(&mut self, p:Phase) {
-            self.1.set(p.bits()|LOCKED_BIT);
-            self.2 = p;
+        fn commit_phase(&mut self) {
+            self.1.set(self.2.bits()|LOCKED_BIT);
         }
         fn phase(&self) -> Phase { 
             self.2
@@ -465,6 +489,14 @@ mod local_mutex {
             let res = f(self.0);
             self.2 = on_success;
             res
+        }
+    }
+    impl<'a, T:?Sized> Into<UnSyncReadPhaseGuard<'a,T>> for UnSyncPhaseGuard<'a,T> {
+        fn into(self) -> UnSyncReadPhaseGuard<'a,T> {
+            self.1.set(self.2.bits()|READER_UNITY);
+            let r = UnSyncReadPhaseGuard(self.0,self.1);
+            forget(self);
+            r
         }
     }
 
@@ -483,15 +515,15 @@ mod local_mutex {
 
     impl<'a,T:?Sized> UnSyncReadPhaseGuard<'a,T> {
         pub(crate) fn new(r: &'a T, p: &'a Cell<u32>) -> Self {
-            Self(r,p, Phase::from_bits_truncate(p.get()))
+            Self(r,p)
         }
     }
 
     impl<'a, T:?Sized> Drop for UnSyncReadPhaseGuard<'a,T> {
         fn drop(&mut self) {
-            let count = self.1.get() | READER_BITS;
+            let count = self.1.get() & READER_BITS;
             debug_assert!(count >= READER_UNITY);
-            self.1.set(self.2.bits() | (count - READER_UNITY));
+            self.1.set(self.1.get() - READER_UNITY);
         }
     }
 
@@ -514,9 +546,8 @@ mod local_mutex {
         pub fn read_lock<'a,T:?Sized>(&'a self,v: &'a T,shall_proceed: impl Fn(Phase)->bool) -> Option<UnSyncReadPhaseGuard<'_,T>> {
             if shall_proceed(self.phase()) {
                 assert_eq!(self.0.get() & LOCKED_BIT, 0, "Recursive lock detected");
-                let count = self.0.get() & READER_BITS;
                 assert_ne!(self.0.get() & (READER_BITS),READER_BITS,"Maximal number of shared reference exceeded");
-                self.0.set(self.0.get() | (count + READER_UNITY));
+                self.0.set(self.0.get()  + READER_UNITY);
                 Some(UnSyncReadPhaseGuard::new(v, &self.0))
             } else {
                 None
@@ -525,4 +556,4 @@ mod local_mutex {
     }
 }
 pub(crate) use local_mutex::UnSyncPhaseLocker;
-pub use local_mutex::{UnSyncPhaseGuard};
+pub use local_mutex::{UnSyncPhaseGuard,UnSyncReadPhaseGuard};

@@ -118,7 +118,9 @@ where
 
 pub trait Sequentializer<'a,T: Sequential>: 'static + Sized + Phased {
     type Guard;
+    type ReadGuard;
     fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::Guard;
+    fn read_lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::ReadGuard;
 }
 
 /// A [Sequentializer] ensure sequential phase transition of the object it sequentialize
