@@ -137,6 +137,7 @@ mod mutex {
     use core::sync::atomic::{fence, AtomicU32, Ordering};
     use core::cell::UnsafeCell;
     use core::ops::{Deref,DerefMut};
+    use core::hint;
 
     /// peut être pas un bon choix pour un static donnant un accès dérière un lock;
     /// un rwlock serait aussi un bon choix puisque dans ce cas tous les readlock synchronize
@@ -152,6 +153,9 @@ mod mutex {
     pub(crate) struct Lock<'a> {
         state:         &'a AtomicU32,
         pub(crate) on_unlock: Phase,
+    }
+    pub(crate) struct ReadLock<'a> {
+        state:         &'a AtomicU32,
     }
     pub(crate) struct MutexGuard<'a,T>(&'a mut T,Lock<'a>);
 
@@ -188,6 +192,21 @@ mod mutex {
             let res = f(self.0);
             self.1.on_unlock = on_success;
             res
+        }
+    }
+
+    pub struct SyncReadPhaseGuard<'a,T:?Sized>(&'a T,ReadLock<'a>);
+
+    impl<'a,T> Deref for SyncReadPhaseGuard<'a,T> {
+        type Target = T;
+        fn deref(&self) -> &T {
+            self.0
+        }
+    }
+
+    impl<'a,T:?Sized> SyncReadPhaseGuard<'a,T> {
+        fn new(r: &'a T, lock: ReadLock<'a>) -> Self {
+            Self(r,lock)
         }
     }
 
@@ -231,6 +250,32 @@ mod mutex {
         }
     }
 
+    impl<'a> Drop for ReadLock<'a> {
+        fn drop(&mut self) {
+            let mut cur = self.state.load(Ordering::Relaxed);
+            let mut target = 0;
+            loop {
+                if (cur & READER_BITS) == READER_UNITY {
+                    target = cur & !(READER_BITS|PARKED_BIT)
+                } else {
+                    target = cur - READER_UNITY 
+                }
+                match self.state.compare_exchange_weak(cur, target, Ordering::Release,Ordering::Relaxed) {
+                    Ok(_) => {
+                        if (cur & PARKED_BIT != 0) && (target & PARKED_BIT == 0) {
+                            unpark_all(self.state);
+                        }
+                        break;
+                    }
+                    Err(v) => {
+                        cur = v;
+                        hint::spin_loop();
+                    }
+                }
+            }
+        }
+    }
+
     impl SyncPhasedLocker {
         pub const fn new(p: Phase) -> Self {
             SyncPhasedLocker(AtomicU32::new(p.bits()))
@@ -256,10 +301,79 @@ mod mutex {
                     fence(Ordering::Acquire);
                     return None;
                 }
-                if cur & LOCKED_BIT == 0 {
+                if cur & (LOCKED_BIT|READER_BITS) == 0 {
                     match self.0.compare_exchange_weak(
                         cur,
                         cur | LOCKED_BIT,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => break,
+                        Err(x) => cur = x,
+                    }
+                    continue;
+                }
+                if cur & PARKED_BIT == 0 && (cur&READER_BITS) < (READER_UNITY<<4) && spin_wait.spin() {
+                    cur = self.0.load(Ordering::Relaxed);
+                    continue;
+                }
+                if cur & PARKED_BIT == 0 {
+                    match self.0.compare_exchange_weak(
+                        cur,
+                        cur | PARKED_BIT,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Err(x) => {
+                            cur = x;
+                            continue;
+                        }
+                        Ok(_) => cur |= PARKED_BIT,
+                    }
+                }
+                #[cfg(debug_mode)]
+                {
+                    let id = id.load(Ordering::Relaxed);
+                    if id != 0 {
+                        use parking_lot::lock_api::GetThreadId;
+                        if id == parking_lot::RawThreadId.nonzero_thread_id().into() {
+                            std::panic::panic_any(CyclicPanic);
+                        }
+                    }
+                }
+
+                park(&self.0, cur);
+                spin_wait.reset();
+                cur = self.0.load(Ordering::Relaxed);
+            }
+            Some(Lock {
+                state:     &self.0,
+                on_unlock: Phase::from_bits_truncate(cur),
+            })
+        }
+        pub fn read_lock<'a,T:?Sized>(&'a self,v: &'a T,shall_proceed: impl Fn(Phase)->bool) -> Option<SyncReadPhaseGuard<'_,T>> {
+            self.raw_read_lock(shall_proceed).map(|l| SyncReadPhaseGuard::new(v,l))
+        }
+        fn raw_read_lock(
+            &self,
+            shall_proceed: impl Fn(Phase) -> bool,
+            #[cfg(debug_mode)] id: &AtomicUsize,
+        ) -> Option<ReadLock> {
+
+            let mut spin_wait = SpinWait::new();
+
+            let mut cur = self.0.load(Ordering::Relaxed);
+
+            loop {
+                if !shall_proceed(Phase::from_bits_truncate(cur)) {
+                    fence(Ordering::Acquire);
+                    return None;
+                }
+                if cur & (LOCKED_BIT|PARKED_BIT) == 0 && ((cur & READER_BITS) != READER_BITS){
+                    let count = (cur | READER_BITS) + READER_UNITY;
+                    match self.0.compare_exchange_weak(
+                        cur,
+                        cur | count,
                         Ordering::Acquire,
                         Ordering::Relaxed,
                     ) {
@@ -301,9 +415,8 @@ mod mutex {
                 spin_wait.reset();
                 cur = self.0.load(Ordering::Relaxed);
             }
-            Some(Lock {
+            Some(ReadLock {
                 state:     &self.0,
-                on_unlock: Phase::from_bits_truncate(cur),
             })
         }
     }
@@ -316,14 +429,13 @@ mod local_mutex {
     use crate::Phase;
     use core::ops::Deref;
     use core::cell::Cell;
+    use crate::phase::*;
 
-    //TODO: en fait un bug ici à cause de récursion
-    //      le field doit être une refcell => deadlock
-    //      ci récursion dans l'initialization
-    // Utilisable pour avoir un accès mutable
-    pub(crate) struct UnSyncPhaseLocker(Cell<Phase>);
+    pub(crate) struct UnSyncPhaseLocker(Cell<u32>);
 
-    pub struct UnSyncPhaseGuard<'a,T:?Sized>(&'a T,&'a Cell<Phase>, Phase);
+    pub struct UnSyncPhaseGuard<'a,T:?Sized>(&'a T,&'a Cell<u32>, Phase);
+
+    pub struct UnSyncReadPhaseGuard<'a,T:?Sized>(&'a T,&'a Cell<u32>, Phase);
 
     impl<'a,T> Deref for UnSyncPhaseGuard<'a,T> {
         type Target = T;
@@ -333,8 +445,8 @@ mod local_mutex {
     }
 
     impl<'a,T:?Sized> UnSyncPhaseGuard<'a,T> {
-        pub(crate) fn new(r: &'a T, p: &'a Cell<Phase>) -> Self {
-            Self(r,p, p.get())
+        pub(crate) fn new(r: &'a T, p: &'a Cell<u32>) -> Self {
+            Self(r,p, Phase::from_bits_truncate(p.get()))
         }
     }
     impl<'a,T:?Sized> PhaseGuard<T> for UnSyncPhaseGuard<'a,T> {
@@ -342,7 +454,7 @@ mod local_mutex {
             self.2 = p;
         }
         fn set_phase_committed(&mut self, p:Phase) {
-            self.1.set(p);
+            self.1.set(p.bits()|LOCKED_BIT);
             self.2 = p;
         }
         fn phase(&self) -> Phase { 
@@ -358,20 +470,54 @@ mod local_mutex {
 
     impl<'a, T:?Sized> Drop for UnSyncPhaseGuard<'a,T> {
         fn drop(&mut self) {
-            self.1.set(self.2);
+            self.1.set(self.2.bits());
+        }
+    }
+
+    impl<'a,T> Deref for UnSyncReadPhaseGuard<'a,T> {
+        type Target = T;
+        fn deref(&self) -> &T {
+            self.0
+        }
+    }
+
+    impl<'a,T:?Sized> UnSyncReadPhaseGuard<'a,T> {
+        pub(crate) fn new(r: &'a T, p: &'a Cell<u32>) -> Self {
+            Self(r,p, Phase::from_bits_truncate(p.get()))
+        }
+    }
+
+    impl<'a, T:?Sized> Drop for UnSyncReadPhaseGuard<'a,T> {
+        fn drop(&mut self) {
+            let count = self.1.get() | READER_BITS;
+            debug_assert!(count >= READER_UNITY);
+            self.1.set(self.2.bits() | (count - READER_UNITY));
         }
     }
 
     impl UnSyncPhaseLocker {
         pub const fn new(p: Phase) -> Self {
-            Self(Cell::new(p))
+            Self(Cell::new(p.bits()))
         }
         pub fn phase(&self) -> Phase {
-            self.0.get()
+            Phase::from_bits_truncate(self.0.get())
         }
         pub fn lock<'a,T:?Sized>(&'a self,v: &'a T,shall_proceed: impl Fn(Phase)->bool) -> Option<UnSyncPhaseGuard<'_,T>> {
             if shall_proceed(self.phase()) {
+                assert_eq!(self.0.get() & (LOCKED_BIT|READER_BITS), 0, "Recursive lock detected");
+                self.0.set(self.0.get() | LOCKED_BIT);
                 Some(UnSyncPhaseGuard::new(v, &self.0))
+            } else {
+                None
+            }
+        }
+        pub fn read_lock<'a,T:?Sized>(&'a self,v: &'a T,shall_proceed: impl Fn(Phase)->bool) -> Option<UnSyncReadPhaseGuard<'_,T>> {
+            if shall_proceed(self.phase()) {
+                assert_eq!(self.0.get() & LOCKED_BIT, 0, "Recursive lock detected");
+                let count = self.0.get() & READER_BITS;
+                assert_ne!(self.0.get() & (READER_BITS),READER_BITS,"Maximal number of shared reference exceeded");
+                self.0.set(self.0.get() | (count + READER_UNITY));
+                Some(UnSyncReadPhaseGuard::new(v, &self.0))
             } else {
                 None
             }
