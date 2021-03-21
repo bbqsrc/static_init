@@ -1,4 +1,4 @@
-use crate::{Finaly, Generator, Sequentializer, Sequential, StaticInfo, Phase};
+use crate::{Finaly, Generator, LazySequentializer, Sequential, StaticInfo, Phase};
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
@@ -123,13 +123,14 @@ impl<T, F, M,S> GenericLazy<T, F, M,S> {
     pub fn init(this: &Self)
     where 
         T: 'static + LazyData,
-        M: 'static + Sequentializer<Self>,
+        M: 'static,
+        for<'a> M: LazySequentializer<'a,Self>,
         F: 'static + Generator<T::Target>,
         S: 'static + LazyPolicy
     {
         #[cfg(not(debug_mode))]
         {
-        Sequentializer::init(
+        LazySequentializer::init(
             this,
             S::shall_proceed,
             |data: &T| {
@@ -172,8 +173,9 @@ impl<T, F, M,S> GenericLazy<T, F, M,S> {
     }
 }
 
-impl<M: 'static+Sequentializer<Self>, T: 'static + LazyData, F: 'static + Generator<T::Target>, S:'static+LazyPolicy> Deref
+impl<M: 'static, T: 'static + LazyData, F: 'static + Generator<T::Target>, S:'static+LazyPolicy> Deref
     for GenericLazy<T, F, M, S>
+    where for<'a> M: LazySequentializer<'a,Self>,
 {
     type Target = T::Target;
     #[inline(always)]
@@ -186,8 +188,9 @@ impl<M: 'static+Sequentializer<Self>, T: 'static + LazyData, F: 'static + Genera
     }
 }
 
-impl<M: 'static+Sequentializer<Self>, T: 'static + LazyData, F: 'static + Generator<T::Target>, S:'static+LazyPolicy> DerefMut
+impl<M: 'static, T: 'static + LazyData, F: 'static + Generator<T::Target>, S:'static+LazyPolicy> DerefMut
     for GenericLazy<T, F, M,S>
+    where for<'a> M: LazySequentializer<'a,Self>,
 {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut T::Target {

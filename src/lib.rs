@@ -116,8 +116,13 @@ where
     }
 }
 
+pub trait Sequentializer<'a,T: Sequential>: 'static + Sized + Phased {
+    type Guard;
+    fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::Guard;
+}
+
 /// A [Sequentializer] ensure sequential phase transition of the object it sequentialize
-pub trait Sequentializer<T: Sequential<Sequentializer = Self>>: 'static + Sized + Phased {
+pub trait LazySequentializer<'a,T: Sequential<Sequentializer = Self>>: Sequentializer<'a,T> {
     /// When called on the Sequential object, it will ensure that the phase transition
     /// in order.
     ///
@@ -125,14 +130,14 @@ pub trait Sequentializer<T: Sequential<Sequentializer = Self>>: 'static + Sized 
     /// init_on_reg_failure boolean. The init function is intended to be the function that
     /// transition the object to the initialized Phase.
     fn init(
-        s: &T,
+        s: &'a T,
         shall_proceed: impl Fn(Phase) -> bool,
         init: impl FnOnce(&<T as Sequential>::Data),
         init_on_reg_failure: bool,
-    ) -> bool;
+    ) -> Self::Guard;
 }
 /// A [SplitedSequentializer] ensure two sequences of sequencial phase transtion: init and finalize
-trait SplitedSequentializer<T: Sequential>: 'static + Sized + Phased {
+trait SplitedLazySequentializer<'a,T: Sequential>: Sequentializer<'a,T> {
     /// When called on the Sequential object, it will ensure that the phase transition
     /// in order.
     ///
@@ -143,12 +148,12 @@ trait SplitedSequentializer<T: Sequential>: 'static + Sized + Phased {
     /// The reg argument is supposed to store the `finalize_callback` method as a callback that will
     /// be run latter during program execution.
     fn init(
-        s: &T,
+        s: &'a T,
         shall_proceed: impl Fn(Phase) -> bool,
         init: impl FnOnce(&<T as Sequential>::Data),
         reg: impl FnOnce(&T) -> bool,
         init_on_reg_failure: bool,
-    ) -> bool;
+    ) -> Self::Guard;
     /// A callback that is intened to be stored by the `reg` argument of `init` method.
     fn finalize_callback(s: &T, f: impl FnOnce(&T::Data));
 }

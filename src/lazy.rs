@@ -1,4 +1,5 @@
-use crate::{Sequentializer, Phased, Sequential,SplitedSequentializer,splited_sequentializer::UnSyncSequentializer, generic_lazy::{GenericLazy, LazyPolicy, UnInited, LazyData}, Phase,StaticInfo};
+use crate::{Sequentializer, Phased, Sequential,LazySequentializer, SplitedLazySequentializer,splited_sequentializer::UnSyncSequentializer, generic_lazy::{GenericLazy, LazyPolicy, UnInited, LazyData}, Phase,StaticInfo};
+use crate::mutex::{SyncPhaseGuard,UnSyncPhaseGuard};
 
 #[cfg(feature="thread_local")]
 use crate::{at_exit::ThreadExitSequentializer,generic_lazy::DropedUnInited};
@@ -37,11 +38,11 @@ impl LazyPolicy for InitializedAndNonFinalizedChecker {
 }
 
 macro_rules! init_only {
-    ($typ:ident, $sub:ty) => {
-        init_only! {$typ,$sub,<$sub>::new()}
+    ($typ:ident, $sub:ty, $gd:ident) => {
+        init_only! {$typ,$sub,$gd,<$sub>::new()}
     };
 
-    ($typ:ident, $sub:ty, $init:expr) => {
+    ($typ:ident, $sub:ty, $gd:ident, $init:expr) => {
         pub struct $typ($sub);
 
         impl $typ {
@@ -62,26 +63,36 @@ macro_rules! init_only {
             }
         }
 
-        impl<T: Sequential<Sequentializer = Self>> Sequentializer<T> for $typ {
+        impl<'a,T: 'a+Sequential<Sequentializer = Self>> Sequentializer<'a,T> for $typ {
+            type Guard = Option<$gd<'a,T>>;
+            fn lock(
+                s: &'a T,
+                shall_proceed: impl Fn(Phase) -> bool,
+            ) -> Self::Guard {
+                <$sub as Sequentializer<T>>::lock(s, shall_proceed)
+            }
+        }
+
+        impl<'a,T: 'a+Sequential<Sequentializer = Self>> LazySequentializer<'a,T> for $typ {
             fn init(
-                s: &T,
+                s: &'a T,
                 on_uninited: impl Fn(Phase) -> bool,
                 init: impl FnOnce(&<T as Sequential>::Data),
                 init_on_reg_failure: bool,
-            ) -> bool {
-                <$sub as SplitedSequentializer<T>>::init(s, on_uninited, init, |_| true, init_on_reg_failure)
+            ) -> Self::Guard {
+                <$sub as SplitedLazySequentializer<T>>::init(s, on_uninited, init, |_| true, init_on_reg_failure)
             }
         }
     };
 }
 
 #[cfg(feature="global_once")]
-init_only! {StartUpInitedNonFinalizedSyncSequentializer,SyncSequentializer<true>}
+init_only! {StartUpInitedNonFinalizedSyncSequentializer,SyncSequentializer<true>, SyncPhaseGuard}
 
 #[cfg(feature="global_once")]
-init_only! {NonFinalizedSyncSequentializer,SyncSequentializer<false>, SyncSequentializer::new_lazy()}
+init_only! {NonFinalizedSyncSequentializer,SyncSequentializer<false>, SyncPhaseGuard, SyncSequentializer::new_lazy()}
 
-init_only! {NonFinalizedUnSyncSequentializer,UnSyncSequentializer}
+init_only! {NonFinalizedUnSyncSequentializer,UnSyncSequentializer, UnSyncPhaseGuard}
 
 use core::ops::{Deref, DerefMut};
 macro_rules! impl_lazy {
@@ -153,6 +164,7 @@ macro_rules! impl_lazy {
             GenericLazy<$data, G, $man, $checker>: Deref + Sequential,
             <GenericLazy<$data, G, $man, $checker> as Sequential>::Sequentializer: Phased,
         {
+            //TODO: method => associated function
             #[inline(always)]
             pub fn phase(&self) -> Phase {
                 Phased::phase(Sequential::sequentializer(&self.__private))

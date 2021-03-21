@@ -1,5 +1,5 @@
-use crate::mutex::{PhaseGuard, UnSyncPhaseLocker};
-use crate::{Phase, Phased, Sequential, SplitedSequentializer};
+use crate::mutex::{PhaseGuard, UnSyncPhaseGuard, UnSyncPhaseLocker};
+use crate::{Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer};
 
 #[cfg(debug_mode)]
 use super::CyclicPanic;
@@ -22,57 +22,65 @@ impl Phased for UnSyncSequentializer {
     }
 }
 
-impl<T: Sequential> SplitedSequentializer<T> for UnSyncSequentializer
+impl<'a, T: Sequential + 'a> Sequentializer<'a, T> for UnSyncSequentializer
+where
+    T::Sequentializer: AsRef<UnSyncSequentializer>,
+{
+    type Guard = Option<UnSyncPhaseGuard<'a, T>>;
+
+    fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::Guard {
+        let this = Sequential::sequentializer(s).as_ref();
+
+        this.0.lock(s, &shall_proceed)
+    }
+}
+
+impl<'a, T: Sequential + 'a> SplitedLazySequentializer<'a, T> for UnSyncSequentializer
 where
     T::Sequentializer: AsRef<UnSyncSequentializer>,
 {
     #[inline(always)]
     fn init(
-        s: &T,
+        s: &'a T,
         shall_proceed: impl Fn(Phase) -> bool,
         init: impl FnOnce(&<T as Sequential>::Data),
         reg: impl FnOnce(&T) -> bool,
         init_on_reg_failure: bool,
-    ) -> bool {
-        let this = Sequential::sequentializer(s).as_ref();
+    ) -> Self::Guard {
 
-        let phase_guard = match this.0.lock(s, &shall_proceed) {
-            None => return false,
+        let phase_guard = match <Self as Sequentializer<T>>::lock(s, shall_proceed) {
+            None => return None,
             Some(l) => l,
         };
 
         let phase_guard = lazy_initialization(phase_guard, init, reg, init_on_reg_failure);
 
-        return shall_proceed(phase_guard.phase());
-
+        return Some(phase_guard);
     }
 
     fn finalize_callback(s: &T, f: impl FnOnce(&T::Data)) {
-      let this = Sequential::sequentializer(s).as_ref();
+        let this = Sequential::sequentializer(s).as_ref();
 
-      let phase_guard = match this.0.lock(Sequential::data(s), |p| {
-          (p & (Phase::FINALIZATION
-              | Phase::FINALIZED
-              | Phase::FINALIZATION_PANICKED
-              | Phase::INITIALIZATION_SKIPED))
-              .is_empty()
-      }) {
-          None => return,
-          Some(l) => l,
-      };
+        let phase_guard = match this.0.lock(Sequential::data(s), |p| {
+            (p & (Phase::FINALIZATION
+                | Phase::FINALIZED
+                | Phase::FINALIZATION_PANICKED
+                | Phase::INITIALIZATION_SKIPED))
+                .is_empty()
+        }) {
+            None => return,
+            Some(l) => l,
+        };
 
-      lazy_finalization(phase_guard,f);
-
+        lazy_finalization(phase_guard, f);
     }
 }
 
 #[cfg(feature = "global_once")]
 mod global_once {
-    use super::{Phase, Phased, Sequential, SplitedSequentializer};
-    use crate::mutex::{
-        PhaseGuard, SyncPhasedLocker as PhasedLocker,
-    };
-    use super::{lazy_initialization, lazy_finalization};
+    use super::{lazy_finalization, lazy_initialization};
+    use super::{Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer};
+    use crate::mutex::{SyncPhaseGuard, SyncPhasedLocker as PhasedLocker};
 
     #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
     mod inited {
@@ -101,23 +109,22 @@ mod global_once {
     #[cold]
     fn atomic_register_uninited<'a, T: Sequential, const GLOBAL: bool>(
         this: &'a SyncSequentializer<GLOBAL>,
-        s: &T,
+        s: &'a T,
         shall_proceed: impl Fn(Phase) -> bool,
         init: impl FnOnce(&<T as Sequential>::Data),
         reg: impl FnOnce(&T) -> bool,
         init_on_reg_failure: bool,
         #[cfg(debug_mode)] id: &AtomicUsize,
-    ) -> bool {
+    ) -> Option<SyncPhaseGuard<'a, T>> {
 
         let phase_guard = match this.0.lock(s, &shall_proceed) {
-            None => return false,
+            None => return None,
             Some(l) => l,
         };
 
         let phase_guard = lazy_initialization(phase_guard, init, reg, init_on_reg_failure);
 
-        return shall_proceed(phase_guard.phase());
-
+        return Some(phase_guard);
     }
 
     #[cfg_attr(docsrs, doc(cfg(feature = "global_once")))]
@@ -213,18 +220,32 @@ mod global_once {
         }
     }
 
-    impl<T: Sequential, const GLOBAL: bool> SplitedSequentializer<T> for SyncSequentializer<GLOBAL>
+    impl<'a, T: Sequential + 'a, const G: bool> Sequentializer<'a, T> for SyncSequentializer<G>
+    where
+        T::Sequentializer: AsRef<SyncSequentializer<G>>,
+    {
+        type Guard = Option<SyncPhaseGuard<'a, T>>;
+
+        fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::Guard {
+            let this = Sequential::sequentializer(s).as_ref();
+
+            this.0.lock(s, &shall_proceed)
+        }
+    }
+
+    impl<'a, T: Sequential + 'a, const GLOBAL: bool> SplitedLazySequentializer<'a, T>
+        for SyncSequentializer<GLOBAL>
     where
         T::Sequentializer: AsRef<SyncSequentializer<GLOBAL>>,
     {
         #[inline(always)]
         fn init(
-            s: &T,
+            s: &'a T,
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&<T as Sequential>::Data),
             reg: impl FnOnce(&T) -> bool,
             init_on_reg_failure: bool,
-        ) -> bool {
+        ) -> Self::Guard {
             let this = Sequential::sequentializer(s).as_ref();
 
             if cfg!(not(all(
@@ -246,7 +267,7 @@ mod global_once {
                         &this.1,
                     )
                 } else {
-                    false
+                    None
                 }
             } else {
                 #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
@@ -254,7 +275,7 @@ mod global_once {
                     if GLOBAL {
                         if inited::global_inited_hint() {
                             debug_assert!(!shall_proceed(this.0.phase()));
-                            false
+                            None
                         } else {
                             atomic_register_uninited(
                                 this,
@@ -278,7 +299,6 @@ mod global_once {
             }
         }
         fn finalize_callback(s: &T, f: impl FnOnce(&T::Data)) {
-
             let this = Sequential::sequentializer(s).as_ref();
 
             let phase_guard = match this.0.lock(Sequential::data(s), |p| {
@@ -292,8 +312,7 @@ mod global_once {
                 Some(l) => l,
             };
 
-            lazy_finalization(phase_guard,f);
-
+            lazy_finalization(phase_guard, f);
         }
     }
 }
@@ -359,8 +378,7 @@ fn lazy_initialization<P: PhaseGuard<S>, S: Sequential>(
     phase_guard
 }
 
-fn lazy_finalization<T,P:PhaseGuard<T>>(mut phase_guard: P, f: impl FnOnce(&T)) {
-
+fn lazy_finalization<T, P: PhaseGuard<T>>(mut phase_guard: P, f: impl FnOnce(&T)) {
     let cur = phase_guard.phase();
 
     let finalizing = cur | Phase::FINALIZATION;

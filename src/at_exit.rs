@@ -4,7 +4,8 @@
 mod exit_manager {
     use crate::Finaly;
     use crate::splited_sequentializer::SyncSequentializer as SubSequentializer;
-    use crate::{Sequentializer, Phased, SplitedSequentializer, Phase, Sequential};
+    use crate::{Sequentializer, Phased, LazySequentializer, SplitedLazySequentializer, Phase, Sequential};
+    use crate::mutex::SyncPhaseGuard;
 
     use core::cell::Cell;
     use core::ptr::NonNull;
@@ -111,23 +112,37 @@ mod exit_manager {
             Phased::phase(&this.sub)
         }
     }
+    impl<'a,T: 'a+Sequential<Sequentializer = Self>,const G:bool> Sequentializer<'a,T> for ExitSequentializer<G>
+    where
+        T: 'static+Sync,
+        T::Data: 'static+Finaly,
+    {
+        type Guard = Option<SyncPhaseGuard<'a,T>>;
+        fn lock(
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> bool,
+            ) -> Self::Guard {
+            <SubSequentializer<G> as Sequentializer<T>>::lock(
+                st,
+                shall_proceed)
+            }
+    }
 
-    impl<T: Sequential<Sequentializer = Self>,const G:bool> Sequentializer<T> for ExitSequentializer<G>
+    impl<'a,T: 'a+Sequential<Sequentializer = Self>,const G:bool> LazySequentializer<'a,T> for ExitSequentializer<G>
     where
         T: 'static+Sync,
         T::Data: 'static+Finaly,
     {
         #[inline(always)]
-
         fn init(
-            st: &T,
-            on_uninited: impl Fn(Phase) -> bool,
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&<T as Sequential>::Data),
             init_on_reg_failure: bool,
-        ) -> bool {
-            <SubSequentializer<G> as SplitedSequentializer<T>>::init(
+        ) -> Self::Guard {
+            <SubSequentializer<G> as SplitedLazySequentializer<T>>::init(
                 st,
-                on_uninited,
+                shall_proceed,
                 init,
                 finalize_at_exit,
                 init_on_reg_failure,
@@ -143,7 +158,7 @@ mod exit_manager {
             Sequential::sequentializer(self).next.get()
         }
         fn execute(&self) {
-            <SubSequentializer<G> as SplitedSequentializer<T>>::finalize_callback(self, Finaly::finaly);
+            <SubSequentializer<G> as SplitedLazySequentializer<T>>::finalize_callback(self, Finaly::finaly);
         }
     }
 }
@@ -157,10 +172,12 @@ pub use local_manager::{finalize_at_thread_exit,ThreadExitSequentializer};
 mod local_manager {
 
     use crate::splited_sequentializer::UnSyncSequentializer as SubSequentializer;
-    use crate::{Finaly, Sequentializer, Phased, SplitedSequentializer, Phase, Sequential};
+    use crate::{Finaly, Sequentializer, Phased, LazySequentializer, SplitedLazySequentializer, Phase, Sequential};
 
     use core::cell::Cell;
     use core::ptr::NonNull;
+
+    use crate::mutex::UnSyncPhaseGuard;
 
     trait OnExit {
         fn get_next(&self) -> Option<NonNull<Node>>;
@@ -199,22 +216,36 @@ mod local_manager {
             Phased::phase(&this.sub)
         }
     }
+    impl<'a,T: 'static+Sequential<Sequentializer = Self>> Sequentializer<'a,T> for ThreadExitSequentializer
+    where
+        T::Data: 'static+Finaly,
+    {
+        type Guard = Option<UnSyncPhaseGuard<'a,T>>;
 
-    impl<T: 'static+Sequential<Sequentializer = Self>> Sequentializer<T> for ThreadExitSequentializer
+        #[inline(always)]
+        fn lock(
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> bool)-> Self::Guard {
+            <SubSequentializer as Sequentializer<T>>::lock(
+                st,
+                shall_proceed)
+            }
+    }
+
+    impl<'a,T: 'static+Sequential<Sequentializer = Self>> LazySequentializer<'a,T> for ThreadExitSequentializer
     where
         T::Data: 'static+Finaly,
     {
         #[inline(always)]
-
         fn init(
-            st: &T,
-            on_uninited: impl Fn(Phase) -> bool,
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&<T as Sequential>::Data),
             init_on_reg_failure: bool,
-        ) -> bool {
-            <SubSequentializer as SplitedSequentializer<T>>::init(
+        ) -> Self::Guard {
+            <SubSequentializer as SplitedLazySequentializer<T>>::init(
                 st,
-                on_uninited,
+                shall_proceed,
                 init,
                 finalize_at_thread_exit,
                 init_on_reg_failure,
@@ -230,7 +261,7 @@ mod local_manager {
             Sequential::sequentializer(self).next.get()
         }
         fn execute(&self) {
-            <SubSequentializer as SplitedSequentializer<T>>::finalize_callback(self, Finaly::finaly);
+            <SubSequentializer as SplitedLazySequentializer<T>>::finalize_callback(self, Finaly::finaly);
         }
     }
 

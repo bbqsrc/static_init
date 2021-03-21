@@ -138,6 +138,9 @@ mod mutex {
     use core::cell::UnsafeCell;
     use core::ops::{Deref,DerefMut};
 
+    /// peut être pas un bon choix pour un static donnant un accès dérière un lock;
+    /// un rwlock serait aussi un bon choix puisque dans ce cas tous les readlock synchronize
+    /// ensemble est avec write locks.
     pub(crate) struct SyncPhasedLocker(AtomicU32);
 
     pub(crate) struct Mutex<T>(UnsafeCell<T>,SyncPhasedLocker);
@@ -314,23 +317,27 @@ mod local_mutex {
     use core::ops::Deref;
     use core::cell::Cell;
 
+    //TODO: en fait un bug ici à cause de récursion
+    //      le field doit être une refcell => deadlock
+    //      ci récursion dans l'initialization
+    // Utilisable pour avoir un accès mutable
     pub(crate) struct UnSyncPhaseLocker(Cell<Phase>);
 
-    pub struct UnSyncSyncPhaseGuard<'a,T:?Sized>(&'a T,&'a Cell<Phase>, Phase);
+    pub struct UnSyncPhaseGuard<'a,T:?Sized>(&'a T,&'a Cell<Phase>, Phase);
 
-    impl<'a,T> Deref for UnSyncSyncPhaseGuard<'a,T> {
+    impl<'a,T> Deref for UnSyncPhaseGuard<'a,T> {
         type Target = T;
         fn deref(&self) -> &T {
             self.0
         }
     }
 
-    impl<'a,T:?Sized> UnSyncSyncPhaseGuard<'a,T> {
+    impl<'a,T:?Sized> UnSyncPhaseGuard<'a,T> {
         pub(crate) fn new(r: &'a T, p: &'a Cell<Phase>) -> Self {
             Self(r,p, p.get())
         }
     }
-    impl<'a,T:?Sized> PhaseGuard<T> for UnSyncSyncPhaseGuard<'a,T> {
+    impl<'a,T:?Sized> PhaseGuard<T> for UnSyncPhaseGuard<'a,T> {
         fn set_phase(&mut self,p: Phase) {
             self.2 = p;
         }
@@ -349,7 +356,7 @@ mod local_mutex {
         }
     }
 
-    impl<'a, T:?Sized> Drop for UnSyncSyncPhaseGuard<'a,T> {
+    impl<'a, T:?Sized> Drop for UnSyncPhaseGuard<'a,T> {
         fn drop(&mut self) {
             self.1.set(self.2);
         }
@@ -362,9 +369,9 @@ mod local_mutex {
         pub fn phase(&self) -> Phase {
             self.0.get()
         }
-        pub fn lock<'a,T:?Sized>(&'a self,v: &'a T,shall_proceed: impl Fn(Phase)->bool) -> Option<UnSyncSyncPhaseGuard<'_,T>> {
+        pub fn lock<'a,T:?Sized>(&'a self,v: &'a T,shall_proceed: impl Fn(Phase)->bool) -> Option<UnSyncPhaseGuard<'_,T>> {
             if shall_proceed(self.phase()) {
-                Some(UnSyncSyncPhaseGuard::new(v, &self.0))
+                Some(UnSyncPhaseGuard::new(v, &self.0))
             } else {
                 None
             }
@@ -372,4 +379,4 @@ mod local_mutex {
     }
 }
 pub(crate) use local_mutex::UnSyncPhaseLocker;
-pub use local_mutex::{UnSyncSyncPhaseGuard};
+pub use local_mutex::{UnSyncPhaseGuard};
