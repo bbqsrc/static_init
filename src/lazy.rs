@@ -87,10 +87,10 @@ macro_rules! init_only {
 }
 
 #[cfg(feature="global_once")]
-init_only! {StartUpInitedNonFinalizedSyncSequentializer,SyncSequentializer<true>, SyncPhaseGuard}
+init_only! {StartUpInitedNonFinalizedSyncSequentializer,SyncSequentializer, SyncPhaseGuard}
 
 #[cfg(feature="global_once")]
-init_only! {NonFinalizedSyncSequentializer,SyncSequentializer<false>, SyncPhaseGuard, SyncSequentializer::new_lazy()}
+init_only! {NonFinalizedSyncSequentializer,SyncSequentializer, SyncPhaseGuard}
 
 init_only! {NonFinalizedUnSyncSequentializer,UnSyncSequentializer, UnSyncPhaseGuard}
 
@@ -98,31 +98,17 @@ use core::ops::{Deref, DerefMut};
 macro_rules! impl_lazy {
     ($tp:ident, $man:ty, $checker:ty, $data:ty, $doc:literal $(cfg($attr:meta))?) => {
         impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new(),$doc $(cfg($attr))?}
+        impl_lazy! {@deref $tp,$man,$checker,$data}
     };
     (unsafe $tp:ident, $man:ty, $checker:ty, $data:ty,$doc:literal $(cfg($attr:meta))?) => {
         impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new(),$doc $(cfg($attr))?, unsafe}
+        impl_lazy! {@deref $tp,$man,$checker,$data}
     };
-    ($tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr,$doc:literal $(cfg($attr:meta))?) => {
-        impl_lazy! {@proc $tp,$man,$checker,$data,$init,$doc $(cfg($attr))?}
+    (global $tp:ident, $man:ty, $checker:ty, $data:ty,$doc:literal $(cfg($attr:meta))?) => {
+        impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new(),$doc $(cfg($attr))?, unsafe}
+        impl_lazy! {@deref_global $tp,$man,$checker,$data}
     };
-    (unsafe $tp:ident, $man:ty, $checker:ty, $data:ty,$init:expr,$doc:literal $(cfg($attr:meta))?) => {
-        impl_lazy! {@proc $tp,$man,$checker,$data,$init, $doc $(cfg($attr))?,unsafe}
-    };
-    (@proc $tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr,$doc:literal $(cfg($attr:meta))? $(,$safe:ident)?) => {
-        #[doc=$doc]
-        $(#[cfg_attr(docsrs,doc(cfg($attr)))])?
-        pub struct $tp<T, G = fn() -> T> {
-            __private: GenericLazy<$data, G, $man, $checker>,
-        }
-        impl<T, G> Phased for $tp<T, G>
-        where
-            GenericLazy<$data, G, $man, $checker>: Phased,
-        {
-            fn phase(this: &Self) -> Phase {
-                Phased::phase(&this.__private)
-            }
-        }
-
+    (@deref $tp:ident, $man:ty, $checker:ty, $data:ty) => {
         impl<T, G> Deref for $tp<T, G>
         where
             GenericLazy<$data, G, $man, $checker>: Deref,
@@ -143,6 +129,53 @@ macro_rules! impl_lazy {
                 &mut *self.__private
             }
         }
+    };
+    (@deref_global $tp:ident, $man:ty, $checker:ty, $data:ty) => {
+        impl<T, G> Deref for $tp<T, G>
+        where
+            GenericLazy<$data, G, $man, $checker>: Deref<Target=T>,
+        {
+            type Target = <GenericLazy<$data, G, $man, $checker> as Deref>::Target;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                if inited::global_inited_hint() {
+                    unsafe{&* (GenericLazy::get_raw_data(&self.__private).get())}
+                    } else {
+                    &*self.__private
+                }
+            }
+        }
+
+        impl<T, G> DerefMut for $tp<T, G>
+        where
+            GenericLazy<$data, G, $man, $checker>: Deref<Target=T>,
+            GenericLazy<$data, G, $man, $checker>: DerefMut,
+        {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                if inited::global_inited_hint() {
+                    unsafe{&mut * (GenericLazy::get_raw_data(&self.__private).get())}
+                    } else {
+                    &mut *self.__private
+                }
+            }
+        }
+    };
+    (@proc $tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr,$doc:literal $(cfg($attr:meta))? $(,$safe:ident)?) => {
+        #[doc=$doc]
+        $(#[cfg_attr(docsrs,doc(cfg($attr)))])?
+        pub struct $tp<T, G = fn() -> T> {
+            __private: GenericLazy<$data, G, $man, $checker>,
+        }
+        impl<T, G> Phased for $tp<T, G>
+        where
+            GenericLazy<$data, G, $man, $checker>: Phased,
+        {
+            fn phase(this: &Self) -> Phase {
+                Phased::phase(&this.__private)
+            }
+        }
+
         impl<T, G> $tp<T, G> {
             pub const $($safe)? fn new_static(f: G) -> Self {
                 #[allow(unused_unsafe)]
@@ -166,12 +199,12 @@ macro_rules! impl_lazy {
         {
             //TODO: method => associated function
             #[inline(always)]
-            pub fn phase(&self) -> Phase {
-                Phased::phase(Sequential::sequentializer(&self.__private))
+            pub fn phase(this: &Self) -> Phase {
+                Phased::phase(Sequential::sequentializer(&this.__private))
             }
             #[inline(always)]
-            pub fn register(&self) {
-                &*self.__private;
+            pub fn init(this: &Self) {
+                &*this.__private;
             }
         }
     };
@@ -182,17 +215,17 @@ impl_lazy! {Lazy,NonFinalizedSyncSequentializer,InitializedChecker,UnInited::<T>
 "A type that initialize it self only once on the first access" cfg(feature="global_once")}
 
 #[cfg(feature="global_once")]
-impl_lazy! {unsafe QuasiLazy,StartUpInitedNonFinalizedSyncSequentializer,InitializedChecker,UnInited::<T>,
+impl_lazy! {global QuasiLazy,StartUpInitedNonFinalizedSyncSequentializer,InitializedChecker,UnInited::<T>,
 "The actual type of statics attributed with #[dynamic(quasi_lazy)]" cfg(feature="global_once")
 }
 
 #[cfg(feature="global_once")]
-impl_lazy! {unsafe LazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,ExitSequentializer::new_lazy(),
+impl_lazy! {unsafe LazyFinalize,ExitSequentializer,InitializedChecker,UnInited::<T>,
 "The actual type of statics attributed with #[dynamic(lazy,finalize)]" cfg(feature="global_once")
 }
 
 #[cfg(feature="global_once")]
-impl_lazy! {unsafe QuasiLazyFinalize,ExitSequentializer<true>,InitializedChecker,UnInited::<T>,
+impl_lazy! {global QuasiLazyFinalize,ExitSequentializer,InitializedChecker,UnInited::<T>,
 "The actual type of statics attributed with #[dynamic(quasi_lazy,finalize)]" cfg(feature="global_once")
 }
 
@@ -225,6 +258,26 @@ impl<T,G> Drop for UnSyncLazy<T,G> {
     }
 }
 
+
+#[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
+mod inited {
+
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    static LAZY_INIT_ENSURED: AtomicBool = AtomicBool::new(false);
+
+    #[static_init_macro::constructor(__lazy_init_finished)]
+    extern "C" fn mark_inited() {
+        LAZY_INIT_ENSURED.store(true, Ordering::Release);
+    }
+
+    #[inline(always)]
+    pub(super) fn global_inited_hint() -> bool {
+        LAZY_INIT_ENSURED.load(Ordering::Acquire)
+    }
+}
+
+
 #[cfg(feature="global_once")]
 #[cfg(test)]
 mod test_lazy {
@@ -232,7 +285,6 @@ mod test_lazy {
     static _X: Lazy<u32, fn() -> u32> = Lazy::new_static(|| 22);
     #[test]
     fn test() {
-        _X.register();
         assert_eq!(*_X, 22);
     }
 }

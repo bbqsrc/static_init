@@ -82,24 +82,6 @@ mod global_once {
     use super::{Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer};
     use crate::mutex::{SyncPhaseGuard, SyncPhasedLocker as PhasedLocker};
 
-    #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
-    mod inited {
-
-        use core::sync::atomic::{AtomicBool, Ordering};
-
-        static LAZY_INIT_ENSURED: AtomicBool = AtomicBool::new(false);
-
-        #[static_init_macro::constructor(__lazy_init_finished)]
-        extern "C" fn mark_inited() {
-            LAZY_INIT_ENSURED.store(true, Ordering::Release);
-        }
-
-        #[inline(always)]
-        pub(crate) fn global_inited_hint() -> bool {
-            LAZY_INIT_ENSURED.load(Ordering::Acquire)
-        }
-    }
-
     #[cfg(debug_mode)]
     use super::CyclicPanic;
     #[cfg(debug_mode)]
@@ -107,8 +89,8 @@ mod global_once {
 
     #[inline(never)]
     #[cold]
-    fn atomic_register_uninited<'a, T: Sequential, const GLOBAL: bool>(
-        this: &'a SyncSequentializer<GLOBAL>,
+    fn atomic_register_uninited<'a, T: Sequential>(
+        this: &'a SyncSequentializer,
         s: &'a T,
         shall_proceed: impl Fn(Phase) -> bool,
         init: impl FnOnce(&<T as Sequential>::Data),
@@ -191,15 +173,15 @@ mod global_once {
     ///
     ///     b. Finalization panicked
     ///
-    pub struct SyncSequentializer<const GLOBAL: bool>(PhasedLocker, #[cfg(debug_mode)] AtomicUsize);
+    pub struct SyncSequentializer(PhasedLocker, #[cfg(debug_mode)] AtomicUsize);
 
-    impl<const GLOBAL: bool> Phased for SyncSequentializer<GLOBAL> {
+    impl Phased for SyncSequentializer {
         #[inline(always)]
         fn phase(this: &Self) -> Phase {
             this.0.phase()
         }
     }
-    impl SyncSequentializer<true> {
+    impl SyncSequentializer {
         #[inline(always)]
         pub const fn new() -> Self {
             Self(
@@ -209,20 +191,10 @@ mod global_once {
             )
         }
     }
-    impl SyncSequentializer<false> {
-        #[inline(always)]
-        pub const fn new_lazy() -> Self {
-            Self(
-                PhasedLocker::new(Phase::empty()),
-                #[cfg(debug_mode)]
-                AtomicUsize::new(0),
-            )
-        }
-    }
 
-    impl<'a, T: Sequential + 'a, const G: bool> Sequentializer<'a, T> for SyncSequentializer<G>
+    impl<'a, T: Sequential + 'a> Sequentializer<'a, T> for SyncSequentializer
     where
-        T::Sequentializer: AsRef<SyncSequentializer<G>>,
+        T::Sequentializer: AsRef<SyncSequentializer>,
     {
         type Guard = Option<SyncPhaseGuard<'a, T>>;
 
@@ -233,10 +205,10 @@ mod global_once {
         }
     }
 
-    impl<'a, T: Sequential + 'a, const GLOBAL: bool> SplitedLazySequentializer<'a, T>
-        for SyncSequentializer<GLOBAL>
+    impl<'a, T: Sequential + 'a> SplitedLazySequentializer<'a, T>
+        for SyncSequentializer
     where
-        T::Sequentializer: AsRef<SyncSequentializer<GLOBAL>>,
+        T::Sequentializer: AsRef<SyncSequentializer>,
     {
         #[inline(always)]
         fn init(
@@ -248,11 +220,6 @@ mod global_once {
         ) -> Self::Guard {
             let this = Sequential::sequentializer(s).as_ref();
 
-            if cfg!(not(all(
-                support_priority,
-                not(feature = "test_no_global_lazy_hint")
-            ))) || !GLOBAL
-            {
                 let cur = this.0.phase();
 
                 if shall_proceed(cur) {
@@ -269,34 +236,6 @@ mod global_once {
                 } else {
                     None
                 }
-            } else {
-                #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
-                {
-                    if GLOBAL {
-                        if inited::global_inited_hint() {
-                            debug_assert!(!shall_proceed(this.0.phase()));
-                            None
-                        } else {
-                            atomic_register_uninited(
-                                this,
-                                s,
-                                shall_proceed,
-                                init,
-                                reg,
-                                init_on_reg_failure,
-                                #[cfg(debug_mode)]
-                                &this.1,
-                            )
-                        }
-                    } else {
-                        unreachable!()
-                    }
-                }
-                #[cfg(not(all(support_priority, not(feature = "test_no_global_lazy_hint"))))]
-                {
-                    unreachable!()
-                }
-            }
         }
         fn finalize_callback(s: &T, f: impl FnOnce(&T::Data)) {
             let this = Sequential::sequentializer(s).as_ref();

@@ -20,8 +20,8 @@ mod exit_manager {
     #[cfg_attr(docsrs, doc(cfg(feature="global_once")))]
     /// A sequentializer that store finalize_callback  
     /// for execution at program exit
-    pub struct ExitSequentializer<const G:bool> {
-        sub:  SubSequentializer<G>,
+    pub struct ExitSequentializer {
+        sub:  SubSequentializer,
         next: Cell<Option<NonNull<Node>>>,
     }
 
@@ -61,7 +61,7 @@ mod exit_manager {
         #[cfg_attr(docsrs, doc(cfg(feature="global_once")))]
         /// Store a reference of the static for execution of the
         /// finalize call back at program exit 
-        pub fn finalize_at_exit<T: 'static+Sequential<Sequentializer = ExitSequentializer<G>> + Sync,const G:bool>(st: &T) -> bool
+        pub fn finalize_at_exit<T: 'static+Sequential<Sequentializer = ExitSequentializer> + Sync>(st: &T) -> bool
         where
             T::Data: 'static+Finaly,
         {
@@ -77,42 +77,33 @@ mod exit_manager {
     }
     pub use reg::finalize_at_exit;
 
-    const GLOBAL_INIT: ExitSequentializer<true> = ExitSequentializer {
+    const GLOBAL_INIT: ExitSequentializer = ExitSequentializer {
         sub:  SubSequentializer::new(),
         next: Cell::new(None),
     };
-    const GLOBAL_INIT_LAZY: ExitSequentializer<false> = ExitSequentializer {
-        sub:  SubSequentializer::new_lazy(),
-        next: Cell::new(None),
-    };
 
-    impl ExitSequentializer<true> {
+    impl ExitSequentializer {
         pub const unsafe fn new() -> Self {
             GLOBAL_INIT
         }
     }
-    impl ExitSequentializer<false> {
-        pub const unsafe fn new_lazy() -> Self {
-            GLOBAL_INIT_LAZY
-        }
-    }
 
-    impl<const G:bool> AsRef<SubSequentializer<G>> for ExitSequentializer<G> {
-        fn as_ref(&self) -> &SubSequentializer<G> {
+    impl AsRef<SubSequentializer> for ExitSequentializer {
+        fn as_ref(&self) -> &SubSequentializer {
             &self.sub
         }
     }
 
     //All access of next are done when REGISTER is locked
     //or when the access is exclusive in execute_at_exit
-    unsafe impl<const G:bool> Sync for ExitSequentializer<G> {}
+    unsafe impl Sync for ExitSequentializer {}
 
-    impl<const G:bool> Phased for ExitSequentializer<G> {
+    impl Phased for ExitSequentializer {
         fn phase(this: &Self) -> Phase {
             Phased::phase(&this.sub)
         }
     }
-    impl<'a,T: 'a+Sequential<Sequentializer = Self>,const G:bool> Sequentializer<'a,T> for ExitSequentializer<G>
+    impl<'a,T: 'a+Sequential<Sequentializer = Self>> Sequentializer<'a,T> for ExitSequentializer
     where
         T: 'static+Sync,
         T::Data: 'static+Finaly,
@@ -122,13 +113,13 @@ mod exit_manager {
             st: &'a T,
             shall_proceed: impl Fn(Phase) -> bool,
             ) -> Self::Guard {
-            <SubSequentializer<G> as Sequentializer<T>>::lock(
+            <SubSequentializer as Sequentializer<T>>::lock(
                 st,
                 shall_proceed)
             }
     }
 
-    impl<'a,T: 'a+Sequential<Sequentializer = Self>,const G:bool> LazySequentializer<'a,T> for ExitSequentializer<G>
+    impl<'a,T: 'a+Sequential<Sequentializer = Self>> LazySequentializer<'a,T> for ExitSequentializer
     where
         T: 'static+Sync,
         T::Data: 'static+Finaly,
@@ -140,7 +131,7 @@ mod exit_manager {
             init: impl FnOnce(&<T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) -> Self::Guard {
-            <SubSequentializer<G> as SplitedLazySequentializer<T>>::init(
+            <SubSequentializer as SplitedLazySequentializer<T>>::init(
                 st,
                 shall_proceed,
                 init,
@@ -150,7 +141,7 @@ mod exit_manager {
         }
     }
 
-    impl<T: Sequential<Sequentializer = ExitSequentializer<G>>, const G:bool> OnExit for T
+    impl<T: Sequential<Sequentializer = ExitSequentializer>> OnExit for T
     where
         T::Data: 'static+Finaly,
     {
@@ -158,7 +149,7 @@ mod exit_manager {
             Sequential::sequentializer(self).next.get()
         }
         fn execute(&self) {
-            <SubSequentializer<G> as SplitedLazySequentializer<T>>::finalize_callback(self, Finaly::finaly);
+            <SubSequentializer as SplitedLazySequentializer<T>>::finalize_callback(self, Finaly::finaly);
         }
     }
 }

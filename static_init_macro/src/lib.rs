@@ -821,7 +821,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 #[::static_init::constructor(__lazy_init)]
                 extern "C" fn __static_init_initializer() {
                     #[allow(unused_unsafe)]
-                    unsafe {#typ::register(#stat_ref)};
+                    unsafe {#typ::init(#stat_ref)};
                 }
         }),
 
