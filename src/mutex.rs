@@ -247,7 +247,7 @@ mod mutex {
         }
         #[inline(always)]
         pub(crate) fn lock(&self) -> MutexGuard<'_,T> {
-            let lk = if let LockResult::Write(l) = self.1.raw_lock(|_p| {LockNature::Write}) {
+            let lk = if let LockResult::Write(l) = self.1.raw_lock(|_p| {LockNature::Write},Phase::empty()) {
                 l
             } else {
                 unreachable!()
@@ -352,9 +352,10 @@ mod mutex {
             &'a self,
             v: &'a T,
             how: impl Fn(Phase) -> LockNature,
+            hint: Phase,
             #[cfg(debug_mode)] id: &AtomicUsize,
         )  -> LockResult<SyncReadPhaseGuard<'_,T>,SyncPhaseGuard<'_,T>> {
-            match self.raw_lock(how,#[cfg(debug_mode)] id) {
+            match self.raw_lock(how,hint,#[cfg(debug_mode)] id) {
                 LockResult::Write(l) => LockResult::Write(SyncPhaseGuard::new(v,l)),
                 LockResult::Read(l) => LockResult::Read(SyncReadPhaseGuard::new(v,l)),
                 LockResult::None => LockResult::None
@@ -364,12 +365,16 @@ mod mutex {
         fn raw_lock(
             &self,
             how: impl Fn(Phase) -> LockNature,
+            hint: Phase,
             #[cfg(debug_mode)] id: &AtomicUsize,
         )  -> LockResult<ReadLock<'_>,Lock<'_>> {
-            let cur = self.0.load(Ordering::Acquire);
-            match how(Phase::from_bits_truncate(cur)){
-                LockNature::None => { fence(Ordering::Acquire);
-                          return LockResult::None;
+            let cur = hint.bits();
+            match how(hint){
+                LockNature::None => { 
+                          let real = self.0.load(Ordering::Acquire);
+                          if Phase::from_bits_truncate(real) == hint {
+                            return LockResult::None;
+                          }
                     }
                 LockNature::Write => {
                     let expect = cur &!(LOCKED_BIT|PARKED_BIT|READER_BITS);

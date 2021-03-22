@@ -44,6 +44,7 @@ path="static_init_macro"
 lazy_static = "1.4"
 ctor = "0.1"
 libc = "0.2"
+parking_lot = "0.11"
 
 [build-dependencies]
 cfg_aliases = "0.1"

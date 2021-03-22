@@ -265,7 +265,7 @@ mod global_once {
         fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> LockNature) -> LockResult<SyncReadPhaseGuard<'a, T>, SyncPhaseGuard<'a, T>> {
             let this = Sequential::sequentializer(s).as_ref();
 
-            this.0.lock(s, &shall_proceed)
+            this.0.lock(s, &shall_proceed,Phase::INITIALIZED|Phase::REGISTERED)
         }
     }
 
@@ -354,7 +354,7 @@ mod global_once {
                 } else {
                     LockNature::None
                 }
-            }) {
+            },Phase::INITIALIZED|Phase::REGISTERED) {
                 LockResult::None => return,
                 LockResult::Write(l) => l,
                 LockResult::Read(_) => unsafe{unreachable_unchecked()},

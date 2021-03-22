@@ -67,6 +67,8 @@ static mut LTMD: i32 = 0;
 
 #[dynamic(0)]
 static L_MUTEX: Mutex<Option<i32>> = Mutex::new(None);
+#[dynamic(0)]
+static L_MUTEX_PARKING: parking_lot::Mutex<Option<i32>> = parking_lot::Mutex::new(None);
 
 
 #[bench]
@@ -140,6 +142,18 @@ fn mut_lazy_thread_local_droped(bench: &mut Bencher) {
 fn mutex_mut_lazy(bench: &mut Bencher) {
     bench.iter(|| {
         let mut l = unsafe{L_MUTEX.lock().unwrap()};
+        if let Some(v) = &mut *l {
+            *v+=1;
+        } else {
+            *l=Some(0)
+        }
+        });
+    
+}
+#[bench]
+fn mutex_parking_lot_mut_lazy(bench: &mut Bencher) {
+    bench.iter(|| {
+        let mut l = unsafe{L_MUTEX_PARKING.lock()};
         if let Some(v) = &mut *l {
             *v+=1;
         } else {
