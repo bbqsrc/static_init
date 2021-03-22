@@ -1,8 +1,9 @@
-use crate::{Finaly, Generator, LazySequentializer, Phase, Sequential, Sequentializer, StaticInfo};
+use crate::{Finaly, Generator, LazySequentializer, Phase, Sequential, StaticInfo,Sequentializer,LockNature,LockResult};
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
+use core::hint::unreachable_unchecked;
 
 #[cfg(debug_mode)]
 use crate::CyclicPanic;
@@ -13,6 +14,7 @@ pub trait LazyPolicy {
     const INIT_ON_REG_FAILURE: bool;
     /// shall the initialization be performed (tested at each access)
     fn shall_proceed(_: Phase) -> bool;
+    fn initialized_ok(_: Phase) -> bool;
 }
 
 /// Generic lazy interior data storage, uninitialized with interior mutability data storage
@@ -291,32 +293,52 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         &this.sequentializer
     }
     #[inline(always)]
-    pub fn lock<'a>(this: &'a Self) -> M::Guard
-    where
-        T: 'static + LazyData,
-        M: 'static,
-        M: Sequentializer<'a, Self>,
-        F: 'static + Generator<T::Target>,
-        S: 'static + LazyPolicy,
-    {
-        <M as Sequentializer<'a, Self>>::lock(this, |p| !S::shall_proceed(p))
-    }
-    #[inline(always)]
+    /// potentialy initialize the inner data
+    ///
+    /// this method is called every time the generic lazy is dereferenced
     pub fn read_lock<'a>(this: &'a Self) -> M::ReadGuard
     where
         T: 'static + LazyData,
         M: 'static,
-        M: Sequentializer<'a, Self>,
+        M: LazySequentializer<'a, Self>,
         F: 'static + Generator<T::Target>,
         S: 'static + LazyPolicy,
     {
-        <M as Sequentializer<'a, Self>>::read_lock(this, |p| !S::shall_proceed(p))
-    }
+            if let LockResult::Read(l) = <M as Sequentializer::<'a,Self>>::lock(
+                this,
+                |_| LockNature::Read,
+            ) {
+                l
+            } else {
+                unsafe{unreachable_unchecked()}
+            }
+        }
     #[inline(always)]
     /// potentialy initialize the inner data
     ///
     /// this method is called every time the generic lazy is dereferenced
-    pub fn init<'a>(this: &'a Self) -> M::Guard
+    pub fn write_lock<'a>(this: &'a Self) -> M::WriteGuard
+    where
+        T: 'static + LazyData,
+        M: 'static,
+        M: LazySequentializer<'a, Self>,
+        F: 'static + Generator<T::Target>,
+        S: 'static + LazyPolicy,
+    {
+            if let LockResult::Write(l) = <M as Sequentializer::<'a,Self>>::lock(
+                this,
+                |_| LockNature::Write,
+            ) {
+                l
+            } else {
+                unsafe{unreachable_unchecked()}
+            }
+        }
+    #[inline(always)]
+    /// potentialy initialize the inner data
+    ///
+    /// this method is called every time the generic lazy is dereferenced
+    pub fn init_then_read_lock<'a>(this: &'a Self) -> M::ReadGuard
     where
         T: 'static + LazyData,
         M: 'static,
@@ -326,7 +348,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     {
         #[cfg(not(debug_mode))]
         {
-            LazySequentializer::init(
+            LazySequentializer::init_or_read_guard(
                 this,
                 S::shall_proceed,
                 |data: &T| {
@@ -342,7 +364,64 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         #[cfg(debug_mode)]
         {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                <M as Sequentializer<Self>>::init(
+                <M as Sequentializer<Self>>::init_or_read_guard(
+                    this,
+                    S::shall_proceed,
+                    |data: &T| {
+                        // SAFETY
+                        // This function is called only once within the init function
+                        // Only one thread can ever get this mutable access
+                        let d = Generator::generate(&this.generator);
+                        unsafe { data.get().write(d) };
+                    },
+                    S::INIT_ON_REG_FAILURE,
+                )
+            })) {
+                Ok(r) => r,
+                Err(x) => {
+                    if x.is::<CyclicPanic>() {
+                        match &this._info {
+                            Some(info) => panic!("Circular initialization of {:#?}", info),
+                            None => panic!("Circular lazy initialization detected"),
+                        }
+                    } else {
+                        std::panic::resume_unwind(x)
+                    }
+                }
+            }
+        }
+    }
+    #[inline(always)]
+    /// potentialy initialize the inner data
+    ///
+    /// this method is called every time the generic lazy is dereferenced
+    pub fn init_then_write_lock<'a>(this: &'a Self) -> M::WriteGuard
+    where
+        T: 'static + LazyData,
+        M: 'static,
+        M: LazySequentializer<'a, Self>,
+        F: 'static + Generator<T::Target>,
+        S: 'static + LazyPolicy,
+    {
+        #[cfg(not(debug_mode))]
+        {
+            LazySequentializer::init_or_write_guard(
+                this,
+                S::shall_proceed,
+                |data: &T| {
+                    // SAFETY
+                    // This function is called only once within the init function
+                    // Only one thread can ever get this mutable access
+                    let d = Generator::generate(&this.generator);
+                    unsafe { data.get().write(d) };
+                },
+                S::INIT_ON_REG_FAILURE,
+            )
+        }
+        #[cfg(debug_mode)]
+        {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                <M as Sequentializer<Self>>::init_or_write_guard(
                     this,
                     S::shall_proceed,
                     |data: &T| {

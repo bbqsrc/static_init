@@ -1,9 +1,10 @@
-use crate::mutex::{SyncPhaseGuard, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncReadPhaseGuard};
+use crate::mutex::{SyncPhaseGuard, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncReadPhaseGuard,PhaseGuard};
 use crate::{Finaly,
     generic_lazy::{GenericLazy, GenericMutLazy, LazyData, LazyPolicy, UnInited},
     splited_sequentializer::UnSyncSequentializer,
     Generator, LazySequentializer, Phase, Phased, Sequential, Sequentializer,
     SplitedLazySequentializer, StaticInfo,
+    mutex::{LockNature,LockResult},
 };
 
 #[cfg(feature = "thread_local")]
@@ -18,6 +19,10 @@ pub struct InitializedChecker;
 
 impl LazyPolicy for InitializedChecker {
     const INIT_ON_REG_FAILURE: bool = false;
+    #[inline(always)]
+    fn initialized_ok(_: Phase) -> bool {
+        true
+    }
     #[inline(always)]
     fn shall_proceed(p: Phase) -> bool {
         if p.intersects(Phase::INITIALIZED) {
@@ -42,7 +47,24 @@ impl LazyPolicy for InitializedAndNonFinalizedChecker {
             true
         }
     }
+    #[inline(always)]
+    fn initialized_ok(p: Phase) -> bool {
+        !p.intersects(Phase::FINALIZED)
+    }
 }
+//pub struct InitializedRearmingChecker;
+//impl LazyPolicy for InitializedRearmingChecker {
+//    const INIT_ON_REG_FAILURE: bool = false;
+//    #[inline(always)]
+//    fn shall_proceed(p: Phase) -> bool {
+//        if p.intersects(Phase::INITIALIZED) && !p.intersects(Phase::FINALIZED) {
+//            false
+//        } else {
+//            assert!(!p.intersects(Phase::INITIALIZATION_SKIPED));
+//            true
+//        }
+//    }
+//}
 
 macro_rules! init_only {
     ($typ:ident, $sub:ty, $gd:ident, $gd_r:ident) => {
@@ -53,42 +75,74 @@ macro_rules! init_only {
         pub struct $typ($sub);
 
         impl $typ {
+            #[inline(always)]
             pub const fn new() -> Self {
                 Self($init)
             }
         }
 
         impl AsRef<$sub> for $typ {
+            #[inline(always)]
             fn as_ref(&self) -> &$sub {
                 &self.0
             }
         }
 
         impl Phased for $typ {
+            #[inline(always)]
             fn phase(this: &Self) -> Phase {
                 Phased::phase(&this.0)
             }
         }
 
         impl<'a, T: 'a + Sequential<Sequentializer = Self>> Sequentializer<'a, T> for $typ {
-            type Guard = Option<$gd<'a, T>>;
-            type ReadGuard = Option<$gd_r<'a, T>>;
-            fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::Guard {
+            type ReadGuard = $gd_r<'a,T>;
+            type WriteGuard = $gd<'a,T>;
+            #[inline(always)]
+            fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> LockNature) -> LockResult<$gd_r<'a,T>,$gd<'a, T>> {
                 <$sub as Sequentializer<T>>::lock(s, shall_proceed)
-            }
-            fn read_lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::ReadGuard {
-                <$sub as Sequentializer<T>>::read_lock(s, shall_proceed)
             }
         }
 
         impl<'a, T: 'a + Sequential<Sequentializer = Self>> LazySequentializer<'a, T> for $typ {
+            #[inline(always)]
             fn init(
                 s: &'a T,
                 on_uninited: impl Fn(Phase) -> bool,
                 init: impl FnOnce(&<T as Sequential>::Data),
                 init_on_reg_failure: bool,
-            ) -> Self::Guard {
+            ) {
                 <$sub as SplitedLazySequentializer<T>>::init(
+                    s,
+                    on_uninited,
+                    init,
+                    |_| true,
+                    init_on_reg_failure,
+                )
+            }
+            #[inline(always)]
+            fn init_or_read_guard(
+                s: &'a T,
+                on_uninited: impl Fn(Phase) -> bool,
+                init: impl FnOnce(&<T as Sequential>::Data),
+                init_on_reg_failure: bool,
+            ) -> Self::ReadGuard{
+                <$sub as SplitedLazySequentializer<T>>::init_or_read_guard(
+                    s,
+                    on_uninited,
+                    init,
+                    |_| true,
+                    init_on_reg_failure,
+                )
+            }
+            #[inline(always)]
+            fn init_or_write_guard(
+                s: &'a T,
+                on_uninited: impl Fn(Phase) -> bool,
+                init: impl FnOnce(&<T as Sequential>::Data),
+                init_on_reg_failure: bool,
+            ) -> Self::WriteGuard{
+                <$sub as SplitedLazySequentializer<T>>::init_or_write_guard(
                     s,
                     on_uninited,
                     init,
@@ -371,15 +425,15 @@ where
 
 macro_rules! impl_mut_lazy {
     ($tp:ident, $man:ty, $checker:ty, $data:ty, $gdw: ident, $gd: ident $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        impl_mut_lazy! {@proc $tp,$man,$checker,$data,<$man>::new(),$doc $(cfg($attr))?}
+        impl_mut_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?}
         impl_mut_lazy! {@lock $tp,$man,$checker,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
     };
     (unsafe $tp:ident, $man:ty, $checker:ty, $data:ty, $gdw: ident,$gd:ident  $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        impl_mut_lazy! {@proc $tp,$man,$checker,$data,<$man>::new(),$doc $(cfg($attr))?, unsafe}
+        impl_mut_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe}
         impl_mut_lazy! {@lock $tp,$man,$checker,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
     };
     (global $tp:ident, $man:ty, $checker:ty, $data:ty, $gdw: ident,$gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        impl_mut_lazy! {@proc $tp,$man,$checker,$data,<$man>::new(),$doc $(cfg($attr))?, unsafe}
+        impl_mut_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe}
         impl_mut_lazy! {@lock_global $tp,$man,$checker,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
     };
     (@lock $tp:ident, $man:ty, $checker:ty, $data:ty, $gdw: ident, $gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)?) => {
@@ -391,16 +445,11 @@ macro_rules! impl_mut_lazy {
         {
             #[inline(always)]
             pub fn read_lock(&self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
-               ReadGuard(GenericMutLazy::init(&self.__private).map_or_else(
-                    || {GenericMutLazy::read_lock(&self.__private).expect("Non initialized or droped value access")},
-                    |g| g.into()))
+               ReadGuard(GenericMutLazy::init_then_read_lock(&self.__private))
             }
             #[inline(always)]
-            pub fn write_lock(&self) -> WriteGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
-                WriteGuard(GenericMutLazy::init(&self.__private).map_or_else(
-                    || {GenericMutLazy::read_lock(&self.__private).expect("Non initialized or dropped value access")},
-                    |g| g.into())
-)
+            pub fn write_lock(&self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
+               WriteGuard(GenericMutLazy::init_then_write_lock(&self.__private))
             }
         }
 
@@ -416,27 +465,28 @@ macro_rules! impl_mut_lazy {
             #[inline(always)]
             pub fn read_lock(&self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                 if inited::global_inited_hint() {
-                    ReadGuard(GenericMutLazy::read_lock(&self.__private).expect("Non initialized or droped value access"))
+                    let l =GenericMutLazy::read_lock(&self.__private);
+                    assert!(<$checker>::initialized_ok($gd::phase(&l)));
+                    ReadGuard(l)
                     } else {
-               ReadGuard(GenericMutLazy::init(&self.__private).map_or_else(
-                    || {GenericMutLazy::read_lock(&self.__private).expect("Non initialized or droped value access")},
-                    |g| g.into()))
+                    ReadGuard(GenericMutLazy::init_then_read_lock(&self.__private))
                 }
             }
             #[inline(always)]
             pub fn write_lock(&self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                 if inited::global_inited_hint() {
-                    WriteGuard(GenericMutLazy::lock(&self.__private).expect("Non initialized or droped value access"))
+                    let l = GenericMutLazy::write_lock(&self.__private);
+                    assert!(<$checker>::initialized_ok($gdw::phase(&l)));
+                    WriteGuard(l)
                     } else {
-                WriteGuard(GenericMutLazy::init(&self.__private).unwrap_or_else(
-                    || {GenericMutLazy::lock(&self.__private).expect("Non initialized or dropped value access")},
-                    ))
+                    WriteGuard(GenericMutLazy::init_then_write_lock(&self.__private))
                 }
             }
         }
 
     };
-    (@proc $tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr,$doc:literal $(cfg($attr:meta))? $(,$safe:ident)?) => {
+    (@proc $tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr$(,T: $tr: ident)?$(,G: $trg:ident)?
+    ,$doc:literal $(cfg($attr:meta))? $(,$safe:ident)?) => {
         #[doc=$doc]
         $(#[cfg_attr(docsrs,doc(cfg($attr)))])?
         pub struct $tp<T, G = fn() -> T> {
@@ -469,11 +519,17 @@ macro_rules! impl_mut_lazy {
 
         impl<T, G> $tp<T, G>
         where $data: 'static + LazyData<Target=T>,
-        G: 'static + Generator<T>
+        G: 'static + Generator<T>,
+        $(G:$trg, T:Send,)?
+        $(T:$tr,)?
         {
             #[inline(always)]
             pub fn phase(this: &Self) -> Phase {
                 Phased::phase(Sequential::sequentializer(&this.__private))
+            }
+            #[inline(always)]
+            pub fn init(this: &Self) {
+                GenericMutLazy::init_then_write_lock(&this.__private);
             }
         }
     };

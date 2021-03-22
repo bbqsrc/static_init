@@ -2,10 +2,12 @@
 
 #[cfg(feature = "global_once")]
 mod exit_manager {
-    use crate::Finaly;
+    use crate::mutex::{LockNature, LockResult, SyncPhaseGuard, SyncReadPhaseGuard};
     use crate::splited_sequentializer::SyncSequentializer as SubSequentializer;
-    use crate::{Sequentializer, Phased, LazySequentializer, SplitedLazySequentializer, Phase, Sequential};
-    use crate::mutex::{SyncPhaseGuard,SyncReadPhaseGuard};
+    use crate::Finaly;
+    use crate::{
+        LazySequentializer, Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer,
+    };
 
     use core::cell::Cell;
     use core::ptr::NonNull;
@@ -17,7 +19,7 @@ mod exit_manager {
 
     type Node = dyn 'static + OnExit + Sync;
 
-    #[cfg_attr(docsrs, doc(cfg(feature="global_once")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "global_once")))]
     /// A sequentializer that store finalize_callback  
     /// for execution at program exit
     pub struct ExitSequentializer {
@@ -36,7 +38,7 @@ mod exit_manager {
 
         struct Wrap(NonNull<Node>);
 
-        unsafe impl Send for Wrap{}
+        unsafe impl Send for Wrap {}
 
         static REGISTER: Mutex<(Option<Wrap>, bool)> = Mutex::new((None, true));
 
@@ -58,16 +60,22 @@ mod exit_manager {
             }
         }
 
-        #[cfg_attr(docsrs, doc(cfg(feature="global_once")))]
+        #[cfg_attr(docsrs, doc(cfg(feature = "global_once")))]
         /// Store a reference of the static for execution of the
-        /// finalize call back at program exit 
-        pub fn finalize_at_exit<T: 'static+Sequential<Sequentializer = ExitSequentializer> + Sync>(st: &T) -> bool
+        /// finalize call back at program exit
+        pub fn finalize_at_exit<
+            T: 'static + Sequential<Sequentializer = ExitSequentializer> + Sync,
+        >(
+            st: &T,
+        ) -> bool
         where
-            T::Data: 'static+Finaly,
+            T::Data: 'static + Finaly,
         {
             let mut l = REGISTER.lock();
             if l.1 {
-                Sequential::sequentializer(st).next.set(l.0.take().map(|w| w.0));
+                Sequential::sequentializer(st)
+                    .next
+                    .set(l.0.take().map(|w| w.0));
                 *l = (Some(Wrap((st as &Node).into())), true);
                 true
             } else {
@@ -103,35 +111,25 @@ mod exit_manager {
             Phased::phase(&this.sub)
         }
     }
-    impl<'a,T: 'a+Sequential<Sequentializer = Self>> Sequentializer<'a,T> for ExitSequentializer
+    impl<'a, T: 'a + Sequential<Sequentializer = Self>> Sequentializer<'a, T> for ExitSequentializer
     where
-        T: 'static+Sync,
-        T::Data: 'static+Finaly,
+        T: 'static + Sync,
+        T::Data: 'static + Finaly,
     {
-        type Guard = Option<SyncPhaseGuard<'a,T>>;
-        type ReadGuard = Option<SyncReadPhaseGuard<'a,T>>;
+        type ReadGuard = SyncReadPhaseGuard<'a, T>;
+        type WriteGuard = SyncPhaseGuard<'a, T>;
         fn lock(
             st: &'a T,
-            shall_proceed: impl Fn(Phase) -> bool,
-            ) -> Self::Guard {
-            <SubSequentializer as Sequentializer<T>>::lock(
-                st,
-                shall_proceed)
-            }
-        fn read_lock(
-            st: &'a T,
-            shall_proceed: impl Fn(Phase) -> bool,
-            ) -> Self::ReadGuard {
-            <SubSequentializer as Sequentializer<T>>::read_lock(
-                st,
-                shall_proceed)
-            }
+            shall_proceed: impl Fn(Phase) -> LockNature,
+        ) -> LockResult<SyncReadPhaseGuard<'a, T>, SyncPhaseGuard<'a, T>> {
+            <SubSequentializer as Sequentializer<T>>::lock(st, shall_proceed)
+        }
     }
 
-    impl<'a,T: 'a+Sequential<Sequentializer = Self>> LazySequentializer<'a,T> for ExitSequentializer
+    impl<'a, T: 'a + Sequential<Sequentializer = Self>> LazySequentializer<'a, T> for ExitSequentializer
     where
-        T: 'static+Sync,
-        T::Data: 'static+Finaly,
+        T: 'static + Sync,
+        T::Data: 'static + Finaly,
     {
         #[inline(always)]
         fn init(
@@ -139,8 +137,38 @@ mod exit_manager {
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&<T as Sequential>::Data),
             init_on_reg_failure: bool,
-        ) -> Self::Guard {
+        ) {
             <SubSequentializer as SplitedLazySequentializer<T>>::init(
+                st,
+                shall_proceed,
+                init,
+                finalize_at_exit,
+                init_on_reg_failure,
+            )
+        }
+        #[inline(always)]
+        fn init_or_read_guard(
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> bool,
+            init: impl FnOnce(&<T as Sequential>::Data),
+            init_on_reg_failure: bool,
+        ) -> Self::ReadGuard {
+            <SubSequentializer as SplitedLazySequentializer<T>>::init_or_read_guard(
+                st,
+                shall_proceed,
+                init,
+                finalize_at_exit,
+                init_on_reg_failure,
+            )
+        }
+        #[inline(always)]
+        fn init_or_write_guard(
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> bool,
+            init: impl FnOnce(&<T as Sequential>::Data),
+            init_on_reg_failure: bool,
+        ) -> Self::WriteGuard {
+            <SubSequentializer as SplitedLazySequentializer<T>>::init_or_write_guard(
                 st,
                 shall_proceed,
                 init,
@@ -152,32 +180,38 @@ mod exit_manager {
 
     impl<T: Sequential<Sequentializer = ExitSequentializer>> OnExit for T
     where
-        T::Data: 'static+Finaly,
+        T::Data: 'static + Finaly,
     {
         fn get_next(&self) -> Option<NonNull<Node>> {
             Sequential::sequentializer(self).next.get()
         }
         fn execute(&self) {
-            <SubSequentializer as SplitedLazySequentializer<T>>::finalize_callback(self, Finaly::finaly);
+            <SubSequentializer as SplitedLazySequentializer<T>>::finalize_callback(
+                self,
+                Finaly::finaly,
+            );
         }
     }
 }
 #[cfg(feature = "global_once")]
-pub use exit_manager::{finalize_at_exit,ExitSequentializer};
+pub use exit_manager::{finalize_at_exit, ExitSequentializer};
 
 #[cfg(feature = "thread_local")]
-pub use local_manager::{finalize_at_thread_exit,ThreadExitSequentializer};
+pub use local_manager::{finalize_at_thread_exit, ThreadExitSequentializer};
 
 #[cfg(feature = "thread_local")]
 mod local_manager {
 
     use crate::splited_sequentializer::UnSyncSequentializer as SubSequentializer;
-    use crate::{Finaly, Sequentializer, Phased, LazySequentializer, SplitedLazySequentializer, Phase, Sequential};
+    use crate::{
+        Finaly, LazySequentializer, Phase, Phased, Sequential, Sequentializer,
+        SplitedLazySequentializer,
+    };
 
     use core::cell::Cell;
     use core::ptr::NonNull;
 
-    use crate::mutex::{UnSyncPhaseGuard,UnSyncReadPhaseGuard};
+    use crate::mutex::{LockNature, LockResult, UnSyncPhaseGuard, UnSyncReadPhaseGuard};
 
     trait OnExit {
         fn get_next(&self) -> Option<NonNull<Node>>;
@@ -186,7 +220,7 @@ mod local_manager {
 
     type Node = dyn 'static + OnExit;
 
-    #[cfg_attr(docsrs, doc(cfg(feature="thread_local")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
     /// A sequentializer that store finalize_callback  
     /// for execution at thread exit
     pub struct ThreadExitSequentializer {
@@ -216,34 +250,27 @@ mod local_manager {
             Phased::phase(&this.sub)
         }
     }
-    impl<'a,T: 'static+Sequential<Sequentializer = Self>> Sequentializer<'a,T> for ThreadExitSequentializer
+    impl<'a, T: 'static + Sequential<Sequentializer = Self>> Sequentializer<'a, T>
+        for ThreadExitSequentializer
     where
-        T::Data: 'static+Finaly,
+        T::Data: 'static + Finaly,
     {
-        type Guard = Option<UnSyncPhaseGuard<'a,T>>;
-        type ReadGuard = Option<UnSyncReadPhaseGuard<'a,T>>;
+        type ReadGuard = UnSyncReadPhaseGuard<'a, T>;
+        type WriteGuard = UnSyncPhaseGuard<'a, T>;
 
         #[inline(always)]
         fn lock(
             st: &'a T,
-            shall_proceed: impl Fn(Phase) -> bool)-> Self::Guard {
-            <SubSequentializer as Sequentializer<T>>::lock(
-                st,
-                shall_proceed)
-            }
-        #[inline(always)]
-        fn read_lock(
-            st: &'a T,
-            shall_proceed: impl Fn(Phase) -> bool)-> Self::ReadGuard {
-            <SubSequentializer as Sequentializer<T>>::read_lock(
-                st,
-                shall_proceed)
-            }
+            shall_proceed: impl Fn(Phase) -> LockNature,
+        ) -> LockResult<UnSyncReadPhaseGuard<'a, T>, UnSyncPhaseGuard<'a, T>> {
+            <SubSequentializer as Sequentializer<T>>::lock(st, shall_proceed)
+        }
     }
 
-    impl<'a,T: 'static+Sequential<Sequentializer = Self>> LazySequentializer<'a,T> for ThreadExitSequentializer
+    impl<'a, T: 'static + Sequential<Sequentializer = Self>> LazySequentializer<'a, T>
+        for ThreadExitSequentializer
     where
-        T::Data: 'static+Finaly,
+        T::Data: 'static + Finaly,
     {
         #[inline(always)]
         fn init(
@@ -251,8 +278,38 @@ mod local_manager {
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&<T as Sequential>::Data),
             init_on_reg_failure: bool,
-        ) -> Self::Guard {
+        ) {
             <SubSequentializer as SplitedLazySequentializer<T>>::init(
+                st,
+                shall_proceed,
+                init,
+                finalize_at_thread_exit,
+                init_on_reg_failure,
+            )
+        }
+        #[inline(always)]
+        fn init_or_read_guard(
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> bool,
+            init: impl FnOnce(&<T as Sequential>::Data),
+            init_on_reg_failure: bool,
+        ) -> Self::ReadGuard {
+            <SubSequentializer as SplitedLazySequentializer<T>>::init_or_read_guard(
+                st,
+                shall_proceed,
+                init,
+                finalize_at_thread_exit,
+                init_on_reg_failure,
+            )
+        }
+        #[inline(always)]
+        fn init_or_write_guard(
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> bool,
+            init: impl FnOnce(&<T as Sequential>::Data),
+            init_on_reg_failure: bool,
+        ) -> Self::WriteGuard {
+            <SubSequentializer as SplitedLazySequentializer<T>>::init_or_write_guard(
                 st,
                 shall_proceed,
                 init,
@@ -262,15 +319,18 @@ mod local_manager {
         }
     }
 
-    impl<T: 'static+Sequential<Sequentializer = ThreadExitSequentializer>> OnExit for T
+    impl<T: 'static + Sequential<Sequentializer = ThreadExitSequentializer>> OnExit for T
     where
-        T::Data: 'static+Finaly,
+        T::Data: 'static + Finaly,
     {
         fn get_next(&self) -> Option<NonNull<Node>> {
             Sequential::sequentializer(self).next.get()
         }
         fn execute(&self) {
-            <SubSequentializer as SplitedLazySequentializer<T>>::finalize_callback(self, Finaly::finaly);
+            <SubSequentializer as SplitedLazySequentializer<T>>::finalize_callback(
+                self,
+                Finaly::finaly,
+            );
         }
     }
 
@@ -281,8 +341,8 @@ mod local_manager {
         use core::cell::Cell;
         use core::ptr::NonNull;
 
-        use winapi::shared::minwindef::{LPVOID,DWORD};
-        use winapi::um::winnt::{DLL_THREAD_DETACH,DLL_PROCESS_DETACH};
+        use winapi::shared::minwindef::{DWORD, LPVOID};
+        use winapi::um::winnt::{DLL_PROCESS_DETACH, DLL_THREAD_DETACH};
 
         //On thread exit
         //non nul pointers between .CRT$XLA and .CRT$XLZ will be
@@ -328,12 +388,14 @@ mod local_manager {
         #[thread_local]
         static DONE: Cell<bool> = Cell::new(false);
 
-        #[cfg_attr(docsrs, doc(cfg(feature="thread_local")))]
+        #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
-        pub fn finalize_at_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer>>(st: &T) -> bool
+        pub fn finalize_at_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer>>(
+            st: &T,
+        ) -> bool
         where
-            T::Data: 'static+Finaly,
+            T::Data: 'static + Finaly,
         {
             if DONE.get() {
                 false
@@ -394,12 +456,16 @@ mod local_manager {
             }
             DESTROYING.set(false);
         }
-        #[cfg_attr(docsrs, doc(cfg(feature="thread_local")))]
+        #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
-        pub fn finalize_at_thread_exit<T: 'static + Sequential<Sequentializer = ThreadExitSequentializer>>(st: &T) -> bool
+        pub fn finalize_at_thread_exit<
+            T: 'static + Sequential<Sequentializer = ThreadExitSequentializer>,
+        >(
+            st: &T,
+        ) -> bool
         where
-            T::Data: 'static+Finaly,
+            T::Data: 'static + Finaly,
         {
             let old = REGISTER.take();
             if let Some(old) = old {
@@ -496,7 +562,7 @@ mod local_manager {
             key: pthread_key_t,
         ) -> bool
         where
-            T::Data: 'static+Finaly,
+            T::Data: 'static + Finaly,
         {
             let specific = unsafe { pthread_getspecific(key) };
 
@@ -518,12 +584,14 @@ mod local_manager {
             true
         }
 
-        #[cfg_attr(docsrs, doc(cfg(feature="thread_local")))]
+        #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
-        pub fn finalize_at_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer>>(st: &T) -> bool
+        pub fn finalize_at_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer>>(
+            st: &T,
+        ) -> bool
         where
-            T::Data: 'static+Finaly,
+            T::Data: 'static + Finaly,
         {
             match get_key() {
                 Some(key) => register_on_thread_exit(st, key),

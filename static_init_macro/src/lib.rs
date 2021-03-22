@@ -726,6 +726,11 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             })
         };
     }
+    macro_rules! into_immutable {
+        () => {
+            stat.mutability = None
+            };
+    }
 
     let typ: Type = if !(options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy) {
         if stat.mutability.is_none() {
@@ -739,33 +744,104 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             }
         }
     } else if is_thread_local && options.drop == DropMode::Finalize {
+        if stat.mutability.is_none() {
             parse_quote! {
                 ::static_init::lazy::UnSyncLazyFinalize::<#stat_typ>
             }
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::UnSyncMutLazyFinalize::<#stat_typ>
+            }
+        }
     } else if is_thread_local && options.drop == DropMode::Drop{
-        parse_quote! {
-            ::static_init::lazy::UnSyncLazyDroped::<#stat_typ>
+        if stat.mutability.is_none() {
+            parse_quote! {
+                ::static_init::lazy::UnSyncLazyDroped::<#stat_typ>
+            }
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::UnSyncMutLazyDroped::<#stat_typ>
+            }
         }
     } else if is_thread_local {
+        if stat.mutability.is_none() {
             parse_quote! {
                 ::static_init::lazy::UnSyncLazy::<#stat_typ>
             }
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::UnSyncMutLazy::<#stat_typ>
+            }
+        }
     } else if options.drop == DropMode::Finalize && options.init == InitMode::QuasiLazy {
-        parse_quote! {
-            ::static_init::lazy::QuasiLazyFinalize::<#stat_typ>
+        if stat.mutability.is_none() {
+            parse_quote! {
+                ::static_init::lazy::QuasiLazyFinalize::<#stat_typ>
+            }
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::QuasiMutLazyFinalize::<#stat_typ>
+            }
         }
     } else if options.drop == DropMode::Finalize && options.init == InitMode::Lazy {
-        parse_quote! {
-            ::static_init::lazy::LazyFinalize::<#stat_typ>
+        if stat.mutability.is_none() {
+            parse_quote! {
+                ::static_init::lazy::LazyFinalize::<#stat_typ>
+            }
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::MutLazyFinalize::<#stat_typ>
+            }
+        }
+    } else if options.drop == DropMode::Drop && options.init == InitMode::Lazy {
+        if stat.mutability.is_none() {
+            return generate_error!(
+                "Droped lazy must be mutable"
+            );
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::MutLazyDroped::<#stat_typ>
+            }
+        }
+    } else if options.drop == DropMode::Drop && options.init == InitMode::QuasiLazy {
+        if stat.mutability.is_none() {
+            return generate_error!(
+                "Droped lazy must be mutable"
+            );
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::QuasiMutLazyDroped::<#stat_typ>
+            }
         }
     } else if options.init == InitMode::QuasiLazy {
-         parse_quote! {
-             ::static_init::lazy::QuasiLazy::<#stat_typ>
-         }
+        if stat.mutability.is_none() {
+            parse_quote! {
+                ::static_init::lazy::QuasiLazy::<#stat_typ>
+            }
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::QuasiMutLazy::<#stat_typ>
+            }
+        }
     } else {
+        if stat.mutability.is_none() {
          parse_quote! {
              ::static_init::lazy::Lazy::<#stat_typ>
          }
+        } else {
+            into_immutable!();
+         parse_quote! {
+             ::static_init::lazy::MutLazy::<#stat_typ>
+         }
+        }
     };
 
     let sp = stat.expr.span();

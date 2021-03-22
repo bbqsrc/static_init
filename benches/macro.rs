@@ -11,6 +11,7 @@
 extern crate static_init;
 use ctor::ctor;
 use static_init::dynamic;
+use std::sync::Mutex;
 
 extern crate test;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -43,12 +44,29 @@ static WCT: AtomicI32 = AtomicI32::new(0);
 
 #[dynamic(lazy)]
 static L: AtomicI32 = AtomicI32::new(0);
+#[dynamic(quasi_lazy)]
+static LQ: AtomicI32 = AtomicI32::new(0);
 
 #[dynamic(lazy)]
 #[thread_local]
 static LT: AtomicI32 = AtomicI32::new(0);
 #[dynamic(lazy)]
 static mut L_: i32 = 0;
+#[dynamic(quasi_lazy)]
+static mut L_QUASI: i32 = 0;
+#[dynamic(lazy,drop)]
+static mut L_DROP: i32 = 0;
+#[dynamic(quasi_lazy,drop)]
+static mut L_QUASI_DROP: i32 = 0;
+#[dynamic(lazy)]
+#[thread_local]
+static mut LTM: i32 = 0;
+#[dynamic(lazy,drop)]
+#[thread_local]
+static mut LTMD: i32 = 0;
+
+#[dynamic(0)]
+static L_MUTEX: Mutex<Option<i32>> = Mutex::new(None);
 
 
 #[bench]
@@ -60,11 +78,15 @@ fn atomic_dynamic_static(bench: &mut Bencher) {
     bench.iter(|| unsafe{W.fetch_add(1, Ordering::Relaxed)});
 }
 #[bench]
-fn atomic_lesser_lazy_static(bench: &mut Bencher) {
+fn atomic_lazy_static(bench: &mut Bencher) {
     bench.iter(|| L.fetch_add(1, Ordering::Relaxed));
 }
 #[bench]
-fn atomic_lesser_lazy_static_thread_local(bench: &mut Bencher) {
+fn atomic_quasi_lazy_static(bench: &mut Bencher) {
+    bench.iter(|| LQ.fetch_add(1, Ordering::Relaxed));
+}
+#[bench]
+fn atomic_lazy_static_thread_local(bench: &mut Bencher) {
     bench.iter(|| LT.fetch_add(1, Ordering::Relaxed));
 }
 #[bench]
@@ -91,7 +113,39 @@ fn atomic_dynamic_static_mutable(bench: &mut Bencher) {
     bench.iter(|| unsafe { WM.fetch_add(1, Ordering::Relaxed) });
 }
 #[bench]
-fn lesser_lazy_static(bench: &mut Bencher) {
-    bench.iter(|| unsafe{*L_+=1});
+fn mut_lazy_static(bench: &mut Bencher) {
+    bench.iter(|| *L_.write_lock()+=1);
+}
+#[bench]
+fn quasi_mut_lazy_static(bench: &mut Bencher) {
+    bench.iter(|| *L_QUASI.write_lock()+=1);
+}
+#[bench]
+fn mut_lazy_droped_static(bench: &mut Bencher) {
+    bench.iter(|| *L_DROP.write_lock()+=1);
+}
+#[bench]
+fn quasi_mut_lazy_droped_static(bench: &mut Bencher) {
+    bench.iter(|| *L_QUASI_DROP.write_lock()+=1);
+}
+#[bench]
+fn mut_lazy_thread_local(bench: &mut Bencher) {
+    bench.iter(|| *LTM.write_lock()+=1);
+}
+#[bench]
+fn mut_lazy_thread_local_droped(bench: &mut Bencher) {
+    bench.iter(|| *LTMD.write_lock()+=1);
+}
+#[bench]
+fn mutex_mut_lazy(bench: &mut Bencher) {
+    bench.iter(|| {
+        let mut l = unsafe{L_MUTEX.lock().unwrap()};
+        if let Some(v) = &mut *l {
+            *v+=1;
+        } else {
+            *l=Some(0)
+        }
+        });
+    
 }
 //access to lazy static cost 2ns

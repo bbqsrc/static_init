@@ -117,10 +117,9 @@ where
 }
 
 pub trait Sequentializer<'a,T: Sequential>: 'static + Sized + Phased {
-    type Guard;
     type ReadGuard;
-    fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::Guard;
-    fn read_lock(s: &'a T, shall_proceed: impl Fn(Phase) -> bool) -> Self::ReadGuard;
+    type WriteGuard;
+    fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> LockNature) -> LockResult<Self::ReadGuard,Self::WriteGuard>;
 }
 
 /// A [Sequentializer] ensure sequential phase transition of the object it sequentialize
@@ -133,10 +132,22 @@ pub trait LazySequentializer<'a,T: Sequential<Sequentializer = Self>>: Sequentia
     /// transition the object to the initialized Phase.
     fn init(
         s: &'a T,
-        shall_proceed: impl Fn(Phase) -> bool,
+        shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&<T as Sequential>::Data),
         init_on_reg_failure: bool,
-    ) -> Self::Guard;
+    );
+    fn init_or_read_guard(
+        s: &'a T,
+        shall_init: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&<T as Sequential>::Data),
+        init_on_reg_failure: bool,
+    ) -> Self::ReadGuard;
+    fn init_or_write_guard(
+        s: &'a T,
+        shall_init: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&<T as Sequential>::Data),
+        init_on_reg_failure: bool,
+    ) -> Self::WriteGuard;
 }
 /// A [SplitedSequentializer] ensure two sequences of sequencial phase transtion: init and finalize
 trait SplitedLazySequentializer<'a,T: Sequential>: Sequentializer<'a,T> {
@@ -155,7 +166,21 @@ trait SplitedLazySequentializer<'a,T: Sequential>: Sequentializer<'a,T> {
         init: impl FnOnce(&<T as Sequential>::Data),
         reg: impl FnOnce(&T) -> bool,
         init_on_reg_failure: bool,
-    ) -> Self::Guard;
+    );
+    fn init_or_read_guard(
+        s: &'a T,
+        shall_init: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&<T as Sequential>::Data),
+        reg: impl FnOnce(&T) -> bool,
+        init_on_reg_failure: bool,
+    ) -> Self::ReadGuard;
+    fn init_or_write_guard(
+        s: &'a T,
+        shall_init: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&<T as Sequential>::Data),
+        reg: impl FnOnce(&T) -> bool,
+        init_on_reg_failure: bool,
+    ) -> Self::WriteGuard;
     /// A callback that is intened to be stored by the `reg` argument of `init` method.
     fn finalize_callback(s: &T, f: impl FnOnce(&T::Data));
 }
@@ -245,6 +270,7 @@ pub use lazy::UnSyncLazy;
 pub mod raw_static;
 
 mod mutex;
+pub use mutex::{LockResult,LockNature,PhaseGuard};
 
 #[derive(Debug)]
 #[doc(hidden)]
