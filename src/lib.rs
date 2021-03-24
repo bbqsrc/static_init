@@ -5,7 +5,6 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-#![feature(asm)]
 #![cfg_attr(
     all(any(target_os ="linux", target_os="android", target_os ="windows"),not(debug_mode)),
     no_std
@@ -170,7 +169,7 @@ pub unsafe trait LazySequentializer<'a,T: Sequential<Sequentializer = Self>>: Se
     );
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change (Read Lock). The returned lock may be shared.
-    fn init_or_read_guard(
+    fn init_then_read_guard(
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
@@ -178,7 +177,7 @@ pub unsafe trait LazySequentializer<'a,T: Sequential<Sequentializer = Self>>: Se
     ) -> Self::ReadGuard;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change accepts through the returned lock guard (Write Lock). The lock is exculisive.
-    fn init_or_write_guard(
+    fn init_then_write_guard(
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
@@ -211,19 +210,19 @@ pub unsafe trait SplitedLazySequentializer<'a,T: Sequential>: Sequentializer<'a,
     /// thread exit.
     fn init(
         target: &'a T,
-        shall_proceed: impl Fn(Phase) -> bool,
+        shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
     );
-    fn init_or_read_guard(
+    fn init_then_read_guard(
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
     ) -> Self::ReadGuard;
-    fn init_or_write_guard(
+    fn init_then_write_guard(
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),

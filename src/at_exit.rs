@@ -142,13 +142,13 @@ mod exit_manager {
             )
         }
         #[inline(always)]
-        fn init_or_read_guard(
+        fn init_then_read_guard(
             st: &'static T,
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) -> Self::ReadGuard {
-            <SubSequentializer as SplitedLazySequentializer<T>>::init_or_read_guard(
+            <SubSequentializer as SplitedLazySequentializer<T>>::init_then_read_guard(
                 st,
                 shall_proceed,
                 init,
@@ -157,13 +157,13 @@ mod exit_manager {
             )
         }
         #[inline(always)]
-        fn init_or_write_guard(
+        fn init_then_write_guard(
             st: &'static T,
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) -> Self::WriteGuard {
-            <SubSequentializer as SplitedLazySequentializer<T>>::init_or_write_guard(
+            <SubSequentializer as SplitedLazySequentializer<T>>::init_then_write_guard(
                 st,
                 shall_proceed,
                 init,
@@ -284,13 +284,13 @@ mod local_manager {
             )
         }
         #[inline(always)]
-        fn init_or_read_guard(
+        fn init_then_read_guard(
             st: &'static T,
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) -> Self::ReadGuard {
-            <SubSequentializer as SplitedLazySequentializer<T>>::init_or_read_guard(
+            <SubSequentializer as SplitedLazySequentializer<T>>::init_then_read_guard(
                 st,
                 shall_proceed,
                 init,
@@ -299,13 +299,13 @@ mod local_manager {
             )
         }
         #[inline(always)]
-        fn init_or_write_guard(
+        fn init_then_write_guard(
             st: &'static T,
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) -> Self::WriteGuard {
-            <SubSequentializer as SplitedLazySequentializer<T>>::init_or_write_guard(
+            <SubSequentializer as SplitedLazySequentializer<T>>::init_then_write_guard(
                 st,
                 shall_proceed,
                 init,

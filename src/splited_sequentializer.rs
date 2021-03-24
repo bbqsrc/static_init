@@ -69,7 +69,7 @@ where
         lazy_initialization(phase_guard, init, reg, init_on_reg_failure);
     }
     #[inline(always)]
-    fn init_or_read_guard(
+    fn init_then_read_guard(
         s: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
@@ -92,7 +92,7 @@ where
         }
     }
     #[inline(always)]
-    fn init_or_write_guard(
+    fn init_then_write_guard(
         s: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
@@ -329,7 +329,7 @@ mod global_once {
             debug_thread_zero!(s);
         }
         #[inline(always)]
-        fn init_or_read_guard(
+        fn init_then_read_guard(
             s: &'a T,
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
@@ -354,7 +354,7 @@ mod global_once {
             }
         }
         #[inline(always)]
-        fn init_or_write_guard(
+        fn init_then_write_guard(
             s: &'a T,
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),

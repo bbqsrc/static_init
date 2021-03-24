@@ -23,7 +23,7 @@ use windows::{park, unpark_all};
 mod linux {
     use core::ptr;
     use core::sync::atomic::{AtomicU32};
-    use libc::{syscall, SYS_futex, FUTEX_PRIVATE_FLAG, FUTEX_WAIT, FUTEX_WAKE};
+    use libc::{syscall, SYS_futex, FUTEX_PRIVATE_FLAG, FUTEX_WAIT, FUTEX_WAKE, FUTEX_WAKE_BITSET, FUTEX_WAIT_BITSET};
 
     pub(super) struct Parker {
         futex:        AtomicU32,
@@ -56,6 +56,58 @@ mod linux {
                     i32::MAX
                 )
             };
+        }
+        pub(super) fn unpark_all_readers(&self) {
+            unsafe {
+                syscall(
+                    SYS_futex,
+                    &self.futex as *const _ as *const _,
+                    FUTEX_WAKE_BITSET | FUTEX_PRIVATE_FLAG,
+                    i32::MAX,
+                    ptr::null::<u32>(),
+                    ptr::null::<u32>(),
+                    2
+                ) as u32 
+            }
+        }
+        pub(super) fn unpark_one_writer(&self) {
+            unsafe {
+                syscall(
+                    SYS_futex,
+                    &self.futex as *const _ as *const _,
+                    FUTEX_WAKE_BITSET | FUTEX_PRIVATE_FLAG,
+                    1, 
+                    ptr::null::<u32>(),
+                    ptr::null::<u32>(),
+                    1
+                )
+            };
+        }
+        pub(super) fn park_writer(&self, value: u32) -> bool {
+            unsafe {
+                syscall(
+                    SYS_futex,
+                    &self.futex as *const _ as *const _,
+                    FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG,
+                    value,
+                    ptr::null::<u32>(),
+                    ptr::null::<u32>(),
+                    1
+                ) == 0
+            }
+        }
+        pub(super) fn park_reader(&self, value: u32) -> bool {
+            unsafe {
+                syscall(
+                    SYS_futex,
+                    &self.futex as *const _ as *const _,
+                    FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG,
+                    value,
+                    ptr::null::<u32>(),
+                    ptr::null::<u32>(),
+                    2
+                ) == 0
+            }
         }
         pub(super) fn value(&self) -> &AtomicU32 {
             &self.futex
@@ -396,54 +448,39 @@ mod mutex {
     impl<'a> Drop for ReadLock<'a> {
         #[inline(always)]
         fn drop(&mut self) {
-            let mut cur = self.state.0.value().load(Ordering::Relaxed);
-            let mut target;
-            //let mut cur = self.state.fetch_sub(READER_UNTIY,Ordering::Release);
-            //if cur & READER_BITS == 0 && cur & PARKED_BIT != 0 {
-            //    loop {
-            //        match self.state.compare_exchange_weak(cur, cur & !PARKED_BIT,Ordering::AcqRel,Ordering::Relaxed) {
-            //            Ok(_) => {
-            //                unpark_all(self.state);
-            //                break;
-            //            }
-            //            Err(new) => {
-            //                // With the actual lock this will never happen
-            //                if new & (LOCKED_BIT | READER_BITS) != 0 || new & PARKED_BIT == 0 {
-            //                    break;
-            //                } else {
-            //                    cur = new;
-            //                    hint::spin_loop();
-            //                }
-            //            }
-            //        }
-            //        }
-            //    }
+            //let mut cur = self.state.0.value().load(Ordering::Relaxed);
+            //let mut target;
+            let prev = self.state.0.value().fetch_sub(READER_UNITY,Ordering::Release);
+            if prev & READER_BITS == READER_UNITY && prev & PARKED_BIT != 0 {
+                self.state.0.value().fetch_and(!PARKED_BIT,Ordering::Relaxed);
+                self.state.0.unpark_all();
+            }
 
             //}
-            loop {
-                if (cur & READER_BITS) == READER_UNITY {
-                    target = cur & !(READER_BITS | PARKED_BIT)
-                } else {
-                    target = cur - READER_UNITY
-                }
-                match self.state.0.value().compare_exchange_weak(
-                    cur,
-                    target,
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => {
-                        if (cur & PARKED_BIT != 0) && (target & PARKED_BIT == 0) {
-                            self.state.0.unpark_all();
-                        } 
-                        break;
-                    }
-                    Err(v) => {
-                        cur = v;
-                        hint::spin_loop();
-                    }
-                }
-            }
+            //loop {
+            //    if (cur & READER_BITS) == READER_UNITY {
+            //        target = cur & !(READER_BITS | PARKED_BIT)
+            //    } else {
+            //        target = cur - READER_UNITY
+            //    }
+            //    match self.state.0.value().compare_exchange_weak(
+            //        cur,
+            //        target,
+            //        Ordering::Release,
+            //        Ordering::Relaxed,
+            //    ) {
+            //        Ok(_) => {
+            //            if (cur & PARKED_BIT != 0) && (target & PARKED_BIT == 0) {
+            //                self.state.0.unpark_all();
+            //            } 
+            //            break;
+            //        }
+            //        Err(v) => {
+            //            cur = v;
+            //            hint::spin_loop();
+            //        }
+            //    }
+            //}
         }
     }
 

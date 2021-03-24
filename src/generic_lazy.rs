@@ -392,7 +392,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     {
         #[cfg(not(debug_mode))]
         {
-            LazySequentializer::init_or_read_guard(
+            LazySequentializer::init_then_read_guard(
                 this,
                 S::shall_proceed,
                 |data: &T| {
@@ -408,7 +408,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         #[cfg(debug_mode)]
         {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                LazySequentializer::init_or_read_guard(
+                LazySequentializer::init_then_read_guard(
                     this,
                     S::shall_proceed,
                     |data: &T| {
@@ -449,7 +449,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     {
         #[cfg(not(debug_mode))]
         {
-            LazySequentializer::init_or_write_guard(
+            LazySequentializer::init_then_write_guard(
                 this,
                 S::shall_proceed,
                 |data: &T| {
@@ -465,7 +465,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         #[cfg(debug_mode)]
         {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                LazySequentializer::init_or_write_guard(
+                LazySequentializer::init_then_write_guard(
                     this,
                     S::shall_proceed,
                     |data: &T| {

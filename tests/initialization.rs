@@ -7,7 +7,7 @@
 #![cfg_attr(feature = "thread_local", feature(thread_local))]
 
 extern crate static_init;
-use static_init::{constructor,dynamic, Finaly};
+use static_init::{constructor,destructor,dynamic, Finaly};
 
 use std::sync::atomic::{AtomicBool,AtomicUsize,Ordering};
 use std::thread::{spawn,sleep};
@@ -21,8 +21,34 @@ impl A {
         A(v)
         }
 }
+
+static FINALY_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 impl Finaly for A {
-    fn finaly(&self) {}
+    fn finaly(&self) {
+        FINALY_COUNT.fetch_add(1,Ordering::Relaxed);
+        }
+}
+static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+impl Drop for A {
+    fn drop (&mut self) {
+        DROP_COUNT.fetch_add(1,Ordering::Relaxed);
+    }
+}
+
+#[destructor(10)]
+extern fn test_d_counts() {
+    let c = FINALY_COUNT.load(Ordering::Relaxed);
+    if c != 34 {
+        eprintln!("Wrong finaly count {}", c);
+        unsafe{libc::_exit(1)};
+    }
+    let c = DROP_COUNT.load(Ordering::Relaxed);
+    if c != 28 {
+        eprintln!("Wrong drop count {}", c);
+        unsafe{libc::_exit(1)};
+    }
 }
 
 macro_rules! make_test { 
@@ -42,6 +68,7 @@ macro_rules! make_test {
         
             #[constructor(10)]
             extern fn test_pre() {
+                // if XPRE is a thread local, it is not the one that will appear in main. 
                 assert_eq!($acc!(XPRE),42);
             }
         
@@ -81,27 +108,27 @@ macro_rules! accr {
 
 make_test!(lazy, acc0, lazy);
 make_test!(quasi_lazy, acc0, lazy);
-make_test!(lazy_finalize, acc0, lazy finalize);
-make_test!(quasi_lazy_finalize, acc0, quasi_lazy finalize);
+make_test!(lazy_finalize, acc0, lazy finalize);//F:3
+make_test!(quasi_lazy_finalize, acc0, quasi_lazy finalize);//F:3
 
 make_test!(mut_lazy, accr, lazy, mut);
 make_test!(quasi_mut_lazy, accr, lazy, mut);
-make_test!(mut_lazy_finalize, accr, lazy finalize, mut);
-make_test!(quasi_mut_lazy_finalize, accr, quasi_lazy finalize, mut);
-make_test!(mut_lazy_drop, accr, lazy drop, mut);
-make_test!(quasi_mut_lazy_drop, accr, quasi_lazy drop, mut);
+make_test!(mut_lazy_finalize, accr, lazy finalize, mut);//F:3
+make_test!(quasi_mut_lazy_finalize, accr, quasi_lazy finalize, mut);//F:3
+make_test!(mut_lazy_drop, accr, lazy drop, mut);//D:3
+make_test!(quasi_mut_lazy_drop, accr, quasi_lazy drop, mut);//D:3
 
 #[cfg(feature="thread_local")]
 make_test!(thread_local_lazy, acc0, lazy => thread_local);
 #[cfg(feature="thread_local")]
-make_test!(thread_local_lazy_finalize, acc0, lazy finalize => thread_local);
+make_test!(thread_local_lazy_finalize, acc0, lazy finalize => thread_local);//F:3+8
 #[cfg(feature="thread_local")]
-make_test!(thread_local_lazy_drop, acc0, lazy drop => thread_local);
+make_test!(thread_local_lazy_drop, acc0, lazy drop => thread_local);//D:3+8
 
 #[cfg(feature="thread_local")]
 make_test!(thread_local_mut_lazy, accr, lazy, mut => thread_local);
 #[cfg(feature="thread_local")]
-make_test!(thread_local_mut_lazy_finalize, accr, lazy finalize, mut => thread_local);
+make_test!(thread_local_mut_lazy_finalize, accr, lazy finalize, mut => thread_local);//F:3+8
 #[cfg(feature="thread_local")]
-make_test!(thread_local_mut_lazy_drop, accr, lazy drop, mut => thread_local);
+make_test!(thread_local_mut_lazy_drop, accr, lazy drop, mut => thread_local);//D: 3+8
 

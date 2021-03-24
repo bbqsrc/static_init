@@ -121,13 +121,13 @@ macro_rules! init_only {
                 )
             }
             #[inline(always)]
-            fn init_or_read_guard(
+            fn init_then_read_guard(
                 s: &'a T,
                 on_uninited: impl Fn(Phase) -> bool,
                 init: impl FnOnce(&'a <T as Sequential>::Data),
                 init_on_reg_failure: bool,
             ) -> Self::ReadGuard{
-                <$sub as SplitedLazySequentializer<T>>::init_or_read_guard(
+                <$sub as SplitedLazySequentializer<T>>::init_then_read_guard(
                     s,
                     on_uninited,
                     init,
@@ -136,13 +136,13 @@ macro_rules! init_only {
                 )
             }
             #[inline(always)]
-            fn init_or_write_guard(
+            fn init_then_write_guard(
                 s: &'a T,
                 on_uninited: impl Fn(Phase) -> bool,
                 init: impl FnOnce(&'a <T as Sequential>::Data),
                 init_on_reg_failure: bool,
             ) -> Self::WriteGuard{
-                <$sub as SplitedLazySequentializer<T>>::init_or_write_guard(
+                <$sub as SplitedLazySequentializer<T>>::init_then_write_guard(
                     s,
                     on_uninited,
                     init,
