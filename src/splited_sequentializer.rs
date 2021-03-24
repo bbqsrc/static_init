@@ -3,9 +3,6 @@ use crate::mutex::{
 };
 use crate::{Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer};
 
-#[cfg(debug_mode)]
-use super::CyclicPanic;
-
 use core::hint::unreachable_unchecked;
 
 /// Ensure sequentialization, similar to SyncSequentializer
@@ -26,21 +23,26 @@ impl Phased for UnSyncSequentializer {
     }
 }
 
-impl<'a, T: Sequential + 'a> Sequentializer<'a, T> for UnSyncSequentializer
+// SAFETY: it is safe because it does implement circular initialization panic
+unsafe impl<'a, T: Sequential + 'a> Sequentializer<'a, T> for UnSyncSequentializer
 where
     T::Sequentializer: AsRef<UnSyncSequentializer>,
 {
     type ReadGuard = UnSyncReadPhaseGuard<'a, T>;
     type WriteGuard = UnSyncPhaseGuard<'a, T>;
 
-    fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> LockNature) -> LockResult<UnSyncReadPhaseGuard<'a, T>, UnSyncPhaseGuard<'a, T>> {
+    fn lock(
+        s: &'a T,
+        shall_proceed: impl Fn(Phase) -> LockNature,
+    ) -> LockResult<UnSyncReadPhaseGuard<'a, T>, UnSyncPhaseGuard<'a, T>> {
         let this = Sequential::sequentializer(s).as_ref();
 
         this.0.lock(s, &shall_proceed)
     }
 }
 
-impl<'a, T: Sequential + 'a> SplitedLazySequentializer<'a, T> for UnSyncSequentializer
+// SAFETY: it is safe because it does implement circular initialization panic
+unsafe impl<'a, T: Sequential + 'a> SplitedLazySequentializer<'a, T> for UnSyncSequentializer
 where
     T::Sequentializer: AsRef<UnSyncSequentializer>,
 {
@@ -48,8 +50,8 @@ where
     fn init(
         s: &'a T,
         shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&<T as Sequential>::Data),
-        reg: impl FnOnce(&T) -> bool,
+        init: impl FnOnce(&'a <T as Sequential>::Data),
+        reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
     ) {
         let phase_guard = match <Self as Sequentializer<T>>::lock(s, |p| {
@@ -61,7 +63,7 @@ where
         }) {
             LockResult::None => return,
             LockResult::Write(l) => l,
-            LockResult::Read(_) => unsafe{unreachable_unchecked()},
+            LockResult::Read(_) => unsafe { unreachable_unchecked() },
         };
 
         lazy_initialization(phase_guard, init, reg, init_on_reg_failure);
@@ -70,8 +72,8 @@ where
     fn init_or_read_guard(
         s: &'a T,
         shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&<T as Sequential>::Data),
-        reg: impl FnOnce(&T) -> bool,
+        init: impl FnOnce(&'a <T as Sequential>::Data),
+        reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
     ) -> Self::ReadGuard {
         match <Self as Sequentializer<T>>::lock(s, |p| {
@@ -86,15 +88,15 @@ where
                 let l = lazy_initialization(l, init, reg, init_on_reg_failure);
                 l.into()
             }
-            LockResult::None => unsafe{unreachable_unchecked()},
+            LockResult::None => unsafe { unreachable_unchecked() },
         }
     }
     #[inline(always)]
     fn init_or_write_guard(
         s: &'a T,
         shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&<T as Sequential>::Data),
-        reg: impl FnOnce(&T) -> bool,
+        init: impl FnOnce(&'a <T as Sequential>::Data),
+        reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
     ) -> Self::WriteGuard {
         match <Self as Sequentializer<T>>::lock(s, |_| LockNature::Write) {
@@ -105,8 +107,8 @@ where
                     l
                 }
             }
-            LockResult::Read(_) => unsafe{unreachable_unchecked()},
-            LockResult::None => unsafe{unreachable_unchecked()},
+            LockResult::Read(_) => unsafe { unreachable_unchecked() },
+            LockResult::None => unsafe { unreachable_unchecked() },
         }
     }
 
@@ -128,14 +130,13 @@ where
         }) {
             LockResult::None => return,
             LockResult::Write(l) => l,
-            LockResult::Read(_) => unsafe{unreachable_unchecked()},
+            LockResult::Read(_) => unsafe { unreachable_unchecked() },
         };
 
         lazy_finalization(phase_guard, f);
     }
 }
 
-#[cfg(feature = "global_once")]
 mod global_once {
     use super::{lazy_finalization, lazy_initialization};
     use super::{Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer};
@@ -144,11 +145,9 @@ mod global_once {
         SyncReadPhaseGuard,
     };
 
-    #[cfg(debug_mode)]
-    use super::CyclicPanic;
-    #[cfg(debug_mode)]
-    use core::sync::atomic::AtomicUsize;
     use core::hint::unreachable_unchecked;
+    #[cfg(debug_mode)]
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     //#[inline(never)]
     //#[cold]
@@ -172,7 +171,6 @@ mod global_once {
     //    return Some(phase_guard);
     //}
 
-    #[cfg_attr(docsrs, doc(cfg(feature = "global_once")))]
     /// Ensure sequentialization.
     ///
     /// The SplitedSequentializer::init method can be called concurently on this
@@ -255,21 +253,54 @@ mod global_once {
         }
     }
 
-    impl<'a, T: Sequential + 'a> Sequentializer<'a, T> for SyncSequentializer
+    // SAFETY: it is safe because it does implement synchronized locks
+    unsafe impl<'a, T: Sequential + 'a> Sequentializer<'a, T> for SyncSequentializer
     where
         T::Sequentializer: AsRef<SyncSequentializer>,
     {
         type ReadGuard = SyncReadPhaseGuard<'a, T>;
         type WriteGuard = SyncPhaseGuard<'a, T>;
 
-        fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> LockNature) -> LockResult<SyncReadPhaseGuard<'a, T>, SyncPhaseGuard<'a, T>> {
+        fn lock(
+            s: &'a T,
+            shall_proceed: impl Fn(Phase) -> LockNature,
+        ) -> LockResult<SyncReadPhaseGuard<'a, T>, SyncPhaseGuard<'a, T>> {
             let this = Sequential::sequentializer(s).as_ref();
 
-            this.0.lock(s, &shall_proceed,Phase::INITIALIZED|Phase::REGISTERED)
+            this.0.lock(
+                s,
+                &shall_proceed,
+                Phase::INITIALIZED | Phase::REGISTERED,
+                #[cfg(debug_mode)]
+                &this.1,
+            )
         }
     }
 
-    impl<'a, T: Sequential + 'a> SplitedLazySequentializer<'a, T> for SyncSequentializer
+    macro_rules! debug_save_thread {
+        ($s:expr) => {
+            #[cfg(debug_mode)]
+            {
+                let this = Sequential::sequentializer($s).as_ref();
+                use parking_lot::lock_api::GetThreadId;
+                this.1.store(
+                    parking_lot::RawThreadId.nonzero_thread_id().into(),
+                    Ordering::Relaxed,
+                );
+            }
+        };
+    }
+    macro_rules! debug_thread_zero {
+        ($s:expr) => {
+            #[cfg(debug_mode)]
+            {
+                let this = Sequential::sequentializer($s).as_ref();
+                this.1.store(0, Ordering::Relaxed);
+            }
+        };
+    }
+    // SAFETY: it is safe because it does implement synchronized locks
+    unsafe impl<'a, T: Sequential + 'a> SplitedLazySequentializer<'a, T> for SyncSequentializer
     where
         T::Sequentializer: AsRef<SyncSequentializer>,
     {
@@ -277,8 +308,8 @@ mod global_once {
         fn init(
             s: &'a T,
             shall_init: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&<T as Sequential>::Data),
-            reg: impl FnOnce(&T) -> bool,
+            init: impl FnOnce(&'a <T as Sequential>::Data),
+            reg: impl FnOnce(&'a T) -> bool,
             init_on_reg_failure: bool,
         ) {
             let phase_guard = match <Self as Sequentializer<T>>::lock(s, |p| {
@@ -290,17 +321,19 @@ mod global_once {
             }) {
                 LockResult::None => return,
                 LockResult::Write(l) => l,
-                LockResult::Read(_) => unsafe{unreachable_unchecked()},
+                LockResult::Read(_) => unsafe { unreachable_unchecked() },
             };
 
+            debug_save_thread!(s);
             lazy_initialization(phase_guard, init, reg, init_on_reg_failure);
+            debug_thread_zero!(s);
         }
         #[inline(always)]
         fn init_or_read_guard(
             s: &'a T,
             shall_init: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&<T as Sequential>::Data),
-            reg: impl FnOnce(&T) -> bool,
+            init: impl FnOnce(&'a <T as Sequential>::Data),
+            reg: impl FnOnce(&'a T) -> bool,
             init_on_reg_failure: bool,
         ) -> Self::ReadGuard {
             match <Self as Sequentializer<T>>::lock(s, |p| {
@@ -312,52 +345,74 @@ mod global_once {
             }) {
                 LockResult::Read(l) => l,
                 LockResult::Write(l) => {
+                    debug_save_thread!(s);
                     let l = lazy_initialization(l, init, reg, init_on_reg_failure);
+                    debug_thread_zero!(s);
                     l.into()
                 }
-                LockResult::None => unsafe{unreachable_unchecked()},
+                LockResult::None => unsafe { unreachable_unchecked() },
             }
         }
         #[inline(always)]
         fn init_or_write_guard(
             s: &'a T,
             shall_init: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&<T as Sequential>::Data),
-            reg: impl FnOnce(&T) -> bool,
+            init: impl FnOnce(&'a <T as Sequential>::Data),
+            reg: impl FnOnce(&'a T) -> bool,
             init_on_reg_failure: bool,
         ) -> Self::WriteGuard {
             match <Self as Sequentializer<T>>::lock(s, |_| LockNature::Write) {
                 LockResult::Write(l) => {
                     if shall_init(l.phase()) {
-                        lazy_initialization(l, init, reg, init_on_reg_failure)
+                        debug_save_thread!(s);
+                        let l = lazy_initialization(l, init, reg, init_on_reg_failure);
+                        debug_thread_zero!(s);
+                        l
                     } else {
                         l
                     }
                 }
-                LockResult::Read(_) => unsafe{unreachable_unchecked()},
-                LockResult::None => unsafe{unreachable_unchecked()},
+                LockResult::Read(_) => unsafe { unreachable_unchecked() },
+                LockResult::None => unsafe { unreachable_unchecked() },
             }
         }
 
         fn finalize_callback(s: &T, f: impl FnOnce(&T::Data)) {
             let this = Sequential::sequentializer(s).as_ref();
 
-            let phase_guard = match this.0.lock(Sequential::data(s), |p| {
-                if (p
-                    & (Phase::FINALIZATION
-                        | Phase::FINALIZED
-                        | Phase::FINALIZATION_PANICKED
-                        | Phase::INITIALIZATION_SKIPED))
-                    .is_empty()
+            let _id = {
+                #[cfg(debug_mode)]
                 {
-                    LockNature::Write
-                } else {
-                    LockNature::None
+                    AtomicUsize::new(0)
                 }
-            },Phase::INITIALIZED|Phase::REGISTERED) {
+                #[cfg(not(debug_mode))]
+                {
+                    ()
+                }
+            };
+
+            let phase_guard = match this.0.lock(
+                Sequential::data(s),
+                |p| {
+                    if (p
+                        & (Phase::FINALIZATION
+                            | Phase::FINALIZED
+                            | Phase::FINALIZATION_PANICKED
+                            | Phase::INITIALIZATION_SKIPED))
+                        .is_empty()
+                    {
+                        LockNature::Write
+                    } else {
+                        LockNature::None
+                    }
+                },
+                Phase::INITIALIZED | Phase::REGISTERED,
+                #[cfg(debug_mode)]
+                &_id,
+            ) {
                 LockResult::None => return,
                 LockResult::Write(l) => l,
-                LockResult::Read(_) => unsafe{unreachable_unchecked()},
+                LockResult::Read(_) => unsafe { unreachable_unchecked() },
             };
 
             lazy_finalization(phase_guard, f);
@@ -365,17 +420,19 @@ mod global_once {
     }
 }
 //TODO: diviser en deux SyncSequentializer && ProgramInitedSyncSequentializer
-#[cfg(feature = "global_once")]
 pub use global_once::SyncSequentializer;
 
 #[inline(never)]
 #[cold]
-fn lazy_initialization<P: PhaseGuard<S>, S: Sequential>(
+fn lazy_initialization<'a, P: PhaseGuard<'a, S>, S: Sequential + 'a>(
     mut phase_guard: P,
-    init: impl FnOnce(&<S as Sequential>::Data),
-    reg: impl FnOnce(&S) -> bool,
+    init: impl FnOnce(&'a <S as Sequential>::Data),
+    reg: impl FnOnce(&'a S) -> bool,
     init_on_reg_failure: bool,
-) -> P {
+) -> P
+where
+    <S as Sequential>::Data: 'a,
+{
     let cur = phase_guard.phase();
 
     let registrating = cur | Phase::REGISTRATION;
@@ -432,7 +489,7 @@ fn lazy_initialization<P: PhaseGuard<S>, S: Sequential>(
     phase_guard
 }
 
-fn lazy_finalization<T, P: PhaseGuard<T>>(mut phase_guard: P, f: impl FnOnce(&T)) {
+fn lazy_finalization<'a, T: 'a, P: PhaseGuard<'a, T>>(mut phase_guard: P, f: impl FnOnce(&'a T)) {
     let cur = phase_guard.phase();
 
     let finalizing = cur | Phase::FINALIZATION;

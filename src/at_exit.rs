@@ -1,30 +1,26 @@
 #![cfg(any(elf, mach_o, coff))]
 
-#[cfg(feature = "global_once")]
 mod exit_manager {
     use crate::mutex::{LockNature, LockResult, SyncPhaseGuard, SyncReadPhaseGuard};
     use crate::splited_sequentializer::SyncSequentializer as SubSequentializer;
     use crate::Finaly;
+    use crate::mutex::Mutex;
     use crate::{
         LazySequentializer, Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer,
     };
 
-    use core::cell::Cell;
-    use core::ptr::NonNull;
-
     trait OnExit {
-        fn get_next(&self) -> Option<NonNull<Node>>;
+        fn take_next(&self) -> Option<&'static Node>;
         fn execute(&self);
     }
 
     type Node = dyn 'static + OnExit + Sync;
 
-    #[cfg_attr(docsrs, doc(cfg(feature = "global_once")))]
     /// A sequentializer that store finalize_callback  
     /// for execution at program exit
     pub struct ExitSequentializer {
         sub:  SubSequentializer,
-        next: Cell<Option<NonNull<Node>>>,
+        next: Mutex<Option<&'static Node>>,
     }
 
     mod reg {
@@ -34,49 +30,47 @@ mod exit_manager {
 
         use crate::mutex::Mutex;
 
-        use core::ptr::NonNull;
-
-        struct Wrap(NonNull<Node>);
-
-        unsafe impl Send for Wrap {}
-
-        static REGISTER: Mutex<(Option<Wrap>, bool)> = Mutex::new((None, true));
+        static REGISTER: Mutex<(Option<&'static Node>, bool)> = Mutex::new((None, true));
 
         #[destructor(0)]
         extern "C" fn execute_at_exit() {
             let mut l = REGISTER.lock();
-            let mut list: Option<NonNull<Node>> = l.0.take().map(|w| w.0);
+            let mut list: Option<&'static Node> = l.0.take();
             drop(l);
-            while let Some(mut on_exit) = list {
-                let r = unsafe { on_exit.as_mut() };
-                r.execute();
-                list = r.get_next().or_else(|| {
+            while let Some(on_exit) = list {
+                // SAFETY: 
+                // the reference created mut point to an object:
+                //   - this is full-filled by the requirement that the ExitSequentializer object
+                //     must be static.
+                //   - there should not have any mutable reference to the object: this is
+                //   a requirement of the ExitSequentializer object new method
+                on_exit.execute();
+                list = on_exit.take_next().or_else(|| {
                     let mut l = REGISTER.lock();
                     if l.0.is_none() {
                         l.1 = true;
                     }
-                    l.0.take().map(|w| w.0)
+                    l.0.take()
                 });
             }
         }
 
-        #[cfg_attr(docsrs, doc(cfg(feature = "global_once")))]
         /// Store a reference of the static for execution of the
         /// finalize call back at program exit
         pub fn finalize_at_exit<
             T: 'static + Sequential<Sequentializer = ExitSequentializer> + Sync,
         >(
-            st: &T,
+            st: &'static T,
         ) -> bool
         where
             T::Data: 'static + Finaly,
         {
             let mut l = REGISTER.lock();
             if l.1 {
-                Sequential::sequentializer(st)
-                    .next
-                    .set(l.0.take().map(|w| w.0));
-                *l = (Some(Wrap((st as &Node).into())), true);
+                let mut next = Sequential::sequentializer(st) .next .lock() ;
+                assert!(next.is_none(), "Double registration of an ExitSequentializer for finalization at program exit");
+                *next = l.0.take();
+                *l = (Some(st as &Node), true);
                 true
             } else {
                 false
@@ -87,11 +81,14 @@ mod exit_manager {
 
     const GLOBAL_INIT: ExitSequentializer = ExitSequentializer {
         sub:  SubSequentializer::new(),
-        next: Cell::new(None),
+        next: Mutex::new(None),
     };
 
     impl ExitSequentializer {
-        pub const unsafe fn new() -> Self {
+        /// Create a new ExitSequentializer
+        ///
+        /// Useless if the target object is not 'static
+        pub const fn new() -> Self {
             GLOBAL_INIT
         }
     }
@@ -102,16 +99,13 @@ mod exit_manager {
         }
     }
 
-    //All access of next are done when REGISTER is locked
-    //or when the access is exclusive in execute_at_exit
-    unsafe impl Sync for ExitSequentializer {}
-
     impl Phased for ExitSequentializer {
         fn phase(this: &Self) -> Phase {
             Phased::phase(&this.sub)
         }
     }
-    impl<'a, T: 'a + Sequential<Sequentializer = Self>> Sequentializer<'a, T> for ExitSequentializer
+    // SAFETY: it is safe because it does implement synchronized locks 
+    unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>> Sequentializer<'a, T> for ExitSequentializer
     where
         T: 'static + Sync,
         T::Data: 'static + Finaly,
@@ -126,16 +120,17 @@ mod exit_manager {
         }
     }
 
-    impl<'a, T: 'a + Sequential<Sequentializer = Self>> LazySequentializer<'a, T> for ExitSequentializer
+    // SAFETY: it is safe because it does implement synchronized locks 
+    unsafe impl<T: 'static + Sequential<Sequentializer = Self>> LazySequentializer<'static, T> for ExitSequentializer
     where
         T: 'static + Sync,
         T::Data: 'static + Finaly,
     {
         #[inline(always)]
         fn init(
-            st: &'a T,
+            st: &'static T,
             shall_proceed: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&<T as Sequential>::Data),
+            init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) {
             <SubSequentializer as SplitedLazySequentializer<T>>::init(
@@ -148,9 +143,9 @@ mod exit_manager {
         }
         #[inline(always)]
         fn init_or_read_guard(
-            st: &'a T,
+            st: &'static T,
             shall_proceed: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&<T as Sequential>::Data),
+            init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) -> Self::ReadGuard {
             <SubSequentializer as SplitedLazySequentializer<T>>::init_or_read_guard(
@@ -163,9 +158,9 @@ mod exit_manager {
         }
         #[inline(always)]
         fn init_or_write_guard(
-            st: &'a T,
+            st: &'static T,
             shall_proceed: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&<T as Sequential>::Data),
+            init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) -> Self::WriteGuard {
             <SubSequentializer as SplitedLazySequentializer<T>>::init_or_write_guard(
@@ -182,8 +177,8 @@ mod exit_manager {
     where
         T::Data: 'static + Finaly,
     {
-        fn get_next(&self) -> Option<NonNull<Node>> {
-            Sequential::sequentializer(self).next.get()
+        fn take_next(&self) -> Option<&'static Node> {
+            Sequential::sequentializer(self).next.lock().take()
         }
         fn execute(&self) {
             <SubSequentializer as SplitedLazySequentializer<T>>::finalize_callback(
@@ -193,7 +188,6 @@ mod exit_manager {
         }
     }
 }
-#[cfg(feature = "global_once")]
 pub use exit_manager::{finalize_at_exit, ExitSequentializer};
 
 #[cfg(feature = "thread_local")]
@@ -201,7 +195,7 @@ pub use local_manager::{finalize_at_thread_exit, ThreadExitSequentializer};
 
 #[cfg(feature = "thread_local")]
 mod local_manager {
-
+    
     use crate::splited_sequentializer::UnSyncSequentializer as SubSequentializer;
     use crate::{
         Finaly, LazySequentializer, Phase, Phased, Sequential, Sequentializer,
@@ -209,12 +203,11 @@ mod local_manager {
     };
 
     use core::cell::Cell;
-    use core::ptr::NonNull;
 
     use crate::mutex::{LockNature, LockResult, UnSyncPhaseGuard, UnSyncReadPhaseGuard};
 
     trait OnExit {
-        fn get_next(&self) -> Option<NonNull<Node>>;
+        fn take_next(&self) -> Option<&'static Node>;
         fn execute(&self);
     }
 
@@ -225,7 +218,7 @@ mod local_manager {
     /// for execution at thread exit
     pub struct ThreadExitSequentializer {
         sub:  SubSequentializer,
-        next: Cell<Option<NonNull<Node>>>,
+        next: Cell<Option<&'static Node>>,
     }
 
     const LOCAL_INIT: ThreadExitSequentializer = ThreadExitSequentializer {
@@ -234,7 +227,8 @@ mod local_manager {
     };
 
     impl ThreadExitSequentializer {
-        pub const unsafe fn new() -> Self {
+        /// Useless if the target object is not a static thread_local
+        pub const fn new() -> Self {
             LOCAL_INIT
         }
     }
@@ -250,7 +244,8 @@ mod local_manager {
             Phased::phase(&this.sub)
         }
     }
-    impl<'a, T: 'static + Sequential<Sequentializer = Self>> Sequentializer<'a, T>
+    // SAFETY: it is safe because it does implement locking panic
+    unsafe impl<'a, T: 'static + Sequential<Sequentializer = Self>> Sequentializer<'a, T>
         for ThreadExitSequentializer
     where
         T::Data: 'static + Finaly,
@@ -267,16 +262,17 @@ mod local_manager {
         }
     }
 
-    impl<'a, T: 'static + Sequential<Sequentializer = Self>> LazySequentializer<'a, T>
+    // SAFETY: it is safe because it does implement circular initialization panic
+    unsafe impl< T: 'static + Sequential<Sequentializer = Self>> LazySequentializer<'static, T>
         for ThreadExitSequentializer
     where
         T::Data: 'static + Finaly,
     {
         #[inline(always)]
         fn init(
-            st: &'a T,
+            st: &'static T,
             shall_proceed: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&<T as Sequential>::Data),
+            init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) {
             <SubSequentializer as SplitedLazySequentializer<T>>::init(
@@ -289,9 +285,9 @@ mod local_manager {
         }
         #[inline(always)]
         fn init_or_read_guard(
-            st: &'a T,
+            st: &'static T,
             shall_proceed: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&<T as Sequential>::Data),
+            init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) -> Self::ReadGuard {
             <SubSequentializer as SplitedLazySequentializer<T>>::init_or_read_guard(
@@ -304,9 +300,9 @@ mod local_manager {
         }
         #[inline(always)]
         fn init_or_write_guard(
-            st: &'a T,
+            st: &'static T,
             shall_proceed: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&<T as Sequential>::Data),
+            init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
         ) -> Self::WriteGuard {
             <SubSequentializer as SplitedLazySequentializer<T>>::init_or_write_guard(
@@ -323,8 +319,8 @@ mod local_manager {
     where
         T::Data: 'static + Finaly,
     {
-        fn get_next(&self) -> Option<NonNull<Node>> {
-            Sequential::sequentializer(self).next.get()
+        fn take_next(&self) -> Option<&'static Node> {
+            Sequential::sequentializer(self).next.take()
         }
         fn execute(&self) {
             <SubSequentializer as SplitedLazySequentializer<T>>::finalize_callback(
@@ -355,10 +351,11 @@ mod local_manager {
         extern "system" fn destroy(_: LPVOID, reason: DWORD, _: LPVOID) {
             if reason == DLL_THREAD_DETACH || reason == DLL_PROCESS_DETACH {
                 let mut o_ptr = REGISTER.take();
-                while let Some(ptr) = o_ptr {
-                    let r = unsafe { ptr.as_ref() };
+                while let Some(r) = o_ptr {
+                    // SAFETY ptr must refer to a thread_local static
+                    // this is required by ThreadExitSequentializer::new
                     r.execute();
-                    o_ptr = r.get_next();
+                    o_ptr = r.take_next();
                     o_ptr.or_else(|| REGISTER.take());
                 }
                 DONE.set(true)
@@ -383,7 +380,7 @@ mod local_manager {
         }
 
         #[thread_local]
-        static REGISTER: Cell<Option<NonNull<Node>>> = Cell::new(None);
+        static REGISTER: Cell<Option<&'static Node>> = Cell::new(None);
 
         #[thread_local]
         static DONE: Cell<bool> = Cell::new(false);
@@ -392,7 +389,7 @@ mod local_manager {
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
         pub fn finalize_at_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer>>(
-            st: &T,
+            st: &'static T,
         ) -> bool
         where
             T::Data: 'static + Finaly,
@@ -400,8 +397,8 @@ mod local_manager {
             if DONE.get() {
                 false
             } else {
-                unsafe { Sequential::manager(st).next.set(REGISTER.take()) };
-                REGISTER.set(Some((st as &Node).into()));
+                Sequential::sequentializer(st).next.set(REGISTER.take());
+                REGISTER.set(Some(st as &Node));
                 true
             }
         }
@@ -414,7 +411,7 @@ mod local_manager {
         use super::{Node, ThreadExitSequentializer};
         use crate::{Finaly, Sequential};
         use core::cell::Cell;
-        use core::ptr::{null_mut, NonNull};
+        use core::ptr::null_mut;
 
         extern "C" {
             #[linkage = "extern_weak"]
@@ -441,18 +438,17 @@ mod local_manager {
         }
 
         #[thread_local]
-        static REGISTER: Cell<Option<NonNull<Node>>> = Cell::new(None);
+        static REGISTER: Cell<Option<&'static Node>> = Cell::new(None);
 
         #[thread_local]
         static DESTROYING: Cell<bool> = Cell::new(false);
 
         extern "C" fn execute_destroy(_: *mut u8) {
             DESTROYING.set(true);
-            let mut o_ptr = REGISTER.take();
-            while let Some(ptr) = o_ptr {
-                let r = unsafe { ptr.as_ref() };
+            let mut o_r = REGISTER.take();
+            while let Some(r) = o_r {
                 r.execute();
-                o_ptr = r.get_next().or_else(|| REGISTER.take());
+                o_r = r.take_next().or_else(|| REGISTER.take());
             }
             DESTROYING.set(false);
         }
@@ -462,7 +458,7 @@ mod local_manager {
         pub fn finalize_at_thread_exit<
             T: 'static + Sequential<Sequentializer = ThreadExitSequentializer>,
         >(
-            st: &T,
+            st: &'static T,
         ) -> bool
         where
             T::Data: 'static + Finaly,
@@ -473,7 +469,7 @@ mod local_manager {
             } else if !DESTROYING.get() {
                 at_thread_exit(execute_destroy, null_mut())
             }
-            REGISTER.set(Some((st as &Node).into()));
+            REGISTER.set(Some(st as &Node));
             true
         }
     }
@@ -504,14 +500,13 @@ mod local_manager {
         static ITERATION_COUNT: Cell<usize> = Cell::new(0);
 
         #[thread_local]
-        static REGISTER: Cell<Option<NonNull<Node>>> = Cell::new(None);
+        static REGISTER: Cell<Option<&'static Node>> = Cell::new(None);
 
         extern "C" fn execute_destroy(_: *mut c_void) {
             let mut opt_head = REGISTER.take();
-            while let Some(ptr) = opt_head {
-                let r = unsafe { ptr.as_ref() };
+            while let Some(r) = opt_head {
                 r.execute();
-                opt_head = r.get_next().or_else(|| REGISTER.take());
+                opt_head = r.take_next().or_else(|| REGISTER.take());
             }
         }
 
@@ -558,7 +553,7 @@ mod local_manager {
             Some(key as pthread_key_t)
         }
         fn register_on_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer>>(
-            st: &T,
+            st: &'static T,
             key: pthread_key_t,
         ) -> bool
         where
@@ -578,9 +573,9 @@ mod local_manager {
                 }
             }
 
-            unsafe { Sequential::manager(st).next.set(REGISTER.take()) };
+            Sequential::sequentializer(st).next.set(REGISTER.take());
 
-            REGISTER.set(Some((st as &Node).into()));
+            REGISTER.set(Some(st as &Node));
             true
         }
 
@@ -588,7 +583,7 @@ mod local_manager {
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
         pub fn finalize_at_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer>>(
-            st: &T,
+            st: &'static T,
         ) -> bool
         where
             T::Data: 'static + Finaly,

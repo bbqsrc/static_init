@@ -47,6 +47,7 @@ static L: AtomicI32 = AtomicI32::new(0);
 #[dynamic(quasi_lazy)]
 static LQ: AtomicI32 = AtomicI32::new(0);
 
+#[cfg(feature="thread_local")]
 #[dynamic(lazy)]
 #[thread_local]
 static LT: AtomicI32 = AtomicI32::new(0);
@@ -58,9 +59,12 @@ static mut L_QUASI: i32 = 0;
 static mut L_DROP: i32 = 0;
 #[dynamic(quasi_lazy,drop)]
 static mut L_QUASI_DROP: i32 = 0;
+#[cfg(feature="thread_local")]
 #[dynamic(lazy)]
 #[thread_local]
 static mut LTM: i32 = 0;
+
+#[cfg(feature="thread_local")]
 #[dynamic(lazy,drop)]
 #[thread_local]
 static mut LTMD: i32 = 0;
@@ -88,6 +92,7 @@ fn atomic_quasi_lazy_static(bench: &mut Bencher) {
     bench.iter(|| LQ.fetch_add(1, Ordering::Relaxed));
 }
 #[bench]
+#[cfg(feature="thread_local")]
 fn atomic_lazy_static_thread_local(bench: &mut Bencher) {
     bench.iter(|| LT.fetch_add(1, Ordering::Relaxed));
 }
@@ -131,10 +136,12 @@ fn quasi_mut_lazy_droped_static(bench: &mut Bencher) {
     bench.iter(|| *L_QUASI_DROP.write_lock()+=1);
 }
 #[bench]
+#[cfg(feature="thread_local")]
 fn mut_lazy_thread_local(bench: &mut Bencher) {
     bench.iter(|| *LTM.write_lock()+=1);
 }
 #[bench]
+#[cfg(feature="thread_local")]
 fn mut_lazy_thread_local_droped(bench: &mut Bencher) {
     bench.iter(|| *LTMD.write_lock()+=1);
 }

@@ -24,6 +24,11 @@ pub struct UnInited<T>(UnsafeCell<MaybeUninit<T>>);
 impl<T: Finaly> Finaly for UnInited<T> {
     #[inline(always)]
     fn finaly(&self) {
+        //SAFETY: UnInited is only used as part of GenericLazy, that gives access
+        //only if the Sequentializer is a Lazy Sequentializer
+        //
+        //So the lazy Sequentializer should only execute finaly if the object initialization
+        //succeeded
         unsafe { &*self.get() }.finaly();
     }
 }
@@ -35,6 +40,11 @@ pub struct DropedUnInited<T>(UnsafeCell<MaybeUninit<T>>);
 impl<T> Finaly for DropedUnInited<T> {
     #[inline(always)]
     fn finaly(&self) {
+        //SAFETY: UnInited is only used as part of GenericLazy, that gives access
+        //only if the Sequentializer is a Lazy Sequentializer
+        //
+        //So the lazy Sequentializer should only execute finaly if the object initialization
+        //succeeded
         unsafe { self.get().drop_in_place() };
     }
 }
@@ -76,6 +86,10 @@ pub struct GenericLazy<T, F, M, S> {
     #[cfg(debug_mode)]
     _info:          Option<StaticInfo>,
 }
+// SAFETY: The synchronization is ensured by the Sequentializer
+//  1. GenericLazy fullfill the requirement that its sequentializer is a field
+//  of itself as is its target data.
+//  2. The sequentializer ensure that the initialization is atomic
 unsafe impl<T: LazyData, F: Sync, M: Sync, S> Sync for GenericLazy<T, F, M, S> where
     <T as LazyData>::Target: Sync
 {
@@ -87,6 +101,11 @@ unsafe impl<T: LazyData, F: Sync, M: Sync, S> Send for GenericLazy<T, F, M, S> w
 
 impl<T, F, M, S> GenericLazy<T, F, M, S> {
     /// const initialize the lazy, the inner data may be in an uninitialized state
+    ///
+    /// # Safety: 
+    /// The parameter M should be a lazy sequentializer that ensure that:
+    ///  1. When finalize is called, no other shared reference to the inner data exist
+    ///  2. The finalization is run only if the object was previously initialized
     pub const unsafe fn new_static(generator: F, sequentializer: M, value: T) -> Self {
         Self {
             value,
@@ -97,8 +116,13 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
             _info: None,
         }
     }
-    /// const initialize the lazy, the inner data may be in an uninitialized state and
-    /// store some debuging informations
+    /// const initialize the lazy, the inner data may be in an uninitialized state, and store
+    /// debug information in debug_mode
+    ///
+    /// # Safety: 
+    /// The parameter M should be a lazy sequentializer that ensure that:
+    ///  1. When finalize is called, no other shared reference to the inner data exist
+    ///  2. The finalization is run only if the object was previously initialized
     pub const unsafe fn new_static_with_info(
         generator: F,
         sequentializer: M,
@@ -128,11 +152,11 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
     /// potentialy initialize the inner data
     ///
     /// this method is called every time the generic lazy is dereferenced
-    pub fn init(this: &Self)
+    pub fn init<'a>(this: &'a Self)
     where
         T: 'static + LazyData,
         M: 'static,
-        for<'a> M: LazySequentializer<'a, Self>,
+        M: LazySequentializer<'a, Self>,
         F: 'static + Generator<T::Target>,
         S: 'static + LazyPolicy,
     {
@@ -154,7 +178,7 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
         #[cfg(debug_mode)]
         {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                <M as Sequentializer<Self>>::init(
+                LazySequentializer::init(
                     this,
                     S::shall_proceed,
                     |data: &T| {
@@ -215,10 +239,14 @@ where
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut T::Target {
         Self::init(self);
+        // SAFETY
+        // This is safe as long as the object has been initialized
+        // this is the contract ensured by init.
         unsafe { &mut *self.value.get() }
     }
 }
 
+//SAFETY: data and sequentialize are two fields of Self.
 unsafe impl<
         F: 'static + Generator<T::Target>,
         T: 'static + LazyData,
@@ -249,10 +277,16 @@ pub struct GenericMutLazy<T, F, M, S> {
     #[cfg(debug_mode)]
     _info:          Option<StaticInfo>,
 }
+
+// SAFETY: The synchronization is ensured by the Sequentializer
+//  1. GenericMutLazy fullfill the requirement that its sequentializer is a field
+//  of itself as is its target data.
+//  2. The sequentializer ensure that the initialization is atomic
 unsafe impl<T: LazyData, F: Sync, M: Sync, S> Sync for GenericMutLazy<T, F, M, S> where
     <T as LazyData>::Target: Send
 {
 }
+// SAFETY: The synchronization is ensured by the Sequentializer
 unsafe impl<T: LazyData, F: Sync, M: Sync, S> Send for GenericMutLazy<T, F, M, S> where
     <T as LazyData>::Target: Send
 {
@@ -260,6 +294,11 @@ unsafe impl<T: LazyData, F: Sync, M: Sync, S> Send for GenericMutLazy<T, F, M, S
 
 impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     /// const initialize the lazy, the inner data may be in an uninitialized state
+    ///
+    /// # Safety: 
+    /// The parameter M should be a lazy sequentializer that ensure that:
+    ///  1. When finalize is called, no other shared reference to the inner data exist
+    ///  2. The finalization is run only if the object was previously initialized
     pub const unsafe fn new_static(generator: F, sequentializer: M, value: T) -> Self {
         Self {
             value,
@@ -272,6 +311,11 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     }
     /// const initialize the lazy, the inner data may be in an uninitialized state and
     /// store some debuging informations
+    ///
+    /// # Safety: 
+    /// The parameter M should be a lazy sequentializer that ensure that:
+    ///  1. When finalize is called, no other shared reference to the inner data exist
+    ///  2. The finalization is run only if the object was previously initialized
     pub const unsafe fn new_static_with_info(
         generator: F,
         sequentializer: M,
@@ -364,7 +408,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         #[cfg(debug_mode)]
         {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                <M as Sequentializer<Self>>::init_or_read_guard(
+                LazySequentializer::init_or_read_guard(
                     this,
                     S::shall_proceed,
                     |data: &T| {
@@ -421,7 +465,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         #[cfg(debug_mode)]
         {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                <M as Sequentializer<Self>>::init_or_write_guard(
+                LazySequentializer::init_or_write_guard(
                     this,
                     S::shall_proceed,
                     |data: &T| {
@@ -459,6 +503,7 @@ impl<T, F, M, S> Deref for GenericMutLazy<T, F, M, S> {
     }
 }
 
+//SAFETY: data and sequentialize are two fields of Self.
 unsafe impl<
         F: 'static + Generator<T::Target>,
         T: 'static + LazyData,

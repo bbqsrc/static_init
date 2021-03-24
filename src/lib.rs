@@ -6,7 +6,7 @@
 // copied, modified, or distributed except according to those terms.
 
 #![cfg_attr(
-    not(any(feature = "global_once", feature = "thread_local_drop")),
+    all(any(target_os ="linux", target_os="android", target_os ="windows"),not(debug_mode)),
     no_std
 )]
 #![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]
@@ -83,16 +83,15 @@ mod details {}
 
 /// A trait for objects that are intinded to transition between phasis.
 ///
-/// The trait is ensafe because the implementor must ensure:
+/// A type that implement [`Sequential`] ensured that its `data` will traverse a sequence of
+/// [phases](Phase). The phase does not participates to the value of the type. The phase describes
+/// the *lifetime* of the object: initialized, droped,...
 ///
-/// - the value returned by sequentializer refer to a memory
-///    that as the same lifetime as the data and
+/// # Safety
 ///
-/// - the sequentializer object returned shall be only returned for
-/// the "self" object.
+/// The trait is unsafe because the implementor should ensure that the reference returned by
+/// [`sequentializer`](Self::sequentializer) and the reference returned by [`data`](Self::data) refer to two subobject of a same object.
 ///
-/// It is thus safe to implement this trait if sequentializer and
-/// data refer to different field of the same object.
 pub unsafe trait Sequential {
     type Data;
     type Sequentializer;
@@ -100,7 +99,7 @@ pub unsafe trait Sequential {
     fn data(this: &Self) -> &Self::Data;
 }
 
-/// Trait for objects that know in which phase they are
+/// Trait for objects that know in which [phase](Phase) they are.
 pub trait Phased {
     /// return the current phase
     fn phase(this: &Self) -> Phase;
@@ -116,69 +115,118 @@ where
     }
 }
 
-pub trait Sequentializer<'a,T: Sequential>: 'static + Sized + Phased {
+/// A type that implement Sequentializer aims at [phase](Phase) sequencement.
+/// 
+/// The method [`Sequential::sequentializer`] should return an object that implement
+/// this trait.
+///
+/// # Safety 
+///
+/// The trait is unsafe because the lock should ensure the following lock semantic:
+///  - if the implementor also implement Sync, the read/write lock semantic should be synchronized
+///  and if no lock is taken, the call to lock should synchronize with the end of the phase
+///  transition that put the target object in its current phase.
+///  - if the implementor is not Sync then the lock should panic if any attempt is made
+///    to take another lock while a write lock is alive or to take a write lock while there 
+///    is already a read_lock.(the lock should behave as a RefCell).
+pub unsafe trait Sequentializer<'a,T: Sequential>: 'static + Sized + Phased {
     type ReadGuard;
     type WriteGuard;
-    fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> LockNature) -> LockResult<Self::ReadGuard,Self::WriteGuard>;
+    /// Lock the phases of an object in order to ensure atomic phase transition.
+    ///
+    /// The nature of the lock depend on the phase in which is the object, and is determined
+    /// by the `lock_nature` argument.
+    fn lock(target: &'a T, lock_nature: impl Fn(Phase) -> LockNature) 
+        -> LockResult<Self::ReadGuard,Self::WriteGuard>;
 }
 
-/// A [Sequentializer] ensure sequential phase transition of the object it sequentialize
-pub trait LazySequentializer<'a,T: Sequential<Sequentializer = Self>>: Sequentializer<'a,T> {
-    /// When called on the Sequential object, it will ensure that the phase transition
-    /// in order.
+/// A [`LazySequentializer`] sequentialize the [phases](Phase) of a target object to ensure
+/// atomic initialization and finalization.
+///
+/// # Safety 
+///
+/// The trait is unsafe because the implementor must ensure that:
+///
+///  - if the implementor also implement Sync, the read/write lock semantic should be synchronized
+///  and if no lock is taken, the call to lock should synchronize with the end of the phase
+///  transition that put the target object in its current phase.
+///  - if the implementor is not Sync then the lock should panic if any attempt is made
+///    to take another lock while a write lock is alive or to take a write lock while there 
+///    is already a read_lock.(the lock should behave as a RefCell).
+pub unsafe trait LazySequentializer<'a,T: Sequential<Sequentializer = Self>>: Sequentializer<'a,T> {
+    /// if `shall_init` return true for the target [`Sequential`] object, it initialize
+    /// the data of the target object using `init`
     ///
-    /// Decition to perform transition is conditionned by the shall_proceed funciton and
-    /// init_on_reg_failure boolean. The init function is intended to be the function that
-    /// transition the object to the initialized Phase.
+    /// The implementor may also proceed to registration of the finalizing method (drop)
+    /// in order to drop the object on the occurence of singular event (thread exit, or program
+    /// exit). If this registration fails and if `init_on_reg_failure` is `true` then the object
+    /// will be initialized, otherwise it will not.
     fn init(
-        s: &'a T,
+        target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&<T as Sequential>::Data),
+        init: impl FnOnce(&'a <T as Sequential>::Data),
         init_on_reg_failure: bool,
     );
+    /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
+    /// to change (Read Lock). The returned lock may be shared.
     fn init_or_read_guard(
-        s: &'a T,
+        target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&<T as Sequential>::Data),
+        init: impl FnOnce(&'a <T as Sequential>::Data),
         init_on_reg_failure: bool,
     ) -> Self::ReadGuard;
+    /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
+    /// to change accepts through the returned lock guard (Write Lock). The lock is exculisive.
     fn init_or_write_guard(
-        s: &'a T,
+        target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&<T as Sequential>::Data),
+        init: impl FnOnce(&'a <T as Sequential>::Data),
         init_on_reg_failure: bool,
     ) -> Self::WriteGuard;
 }
-/// A [SplitedSequentializer] ensure two sequences of sequencial phase transtion: init and finalize
-trait SplitedLazySequentializer<'a,T: Sequential>: Sequentializer<'a,T> {
-    /// When called on the Sequential object, it will ensure that the phase transition
-    /// in order.
+
+//TODO: doc here
+
+/// A [SplitedLazySequentializer] sequentialize the [phase](Phase) of an object to 
+/// ensure atomic initialization and finalization.
+///
+/// A sequentializer that implement this trait is not able to register the finalization
+/// for latter call on program exit or thread exit.
+///
+/// # Safety 
+///
+/// The trait is unsafe because the implementor must ensure that:
+///
+///  - either the implementor is Sync and the initialization is performed atomically
+///  - or the implementor is not Sync and any attempt to perform an initialization while
+///    an initialization is running will cause a panic.
+pub unsafe trait SplitedLazySequentializer<'a,T: Sequential>: Sequentializer<'a,T> {
+    /// if `shall_init` return true for the target [`Sequential`] object, it initialize
+    /// the data of the target object using `init`
     ///
-    /// Decition to perform transition is conditionned by the shall_proceed funciton and
-    /// init_on_reg_failure boolean. The init function is intended to be the function that
-    /// transition the object to the initialized Phase.
-    ///
-    /// The reg argument is supposed to store the `finalize_callback` method as a callback that will
-    /// be run latter during program execution.
+    /// Before initialization of the object, the fonction `reg` is call with the target
+    /// object as argument. This function should proceed to registration of the
+    /// [finalize_callback](Self::finalize_callback) for latter call at program exit or
+    /// thread exit.
     fn init(
-        s: &'a T,
+        target: &'a T,
         shall_proceed: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&<T as Sequential>::Data),
-        reg: impl FnOnce(&T) -> bool,
+        init: impl FnOnce(&'a <T as Sequential>::Data),
+        reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
     );
     fn init_or_read_guard(
-        s: &'a T,
+        target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&<T as Sequential>::Data),
-        reg: impl FnOnce(&T) -> bool,
+        init: impl FnOnce(&'a <T as Sequential>::Data),
+        reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
     ) -> Self::ReadGuard;
     fn init_or_write_guard(
-        s: &'a T,
+        target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&<T as Sequential>::Data),
-        reg: impl FnOnce(&T) -> bool,
+        init: impl FnOnce(&'a <T as Sequential>::Data),
+        reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
     ) -> Self::WriteGuard;
     /// A callback that is intened to be stored by the `reg` argument of `init` method.
@@ -217,6 +265,12 @@ pub mod phase {
     pub(crate) const READER_UNITY: u32 = 0b0000_0000_0000_0000_0000_1000_0000_0000;
 
     bitflags! {
+        /// The lifetime phase of an object, this indicate weither the object was initialized
+        /// finalized (droped),...
+        ///
+        /// The registration phase is a phase that precede the initialization phase and is meant
+        /// to register a callback that will proceed to the finalization (drop) of the object at
+        /// program exit or thread exit. Depending on the plateform this registration may fail.
         pub struct Phase: u32 {
             const INITIALIZED               = 0b0000_0000_0000_0000_0000_0000_0000_0001;
             const INITIALIZATION            = 0b0000_0000_0000_0000_0000_0000_0000_0010;
@@ -249,17 +303,18 @@ pub use static_init_macro::dynamic;
 /// Provides policy types for implementation of various lazily initialized types.
 pub mod generic_lazy;
 
-/// Provides two sequentializer, one that is Sync, and the other that is not Sync.
+/// Provides two lazy sequentializers, one that is Sync, and the other that is not Sync, that are
+/// able to sequentialize the target object initialization but cannot register its finalization
+/// callback.
 pub mod splited_sequentializer;
 
 #[cfg(any(elf, mach_o, coff))]
-/// Provides functionnality to execute callback at process/thread exit and sequentializer using
-/// those events.
+/// Provides two lazy sequentializers, one that will finalize the target object at program exit and 
+/// the other at thread exit.
 pub mod at_exit;
 
 /// Provides various implementation of lazily initialized types
 pub mod lazy;
-#[cfg(feature = "global_once")]
 #[doc(inline)]
 pub use lazy::Lazy;
 #[doc(inline)]
@@ -269,7 +324,17 @@ pub use lazy::UnSyncLazy;
 /// Provides types for statics that are meant to run code before main start or after it exit.
 pub mod raw_static;
 
-mod mutex;
+/// Provides PhaseLockers, that are phase tagged *adaptative* read-write lock types: during the lock loop the nature of the lock that
+/// is attempted to be taken variates depending on the phase.
+/// 
+/// The major difference with a RwLock is that decision to read lock, write lock are to not lock
+/// is taken within the lock loop: on each attempt to take the lock (when unparking for exemple)
+/// the mutex may change its locking strategy or abandon any further attempt to take the lock.
+///
+/// The algorithm is as efficient as parking_lot `RwLock` because it
+/// is an adaptation of the algorithm provided by parking_lot::RwLock. (TODO: bring more parts
+/// of parking_lot RwLock algorithm to those mutex)
+pub mod mutex;
 pub use mutex::{LockResult,LockNature,PhaseGuard};
 
 #[derive(Debug)]

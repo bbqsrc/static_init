@@ -703,11 +703,6 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
              `#[thread_local]` attribute"
         );
     }
-    if !is_thread_local && (options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy) && cfg!(not(feature="global_once")) {
-        return generate_error!(
-            "non thread_local lazy only supported with feature 'global_once'"
-        );
-    }
 
     let stat_ref: Expr = if !(options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy) && stat.mutability.is_some() {
         parse_quote! {
