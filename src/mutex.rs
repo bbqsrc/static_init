@@ -22,57 +22,85 @@ use windows::{park, unpark_all};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux {
     use core::ptr;
-    use core::sync::atomic::AtomicU32;
+    use core::sync::atomic::{AtomicU32};
     use libc::{syscall, SYS_futex, FUTEX_PRIVATE_FLAG, FUTEX_WAIT, FUTEX_WAKE};
 
-    pub(super) fn park(at: &AtomicU32, value: u32) -> bool {
-        unsafe {
-            syscall(
-                SYS_futex,
-                at as *const _ as *const _,
-                FUTEX_WAIT | FUTEX_PRIVATE_FLAG,
-                value,
-                ptr::null::<u32>(),
-            ) == 0
-        }
+    pub(super) struct Parker {
+        futex:        AtomicU32,
     }
-    pub(super) fn unpark_all(at: &AtomicU32) {
-        unsafe {
-            syscall(
-                SYS_futex,
-                at as *const _ as *const _,
-                FUTEX_WAKE | FUTEX_PRIVATE_FLAG,
-                u32::MAX,
-            )
-        };
+
+    impl Parker {
+        pub(super) const fn new(value: u32) -> Self {
+            Self {
+                futex:        AtomicU32::new(value),
+            }
+        }
+
+        pub(super) fn park(&self, value: u32) {
+            unsafe {
+                syscall(
+                    SYS_futex,
+                    &self.futex as *const _ as *const _,
+                    FUTEX_WAIT | FUTEX_PRIVATE_FLAG,
+                    value,
+                    ptr::null::<u32>(),
+                )
+            };
+        }
+        pub(super) fn unpark_all(&self) {
+            unsafe {
+                syscall(
+                    SYS_futex,
+                    &self.futex as *const _ as *const _,
+                    FUTEX_WAKE | FUTEX_PRIVATE_FLAG,
+                    i32::MAX
+                )
+            };
+        }
+        pub(super) fn value(&self) -> &AtomicU32 {
+            &self.futex
+        }
     }
 }
 #[cfg(any(target_os = "linux", target_os = "android"))]
-use linux::{park, unpark_all};
+use linux::Parker;
 
 #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "windows")))]
 mod other {
+    use core::sync::atomic::{AtomicU32, Ordering};
     use parking_lot_core::{DEFAULT_PARK_TOKEN, DEFAULT_UNPARK_TOKEN};
 
-    pub(super) fn park(at: &AtomicU32, value: u32) -> bool {
-        parking_lot_core::park(
-            at as *const _ as usize,
-            || at.load(Ordering::Relaxed) == value,
-            || {},
-            |_, _| {},
-            parking_lot_core::DEFAULT_PARK_TOKEN,
-            None,
-        );
-    }
-    pub(super) fn unpark(at: &AtomicU32, value: u32) -> bool {
-        parking_lot_core::unpark_all(
-            this as *const _ as usize,
-            parking_lot_core::DEFAULT_UNPARK_TOKEN,
-        );
+    pub(super) struct Parker(AtomicU32);
+
+    impl Parker {
+        pub(super) const fn new(value: u32) -> Self {
+            Self(AtomicU32::new(value))
+        }
+
+        pub(super) fn park(&self, value: u32) {
+            unsafe {
+                parking_lot_core::park(
+                    &self.0 as *const _ as usize,
+                    || self.0.load(Ordering::Relaxed) == value,
+                    || {},
+                    |_, _| {},
+                    DEFAULT_PARK_TOKEN,
+                    None,
+                )
+            };
+        }
+        pub(super) fn unpark_all(&self) {
+            unsafe {
+                parking_lot_core::unpark_all(&self.0 as *const _ as usize, DEFAULT_UNPARK_TOKEN)
+            };
+        }
+        pub(super) fn value(&self) -> &AtomicU32 {
+            &self.0
+        }
     }
 }
 #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "windows")))]
-pub(super) use other::{park, unpark_all};
+use other::Parker;
 
 mod spin_wait {
     // Extracted from parking_lot_core
@@ -163,7 +191,7 @@ pub enum LockResult<R, W> {
 
 mod mutex {
     use super::spin_wait::SpinWait;
-    use super::{park, unpark_all};
+    use super::Parker;
     use super::{LockNature, LockResult, PhaseGuard};
     use crate::phase::*;
     use crate::Phase;
@@ -171,7 +199,7 @@ mod mutex {
     use core::hint;
     use core::mem::forget;
     use core::ops::{Deref, DerefMut};
-    use core::sync::atomic::{fence, AtomicU32, Ordering};
+    use core::sync::atomic::{fence, Ordering};
 
     #[cfg(debug_mode)]
     use crate::CyclicPanic;
@@ -179,7 +207,7 @@ mod mutex {
     use core::sync::atomic::AtomicUsize;
 
     /// A phase locker.
-    pub struct SyncPhasedLocker(AtomicU32);
+    pub struct SyncPhasedLocker(Parker);
 
     pub(crate) struct Mutex<T>(UnsafeCell<T>, SyncPhasedLocker);
 
@@ -188,11 +216,11 @@ mod mutex {
     unsafe impl<T: Send> Send for Mutex<T> {}
 
     pub(crate) struct Lock<'a> {
-        state:     &'a AtomicU32,
+        state:     &'a SyncPhasedLocker,
         on_unlock: Phase,
     }
     pub(crate) struct ReadLock<'a> {
-        state:      &'a AtomicU32,
+        state:      &'a SyncPhasedLocker,
         init_phase: Phase,
     }
     pub(crate) struct MutexGuard<'a, T>(&'a mut T, Lock<'a>);
@@ -319,12 +347,16 @@ mod mutex {
     impl<'a> Lock<'a> {
         #[inline(always)]
         pub fn phase(&self) -> Phase {
-            let v = self.state.load(Ordering::Relaxed);
+            let v = self.state.0.value().load(Ordering::Relaxed);
             Phase::from_bits_truncate(v)
         }
         #[inline(always)]
         pub fn xor_phase(&self, xor: Phase) -> Phase {
-            let v = self.state.fetch_xor(xor.bits(), Ordering::Release);
+            let v = self
+                .state
+                .0
+                .value()
+                .fetch_xor(xor.bits(), Ordering::Release);
             Phase::from_bits_truncate(v) ^ xor
         }
     }
@@ -332,9 +364,13 @@ mod mutex {
     impl<'a> Drop for Lock<'a> {
         #[inline(always)]
         fn drop(&mut self) {
-            let prev = self.state.swap(self.on_unlock.bits(), Ordering::Release);
+            let prev = self
+                .state
+                .0
+                .value()
+                .swap(self.on_unlock.bits(), Ordering::Release);
             if prev & PARKED_BIT != 0 {
-                unpark_all(self.state)
+                self.state.0.unpark_all();
             }
         }
     }
@@ -345,7 +381,7 @@ mod mutex {
             let p = self.phase();
             let xorp = p ^ self.on_unlock;
             let xor_state = xorp.bits() | LOCKED_BIT | READER_UNITY;
-            let x = self.state.fetch_xor(xor_state, Ordering::AcqRel);
+            let x = self.state.0.value().fetch_xor(xor_state, Ordering::AcqRel);
             debug_assert_ne!(x & LOCKED_BIT, 0);
             debug_assert_eq!(x & READER_BITS, 0);
             let r = ReadLock {
@@ -360,7 +396,7 @@ mod mutex {
     impl<'a> Drop for ReadLock<'a> {
         #[inline(always)]
         fn drop(&mut self) {
-            let mut cur = self.state.load(Ordering::Relaxed);
+            let mut cur = self.state.0.value().load(Ordering::Relaxed);
             let mut target;
             //let mut cur = self.state.fetch_sub(READER_UNTIY,Ordering::Release);
             //if cur & READER_BITS == 0 && cur & PARKED_BIT != 0 {
@@ -390,7 +426,7 @@ mod mutex {
                 } else {
                     target = cur - READER_UNITY
                 }
-                match self.state.compare_exchange_weak(
+                match self.state.0.value().compare_exchange_weak(
                     cur,
                     target,
                     Ordering::Release,
@@ -398,8 +434,8 @@ mod mutex {
                 ) {
                     Ok(_) => {
                         if (cur & PARKED_BIT != 0) && (target & PARKED_BIT == 0) {
-                            unpark_all(self.state);
-                        }
+                            self.state.0.unpark_all();
+                        } 
                         break;
                     }
                     Err(v) => {
@@ -414,13 +450,13 @@ mod mutex {
     impl SyncPhasedLocker {
         #[inline(always)]
         pub const fn new(p: Phase) -> Self {
-            SyncPhasedLocker(AtomicU32::new(p.bits()))
+            SyncPhasedLocker(Parker::new(p.bits()))
         }
         #[inline(always)]
         /// Return the current phase and synchronize with the end of the
         /// phase transition that leads to this phase.
         pub fn phase(&self) -> Phase {
-            Phase::from_bits_truncate(self.0.load(Ordering::Acquire))
+            Phase::from_bits_truncate(self.0.value().load(Ordering::Acquire))
         }
         #[inline(always)]
         /// lock the phase.
@@ -461,18 +497,18 @@ mod mutex {
             hint: Phase,
             #[cfg(debug_mode)] id: &AtomicUsize,
         ) -> LockResult<ReadLock<'_>, Lock<'_>> {
-            let cur = hint.bits();
+            let expect = hint.bits();
             match how(hint) {
                 LockNature::None => {
-                    let real = self.0.load(Ordering::Acquire);
+                    let real = self.0.value().load(Ordering::Acquire);
                     if Phase::from_bits_truncate(real) == hint {
                         return LockResult::None;
                     }
                 }
                 LockNature::Write => {
-                    let expect = cur & !(LOCKED_BIT | PARKED_BIT | READER_BITS);
                     if self
                         .0
+                        .value()
                         .compare_exchange(
                             expect,
                             expect | LOCKED_BIT,
@@ -482,19 +518,15 @@ mod mutex {
                         .is_ok()
                     {
                         return LockResult::Write(Lock {
-                            state:     &self.0,
+                            state:     self,
                             on_unlock: Phase::from_bits_truncate(expect),
                         });
                     }
                 }
                 LockNature::Read => {
-                    let expect = if cur & READER_BITS != READER_BITS {
-                        cur & !(LOCKED_BIT | PARKED_BIT)
-                    } else {
-                        cur & !(LOCKED_BIT | PARKED_BIT) - READER_UNITY
-                    };
                     if self
                         .0
+                        .value()
                         .compare_exchange(
                             expect,
                             expect + READER_UNITY,
@@ -504,7 +536,7 @@ mod mutex {
                         .is_ok()
                     {
                         return LockResult::Read(ReadLock {
-                            state:      &self.0,
+                            state:      self,
                             init_phase: Phase::from_bits_truncate(expect),
                         });
                     }
@@ -523,7 +555,7 @@ mod mutex {
         ) -> LockResult<ReadLock<'_>, Lock<'_>> {
             let mut spin_wait = SpinWait::new();
 
-            let mut cur = self.0.load(Ordering::Relaxed);
+            let mut cur = self.0.value().load(Ordering::Relaxed);
 
             loop {
                 match how(Phase::from_bits_truncate(cur)) {
@@ -532,8 +564,8 @@ mod mutex {
                         return LockResult::None;
                     }
                     LockNature::Write => {
-                        if cur & (LOCKED_BIT | READER_BITS) == 0 {
-                            match self.0.compare_exchange_weak(
+                        if cur & (LOCKED_BIT | PARKED_BIT | READER_BITS) == 0 {
+                            match self.0.value().compare_exchange_weak(
                                 cur,
                                 cur | LOCKED_BIT,
                                 Ordering::Acquire,
@@ -541,7 +573,7 @@ mod mutex {
                             ) {
                                 Ok(_) => {
                                     return LockResult::Write(Lock {
-                                        state:     &self.0,
+                                        state:     self,
                                         on_unlock: Phase::from_bits_truncate(cur),
                                     })
                                 }
@@ -553,7 +585,7 @@ mod mutex {
                             && (cur & READER_BITS) < (READER_UNITY << 4)
                             && spin_wait.spin()
                         {
-                            cur = self.0.load(Ordering::Relaxed);
+                            cur = self.0.value().load(Ordering::Relaxed);
                             continue;
                         }
                     }
@@ -561,7 +593,7 @@ mod mutex {
                         if cur & (LOCKED_BIT | PARKED_BIT) == 0
                             && ((cur & READER_BITS) != READER_BITS)
                         {
-                            match self.0.compare_exchange_weak(
+                            match self.0.value().compare_exchange_weak(
                                 cur,
                                 cur + READER_UNITY,
                                 Ordering::Acquire,
@@ -569,7 +601,7 @@ mod mutex {
                             ) {
                                 Ok(_) => {
                                     return LockResult::Read(ReadLock {
-                                        state:      &self.0,
+                                        state:      self,
                                         init_phase: Phase::from_bits_truncate(cur),
                                     })
                                 }
@@ -578,13 +610,13 @@ mod mutex {
                             continue;
                         }
                         if cur & PARKED_BIT == 0 && spin_wait.spin() {
-                            cur = self.0.load(Ordering::Relaxed);
+                            cur = self.0.value().load(Ordering::Relaxed);
                             continue;
                         }
                     }
                 }
                 if cur & PARKED_BIT == 0 {
-                    match self.0.compare_exchange_weak(
+                    match self.0.value().compare_exchange_weak(
                         cur,
                         cur | PARKED_BIT,
                         Ordering::Relaxed,
@@ -608,9 +640,10 @@ mod mutex {
                     }
                 }
 
-                park(&self.0, cur);
+                self.0.park(cur);
+
                 spin_wait.reset();
-                cur = self.0.load(Ordering::Relaxed);
+                cur = self.0.value().load(Ordering::Relaxed);
             }
         }
     }

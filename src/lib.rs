@@ -5,6 +5,7 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+#![feature(asm)]
 #![cfg_attr(
     all(any(target_os ="linux", target_os="android", target_os ="windows"),not(debug_mode)),
     no_std
