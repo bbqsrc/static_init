@@ -261,7 +261,8 @@ pub mod phase {
     use bitflags::bitflags;
     pub(crate) const LOCKED_BIT: u32 =   0b1000_0000_0000_0000_0000_0000_0000_0000;
     pub(crate) const PARKED_BIT: u32 =   0b0100_0000_0000_0000_0000_0000_0000_0000;
-    pub(crate) const READER_BITS: u32 =  0b0011_1111_1111_1111_1111_1000_0000_0000;
+    pub(crate) const WPARKED_BIT: u32 =  0b0010_0000_0000_0000_0000_0000_0000_0000;
+    pub(crate) const READER_BITS: u32 =  0b0001_1111_1111_1111_1111_1000_0000_0000;
     pub(crate) const READER_UNITY: u32 = 0b0000_0000_0000_0000_0000_1000_0000_0000;
 
     bitflags! {
