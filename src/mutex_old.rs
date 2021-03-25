@@ -1,23 +1,37 @@
 #[cfg(windows)]
 mod windows {
     use core::mem::size_of;
+    use core::sync::atomic::AtomicU32;
     use winapi::shared::minwindef::TRUE;
-    use winapi::um::synchapi::{WaitOnAdress, WakeByAddressAll};
+    use winapi::um::synchapi::{WaitOnAddress, WakeByAddressAll};
     use winapi::um::winbase::INFINITE;
-    pub(super) fn park(at: &AtomicU32, value: u32) -> bool {
-        WaitOnAddress(
-            at as *const _ as *const _,
-            (&value) as *const _ as *const _,
+    pub(super) struct Parker {
+        futex:        AtomicU32,
+    }
+    impl Parker {
+        pub(super) const fn new(value: u32) -> Self {
+            Self {
+                futex:        AtomicU32::new(value),
+            }
+        }
+    pub(super) fn park(&self,value: u32) -> bool {
+        unsafe{WaitOnAddress(
+            &self.futex as *const _ as *mut _,
+            (&value) as *const _ as *mut _,
             size_of::<u32>(),
             INFINITE,
-        ) == TRUE
+        ) == TRUE}
     }
-    pub(super) fn unpark_all(at: &AtomicUsize) {
-        WakeByAddressAll(at as *const _ as *const _)
+    pub(super) fn unpark_all(&self) {
+        unsafe{WakeByAddressAll(&self.futex as *const _ as *mut _)}
+    }
+    pub(super) fn value(&self) -> &AtomicU32 {
+        &self.futex
+    }
     }
 }
 #[cfg(windows)]
-use windows::{park, unpark_all};
+use windows::Parker;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux {

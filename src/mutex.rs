@@ -1,19 +1,20 @@
 #[cfg(windows)]
 mod windows {
     use core::mem::size_of;
+    use core::sync::atomic::AtomicU32;
     use winapi::shared::minwindef::TRUE;
-    use winapi::um::synchapi::{WaitOnAdress, WakeByAddressAll};
+    use winapi::um::synchapi::{WaitOnAddress, WakeByAddressAll};
     use winapi::um::winbase::INFINITE;
     pub(super) fn park(at: &AtomicU32, value: u32) -> bool {
         WaitOnAddress(
-            at as *const _ as *const _,
-            (&value) as *const _ as *const _,
+            at as *const _ as *mut _,
+            (&value) as *const _ as *mut _,
             size_of::<u32>(),
             INFINITE,
         ) == TRUE
     }
-    pub(super) fn unpark_all(at: &AtomicUsize) {
-        WakeByAddressAll(at as *const _ as *const _)
+    pub(super) fn unpark_all(at: &AtomicU32) {
+        WakeByAddressAll(at as *const _ as *mut _)
     }
 }
 #[cfg(windows)]
