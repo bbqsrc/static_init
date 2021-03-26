@@ -82,12 +82,12 @@ impl<T> LazyData for DropedUnInited<T> {
 /// initialize the data, at each access depending on the LazyPolicy
 /// provided as generic argument.
 pub struct GenericLazy<T, F, M, S> {
-    value: T,
-    generator: F,
+    value:          T,
+    generator:      F,
     sequentializer: M,
-    phantom: PhantomData<S>,
+    phantom:        PhantomData<S>,
     #[cfg(debug_mode)]
-    _info: Option<StaticInfo>,
+    _info:          Option<StaticInfo>,
 }
 // SAFETY: The synchronization is ensured by the Sequentializer
 //  1. GenericLazy fullfill the requirement that its sequentializer is a field
@@ -273,12 +273,12 @@ unsafe impl<
 /// initialize the data, at each access depending on the LazyPolicy
 /// provided as generic argument.
 pub struct GenericMutLazy<T, F, M, S> {
-    value: T,
-    generator: F,
+    value:          T,
+    generator:      F,
     sequentializer: M,
-    phantom: PhantomData<S>,
+    phantom:        PhantomData<S>,
     #[cfg(debug_mode)]
-    _info: Option<StaticInfo>,
+    _info:          Option<StaticInfo>,
 }
 
 // SAFETY: The synchronization is ensured by the Sequentializer

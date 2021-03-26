@@ -19,7 +19,7 @@ mod exit_manager {
     /// A sequentializer that store finalize_callback  
     /// for execution at program exit
     pub struct ExitSequentializer {
-        sub: SubSequentializer,
+        sub:  SubSequentializer,
         next: Mutex<Option<&'static Node>>,
     }
 
@@ -83,7 +83,7 @@ mod exit_manager {
     pub use reg::finalize_at_exit;
 
     const GLOBAL_INIT: ExitSequentializer = ExitSequentializer {
-        sub: SubSequentializer::new(),
+        sub:  SubSequentializer::new(),
         next: Mutex::new(None),
     };
 
@@ -222,12 +222,12 @@ mod local_manager {
     /// A sequentializer that store finalize_callback  
     /// for execution at thread exit
     pub struct ThreadExitSequentializer {
-        sub: SubSequentializer,
+        sub:  SubSequentializer,
         next: Cell<Option<&'static Node>>,
     }
 
     const LOCAL_INIT: ThreadExitSequentializer = ThreadExitSequentializer {
-        sub: SubSequentializer::new(),
+        sub:  SubSequentializer::new(),
         next: Cell::new(None),
     };
 

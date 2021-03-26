@@ -8,6 +8,7 @@ keywords = ["no_std","optimization","static","preformance","constructor"]
 categories = ["no-std","rust-patterns","memory-management"]
 repository = "https://gitlab.com/okannen/static_init"
 license = "MIT OR Apache-2.0"
+resolver = "2"
 
 [workspace]
 members = [

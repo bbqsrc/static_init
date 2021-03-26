@@ -84,20 +84,20 @@ mod static_impl {
         if status == 0 {
             core::panic!(
                 "Attempt to access variable {:#?} before it is initialized during initialization \
-               priority {}. Tip: increase init priority of this static to a value larger than \
-               {prio} (attribute syntax: `#[dynamic(init=<prio>)]`)",
+                 priority {}. Tip: increase init priority of this static to a value larger than \
+                 {prio} (attribute syntax: `#[dynamic(init=<prio>)]`)",
                 info,
                 prio = CUR_INIT_PRIO.load(Ordering::Relaxed)
             )
         }
         if status == 2 {
             core::panic!(
-              "Attempt to access variable {:#?} after it was destroyed during destruction priority \
-               {prio}. Tip increase drop priority of this static to a value larger than {prio} \
-               (attribute syntax: `#[dynamic(drop=<prio>)]`)",
-              info,
-              prio = CUR_DROP_PRIO.load(Ordering::Relaxed)
-          )
+                "Attempt to access variable {:#?} after it was destroyed during destruction \
+                 priority {prio}. Tip increase drop priority of this static to a value larger \
+                 than {prio} (attribute syntax: `#[dynamic(drop=<prio>)]`)",
+                info,
+                prio = CUR_DROP_PRIO.load(Ordering::Relaxed)
+            )
         }
         let init_prio = CUR_INIT_PRIO.load(Ordering::Relaxed);
         let drop_prio = CUR_DROP_PRIO.load(Ordering::Relaxed);
@@ -105,16 +105,16 @@ mod static_impl {
         if let FinalyMode::ProgramDestructor(prio) = &info.drop_mode {
             if drop_prio == *prio as i32 {
                 core::panic!(
-                  "This access to variable {:#?} is not sequenced before to its drop. Tip increase drop \
-                   priority of this static to a value larger than {prio} (attribute syntax: \
-                   `#[dynamic(drop=<prio>)]`)",
-                  info,
-                  prio = drop_prio
-              )
+                    "This access to variable {:#?} is not sequenced before to its drop. Tip \
+                     increase drop priority of this static to a value larger than {prio} \
+                     (attribute syntax: `#[dynamic(drop=<prio>)]`)",
+                    info,
+                    prio = drop_prio
+                )
             } else if drop_prio > *prio as i32 {
                 core::panic!(
-                    "Unexpected initialization order while accessing {:#?} from drop \
-               priority {}. This is a bug of `static_init` library, please report \"
+                    "Unexpected initialization order while accessing {:#?} from drop priority {}. \
+                     This is a bug of `static_init` library, please report \"
              the issue inside `static_init` repository.",
                     info,
                     drop_prio
@@ -125,16 +125,16 @@ mod static_impl {
         if let InitMode::ProgramConstructor(prio) = &info.init_mode {
             if init_prio == *prio as i32 {
                 core::panic!(
-                  "This access to variable {:#?} is not sequenced after construction of this static. \
-                   Tip increase init priority of this static to a value larger than {prio} (attribute \
-                   syntax: `#[dynamic(init=<prio>)]`)",
-                  info,
-                  prio = init_prio
-              )
+                    "This access to variable {:#?} is not sequenced after construction of this \
+                     static. Tip increase init priority of this static to a value larger than \
+                     {prio} (attribute syntax: `#[dynamic(init=<prio>)]`)",
+                    info,
+                    prio = init_prio
+                )
             } else if init_prio > *prio as i32 {
                 core::panic!(
-                    "Unexpected initialization order while accessing {:#?} from init priority {}\
-               . This is a bug of `static_init` library, please report \"
+                    "Unexpected initialization order while accessing {:#?} from init priority {}. \
+                     This is a bug of `static_init` library, please report \"
              the issue inside `static_init` repository.",
                     info,
                     init_prio,

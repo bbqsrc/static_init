@@ -374,7 +374,7 @@ macro_rules! non_static_debug {
     }
 }
 macro_rules! non_static_impls {
-    ($tp:ident, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
+    ($tp:ident, $data:ty $(,T: $tr:ident)? $(,G: $trg:ident)?) => {
         impl<T, G> $tp<T, G> {
             pub const fn new(g: G) -> Self {
                 Self::new_static(g)

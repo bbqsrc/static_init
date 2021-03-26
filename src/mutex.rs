@@ -204,19 +204,20 @@ mod spin_wait {
             true
         }
 
-        ///// Spins without yielding the thread to the OS.
-        /////
-        ///// Instead, the backoff is simply capped at a maximum value. This can be
-        ///// used to improve throughput in `compare_exchange` loops that have high
-        ///// contention.
-        //#[inline]
-        //pub fn spin_no_yield(&mut self) {
-        //    self.counter += 1;
-        //    if self.counter > 10 {
-        //        self.counter = 10;
-        //    }
-        //    cpu_relax(1 << self.counter);
-        //}
+        /// Spins without yielding the thread to the OS.
+        ///
+        /// Instead, the backoff is simply capped at a maximum value. This can be
+        /// used to improve throughput in `compare_exchange` loops that have high
+        /// contention.
+        #[inline]
+        pub fn spin_no_yield(&mut self) -> bool {
+            self.counter += 1;
+            if self.counter >= 10 {
+                return false;
+            }
+            cpu_relax(1 << self.counter);
+            true
+        }
     }
 }
 use super::Phase;
@@ -250,7 +251,7 @@ pub unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
 }
 
 /// Nature of the lock requested
-#[derive(Copy,Clone,Debug,Eq,PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum LockNature {
     Read,
     Write,
@@ -270,6 +271,7 @@ mod mutex {
     use crate::phase::*;
     use crate::Phase;
     use core::cell::UnsafeCell;
+    use core::hint;
     use core::mem::forget;
     use core::ops::{Deref, DerefMut};
     use core::sync::atomic::{fence, Ordering};
@@ -289,11 +291,11 @@ mod mutex {
     unsafe impl<T: Send> Send for Mutex<T> {}
 
     pub(crate) struct Lock<'a> {
-        state: &'a SyncPhasedLocker,
+        state:     &'a SyncPhasedLocker,
         on_unlock: Phase,
     }
     pub(crate) struct ReadLock<'a> {
-        state: &'a SyncPhasedLocker,
+        state:      &'a SyncPhasedLocker,
         init_phase: Phase,
     }
     pub(crate) struct MutexGuard<'a, T>(&'a mut T, Lock<'a>);
@@ -396,7 +398,12 @@ mod mutex {
                 #[cfg(debug_mode)]
                 {
                     let id = AtomicUsize::new(0);
-                    self.1.raw_lock(|_p| LockNature::Write, Phase::empty(), &id)
+                    self.1.raw_lock(
+                        |_p| LockNature::Write,
+                        |_p| LockNature::Write,
+                        Phase::empty(),
+                        &id,
+                    )
                 }
             } {
                 l
@@ -473,7 +480,7 @@ mod mutex {
             }
 
             let r = ReadLock {
-                state: self.state,
+                state:      self.state,
                 init_phase: Phase::from_bits_truncate(prev),
             };
             forget(self);
@@ -501,7 +508,7 @@ mod mutex {
                         .fetch_sub(LOCKED_BIT - READER_UNITY * c, Ordering::Release);
                     //state: phase | READER_UNITY*(c+1) + xr | <0:WPARKED_BIT>
                     drop(ReadLock {
-                        state: self.state,
+                        state:      self.state,
                         init_phase: Phase::from_bits_truncate(cur),
                     });
                     return;
@@ -590,7 +597,7 @@ mod mutex {
                         .fetch_sub(LOCKED_BIT - READER_UNITY * v, Ordering::Release);
                     //phase: phase | READER_UNITY*(v+1) + n | <WPARKED_BIT>
                     drop(ReadLock {
-                        state: self.state,
+                        state:      self.state,
                         init_phase: Phase::from_bits_truncate(cur),
                     });
                     return;
@@ -709,7 +716,7 @@ mod mutex {
                         .is_ok()
                     {
                         return LockResult::Write(Lock {
-                            state: self,
+                            state:     self,
                             on_unlock: Phase::from_bits_truncate(expect),
                         });
                     }
@@ -726,16 +733,17 @@ mod mutex {
                         ) {
                             Ok(_) => {
                                 return LockResult::Read(ReadLock {
-                                    state: self,
+                                    state:      self,
                                     init_phase: Phase::from_bits_truncate(expect),
                                 })
                             }
                             Err(x)
                                 if how(Phase::from_bits_truncate(x)) == LockNature::Read
-                                    && ((x & READER_BITS != 0 && x & READER_BITS != READER_BITS)
-                                        || x & (LOCKED_BIT | PARKED_BIT | WPARKED_BIT) == 0)
-                                    && spin_wait.spin() =>
+                                    && ((x & READER_BITS != 0
+                                        && x & READER_BITS != READER_BITS)
+                                        || x & (LOCKED_BIT | PARKED_BIT | WPARKED_BIT) == 0) =>
                             {
+                                spin_wait.spin_no_yield();
                                 expect = x;
                             }
                             Err(_) => break,
@@ -778,12 +786,13 @@ mod mutex {
                             ) {
                                 Ok(_) => {
                                     return LockResult::Write(Lock {
-                                        state: self,
+                                        state:     self,
                                         on_unlock: Phase::from_bits_truncate(cur),
                                     })
                                 }
                                 Err(x) => cur = x,
                             }
+                            hint::spin_loop();
                             continue;
                         }
                         if cur & (PARKED_BIT | WPARKED_BIT) == 0
@@ -799,20 +808,35 @@ mod mutex {
                             || cur & READER_BITS != 0)
                             && cur & READER_BITS != READER_BITS
                         {
-                            match self.0.value().compare_exchange_weak(
-                                cur,
-                                cur + READER_UNITY,
-                                Ordering::Acquire,
-                                Ordering::Relaxed,
-                            ) {
-                                Ok(_) => {
-                                    return LockResult::Read(ReadLock {
-                                        state: self,
-                                        init_phase: Phase::from_bits_truncate(cur),
-                                    })
+                            let mut spin = SpinWait::new();
+                            loop {
+                                match self.0.value().compare_exchange_weak(
+                                    cur,
+                                    cur + READER_UNITY,
+                                    Ordering::Acquire,
+                                    Ordering::Relaxed,
+                                ) {
+                                    Ok(_) => {
+                                        return LockResult::Read(ReadLock {
+                                            state:      self,
+                                            init_phase: Phase::from_bits_truncate(cur),
+                                        })
+                                    }
+                                    Err(x) => {
+                                        if how(Phase::from_bits_truncate(x)) == LockNature::Read
+                                            && (x & (PARKED_BIT | WPARKED_BIT | LOCKED_BIT) == 0
+                                                || x & READER_BITS != 0)
+                                            && x & READER_BITS != READER_BITS
+                                        {
+                                            cur = x;
+                                            spin.spin_no_yield();
+                                            continue;
+                                        }
+                                    }
                                 }
-                                Err(x) => cur = x,
+                                break;
                             }
+                            hint::spin_loop();
                             continue;
                         }
                         if cur & (PARKED_BIT | WPARKED_BIT) == 0
@@ -859,7 +883,7 @@ mod mutex {
                             //There could have more parked thread
                             cur = self.0.value().fetch_or(WPARKED_BIT, Ordering::Relaxed);
                             let lock = Lock {
-                                state: self,
+                                state:     self,
                                 on_unlock: Phase::from_bits_truncate(cur),
                             };
                             match how(Phase::from_bits_truncate(cur)) {
@@ -899,7 +923,7 @@ mod mutex {
 
                         if self.0.park_reader(cur) {
                             let lock = ReadLock {
-                                state: self,
+                                state:      self,
                                 init_phase: Phase::from_bits_truncate(cur),
                             };
                             match how(Phase::from_bits_truncate(cur)) {

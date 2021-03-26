@@ -363,9 +363,9 @@ pub enum FinalyMode {
 #[doc(hidden)]
 pub struct StaticInfo {
     pub variable_name: &'static str,
-    pub file_name: &'static str,
-    pub line: u32,
-    pub column: u32,
-    pub init_mode: InitMode,
-    pub drop_mode: FinalyMode,
+    pub file_name:     &'static str,
+    pub line:          u32,
+    pub column:        u32,
+    pub init_mode:     InitMode,
+    pub drop_mode:     FinalyMode,
 }

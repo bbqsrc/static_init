@@ -5,6 +5,8 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 #![cfg_attr(feature = "thread_local", feature(thread_local))]
+#![cfg(not(miri))]
+//miri does not start any test and block, dont know why...
 
 extern crate static_init;
 use static_init::{constructor, destructor, dynamic, Finaly};
@@ -104,7 +106,7 @@ macro_rules! make_test {
             for _ in 0..NT {
                 spawned.push(spawn(test_conc));
             }
-            while STARTED.load(Ordering::Relaxed)!=NT {core::hint::spin_loop()}
+            while STARTED.compare_exchange_weak(NT,NT,Ordering::Relaxed,Ordering::Relaxed).is_ok() {core::hint::spin_loop()}
             START.store(true,Ordering::Relaxed);
             spawned.into_iter().for_each(|t| {assert!(t.join().is_ok());});
         }
