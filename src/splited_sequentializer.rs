@@ -1,5 +1,5 @@
 use crate::mutex::{
-    LockNature, LockResult, PhaseGuard, UnSyncPhaseGuard, UnSyncPhaseLocker, UnSyncReadPhaseGuard,
+ LockNature, LockResult, PhaseGuard, UnSyncPhaseGuard, UnSyncPhaseLocker, UnSyncReadPhaseGuard,
 };
 use crate::{Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer};
 
@@ -270,6 +270,7 @@ mod global_once {
             this.0.lock(
                 s,
                 &shall_proceed,
+                &shall_proceed,
                 Phase::INITIALIZED | Phase::REGISTERED,
                 #[cfg(debug_mode)]
                 &this.1,
@@ -312,16 +313,21 @@ mod global_once {
             reg: impl FnOnce(&'a T) -> bool,
             init_on_reg_failure: bool,
         ) {
-            let phase_guard = match <Self as Sequentializer<T>>::lock(s, |p| {
+            let this = Sequential::sequentializer(s).as_ref();
+
+            let phase_guard = match this.0.lock(s, |p| {
                 if shall_init(p) {
                     LockNature::Write
                 } else {
                     LockNature::None
-                }
-            }) {
+                }},
+              |_| LockNature::Read,
+              Phase::INITIALIZED | Phase::REGISTERED,
+
+            ) {
                 LockResult::None => return,
                 LockResult::Write(l) => l,
-                LockResult::Read(_) => unsafe { unreachable_unchecked() },
+                LockResult::Read(_) => return,
             };
 
             debug_save_thread!(s);
@@ -336,13 +342,19 @@ mod global_once {
             reg: impl FnOnce(&'a T) -> bool,
             init_on_reg_failure: bool,
         ) -> Self::ReadGuard {
-            match <Self as Sequentializer<T>>::lock(s, |p| {
+
+            let this = Sequential::sequentializer(s).as_ref();
+
+            match this.0.lock(s, |p| {
                 if shall_init(p) {
                     LockNature::Write
                 } else {
                     LockNature::Read
-                }
-            }) {
+                }},
+              |_| LockNature::Read,
+              Phase::INITIALIZED | Phase::REGISTERED,
+
+            ) {
                 LockResult::Read(l) => l,
                 LockResult::Write(l) => {
                     debug_save_thread!(s);
@@ -391,9 +403,7 @@ mod global_once {
                 }
             };
 
-            let phase_guard = match this.0.lock(
-                Sequential::data(s),
-                |p| {
+            let how =    |p:Phase| {
                     if (p
                         & (Phase::FINALIZATION
                             | Phase::FINALIZED
@@ -405,7 +415,12 @@ mod global_once {
                     } else {
                         LockNature::None
                     }
-                },
+                };
+
+            let phase_guard = match this.0.lock(
+                Sequential::data(s),
+                how,
+                |_| LockNature::Write, 
                 Phase::INITIALIZED | Phase::REGISTERED,
                 #[cfg(debug_mode)]
                 &_id,

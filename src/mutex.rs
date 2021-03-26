@@ -250,6 +250,7 @@ pub unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
 }
 
 /// Nature of the lock requested
+#[derive(Copy,Clone,Debug,Eq,PartialEq)]
 pub enum LockNature {
     Read,
     Write,
@@ -362,8 +363,8 @@ mod mutex {
             Self(r, lock)
         }
         #[inline(always)]
-        pub fn phase(this: &Self) -> Phase {
-            this.1.init_phase
+        pub fn phase(&self) -> Phase {
+            self.1.init_phase
         }
     }
     impl<'a, T> Into<SyncReadPhaseGuard<'a, T>> for SyncPhaseGuard<'a, T> {
@@ -386,7 +387,11 @@ mod mutex {
             let lk = if let LockResult::Write(l) = {
                 #[cfg(not(debug_mode))]
                 {
-                    self.1.raw_lock(|_p| LockNature::Write, Phase::empty())
+                    self.1.raw_lock(
+                        |_p| LockNature::Write,
+                        |_p| LockNature::Write,
+                        Phase::empty(),
+                    )
                 }
                 #[cfg(debug_mode)]
                 {
@@ -417,12 +422,12 @@ mod mutex {
     }
     // STATES:
     // LOCKED_BIT | <PARKED_BIT|WPARKED_BIT> => Write lock held
-    // any READER_BIT | <PARKED_BIT|WPARKED_BIT> => Read lock held 
-    // LOCKED_BIT|any READER_BIT | <PARKED_BIT|WPARKED_BIT> 
+    // any READER_BIT | <PARKED_BIT|WPARKED_BIT> => Read lock held
+    // LOCKED_BIT|any READER_BIT | <PARKED_BIT|WPARKED_BIT>
     //       => wlock or rlock is being transfered to rlock
     //       => rlock are taken right now
     // any PARKED_BIT,WPARKED_BIT => a lock is being released
-    // during transfer to a write lock, the WPARKED_BIT is 0 
+    // during transfer to a write lock, the WPARKED_BIT is 0
     // but if the transfer succeed, it means that there where one or
     // more waiter for the write lock and WPARKED_BIT must be reset to 1
     // if a waiter is awaken.
@@ -514,10 +519,14 @@ mod mutex {
                 }
 
                 //cur: phase | LOCKED_BIT
-                cur = self.state.0.value().fetch_and(!LOCKED_BIT,Ordering::Release); 
-                if cur & (WPARKED_BIT|PARKED_BIT)  == 0 {
+                cur = self
+                    .state
+                    .0
+                    .value()
+                    .fetch_and(!LOCKED_BIT, Ordering::Release);
+                if cur & (WPARKED_BIT | PARKED_BIT) == 0 {
                     break;
-                }//else new threads were parked
+                } //else new threads were parked
                 cur &= !LOCKED_BIT;
                 core::hint::spin_loop();
             }
@@ -551,7 +560,7 @@ mod mutex {
         #[cold]
         fn drop_slow(&mut self, mut cur: u32) {
             //state: phase | PARKED_BIT <|> WPARKED_BIT
-            loop { 
+            loop {
                 let mut activate_lock = LOCKED_BIT;
                 if cur & WPARKED_BIT != 0 {
                     //state: phase | <PARKED_BIT> | WPARKED_BIT
@@ -591,11 +600,15 @@ mod mutex {
                 // réglé ici ou à la seconde iteration avant de retourner ici.
 
                 //cur: phase | LOCKED_BIT
-                cur = self.state.0.value().fetch_and(!LOCKED_BIT,Ordering::Release);
-                if cur & (WPARKED_BIT|PARKED_BIT)  == 0 {
+                cur = self
+                    .state
+                    .0
+                    .value()
+                    .fetch_and(!LOCKED_BIT, Ordering::Release);
+                if cur & (WPARKED_BIT | PARKED_BIT) == 0 {
                     break;
-                }//else new threads were parked
-                cur &= !LOCKED_BIT;//unused
+                } //else new threads were parked
+                cur &= !LOCKED_BIT; //unused
                 core::hint::spin_loop();
             }
         }
@@ -651,11 +664,13 @@ mod mutex {
             &'a self,
             v: &'a T,
             how: impl Fn(Phase) -> LockNature,
+            on_parking_how: impl Fn(Phase) -> LockNature,
             hint: Phase,
             #[cfg(debug_mode)] id: &AtomicUsize,
         ) -> LockResult<SyncReadPhaseGuard<'_, T>, SyncPhaseGuard<'_, T>> {
             match self.raw_lock(
                 how,
+                on_parking_how,
                 hint,
                 #[cfg(debug_mode)]
                 id,
@@ -669,6 +684,7 @@ mod mutex {
         fn raw_lock(
             &self,
             how: impl Fn(Phase) -> LockNature,
+            on_parking_how: impl Fn(Phase) -> LockNature,
             hint: Phase,
             #[cfg(debug_mode)] id: &AtomicUsize,
         ) -> LockResult<ReadLock<'_>, Lock<'_>> {
@@ -699,26 +715,37 @@ mod mutex {
                     }
                 }
                 LockNature::Read => {
-                    if self
-                        .0
-                        .value()
-                        .compare_exchange(
+                    let mut spin_wait = SpinWait::new();
+                    let mut expect = expect;
+                    loop {
+                        match self.0.value().compare_exchange_weak(
                             expect,
                             expect + READER_UNITY,
                             Ordering::Acquire,
                             Ordering::Relaxed,
-                        )
-                        .is_ok()
-                    {
-                        return LockResult::Read(ReadLock {
-                            state: self,
-                            init_phase: Phase::from_bits_truncate(expect),
-                        });
+                        ) {
+                            Ok(_) => {
+                                return LockResult::Read(ReadLock {
+                                    state: self,
+                                    init_phase: Phase::from_bits_truncate(expect),
+                                })
+                            }
+                            Err(x)
+                                if how(Phase::from_bits_truncate(x)) == LockNature::Read
+                                    && ((x & READER_BITS != 0 && x & READER_BITS != READER_BITS)
+                                        || x & (LOCKED_BIT | PARKED_BIT | WPARKED_BIT) == 0)
+                                    && spin_wait.spin() =>
+                            {
+                                expect = x;
+                            }
+                            Err(_) => break,
+                        }
                     }
                 }
             }
             self.raw_lock_slow(
                 how,
+                on_parking_how,
                 #[cfg(debug_mode)]
                 id,
             )
@@ -728,6 +755,7 @@ mod mutex {
         fn raw_lock_slow(
             &self,
             how: impl Fn(Phase) -> LockNature,
+            on_parking_how: impl Fn(Phase) -> LockNature,
             #[cfg(debug_mode)] id: &AtomicUsize,
         ) -> LockResult<ReadLock<'_>, Lock<'_>> {
             let mut spin_wait = SpinWait::new();
@@ -765,6 +793,43 @@ mod mutex {
                             cur = self.0.value().load(Ordering::Relaxed);
                             continue;
                         }
+                    }
+                    LockNature::Read => {
+                        if (cur & (PARKED_BIT | WPARKED_BIT | LOCKED_BIT) == 0
+                            || cur & READER_BITS != 0)
+                            && cur & READER_BITS != READER_BITS
+                        {
+                            match self.0.value().compare_exchange_weak(
+                                cur,
+                                cur + READER_UNITY,
+                                Ordering::Acquire,
+                                Ordering::Relaxed,
+                            ) {
+                                Ok(_) => {
+                                    return LockResult::Read(ReadLock {
+                                        state: self,
+                                        init_phase: Phase::from_bits_truncate(cur),
+                                    })
+                                }
+                                Err(x) => cur = x,
+                            }
+                            continue;
+                        }
+                        if cur & (PARKED_BIT | WPARKED_BIT) == 0
+                            && cur & READER_BITS < (READER_UNITY << 4)
+                            && spin_wait.spin()
+                        {
+                            cur = self.0.value().load(Ordering::Relaxed);
+                            continue;
+                        }
+                    }
+                }
+                match on_parking_how(Phase::from_bits_truncate(cur)) {
+                    LockNature::None => {
+                        fence(Ordering::Acquire);
+                        return LockResult::None;
+                    }
+                    LockNature::Write => {
                         if cur & WPARKED_BIT == 0 {
                             match self.0.value().compare_exchange_weak(
                                 cur,
@@ -800,40 +865,13 @@ mod mutex {
                             match how(Phase::from_bits_truncate(cur)) {
                                 LockNature::Write => return LockResult::Write(lock),
                                 LockNature::Read => {
-                                    return LockResult::Read(lock.into_read_lock(cur|WPARKED_BIT))
+                                    return LockResult::Read(lock.into_read_lock(cur | WPARKED_BIT))
                                 }
                                 LockNature::None => return LockResult::None,
                             }
                         }
                     }
                     LockNature::Read => {
-                        if (cur & (PARKED_BIT | WPARKED_BIT | LOCKED_BIT) == 0
-                            || cur & READER_BITS != 0)
-                            && cur & READER_BITS != READER_BITS
-                        {
-                            match self.0.value().compare_exchange_weak(
-                                cur,
-                                cur + READER_UNITY,
-                                Ordering::Acquire,
-                                Ordering::Relaxed,
-                            ) {
-                                Ok(_) => {
-                                    return LockResult::Read(ReadLock {
-                                        state: self,
-                                        init_phase: Phase::from_bits_truncate(cur),
-                                    })
-                                }
-                                Err(x) => cur = x,
-                            }
-                            continue;
-                        }
-                        if cur & (PARKED_BIT | WPARKED_BIT) == 0
-                            && cur & READER_BITS < (READER_UNITY << 4)
-                            && spin_wait.spin()
-                        {
-                            cur = self.0.value().load(Ordering::Relaxed);
-                            continue;
-                        }
                         if cur & PARKED_BIT == 0 {
                             match self.0.value().compare_exchange_weak(
                                 cur,
