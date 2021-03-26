@@ -37,15 +37,24 @@ impl Drop for A {
     }
 }
 
+#[cfg(not(feature="thread_local"))]
+const FINALY_COUNT_EXPECTED:usize = 12;
+#[cfg(not(feature="thread_local"))]
+const DROP_COUNT_EXPECTED:usize = 6;
+#[cfg(feature="thread_local")]
+const FINALY_COUNT_EXPECTED:usize = 34;
+#[cfg(feature="thread_local")]
+const DROP_COUNT_EXPECTED:usize = 28;
+
 #[destructor(10)]
 extern fn test_d_counts() {
     let c = FINALY_COUNT.load(Ordering::Relaxed);
-    if c != 34 {
+    if c != FINALY_COUNT_EXPECTED {
         eprintln!("Wrong finaly count {}", c);
         unsafe{libc::_exit(1)};
     }
     let c = DROP_COUNT.load(Ordering::Relaxed);
-    if c != 28 {
+    if c != DROP_COUNT_EXPECTED {
         eprintln!("Wrong drop count {}", c);
         unsafe{libc::_exit(1)};
     }

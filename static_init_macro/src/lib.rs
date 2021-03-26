@@ -888,7 +888,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             })
         }
 
-        InitMode::QuasiLazy if !is_thread_local => Some(quote_spanned! {sp=>
+        InitMode::QuasiLazy if !is_thread_local && cfg!(support_priority) => Some(quote_spanned! {sp=>
                 #[::static_init::constructor(__lazy_init)]
                 extern "C" fn __static_init_initializer() {
                     #[allow(unused_unsafe)]

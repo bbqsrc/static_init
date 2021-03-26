@@ -712,6 +712,13 @@ mod inited {
         LAZY_INIT_ENSURED.load(Ordering::Acquire)
     }
 }
+#[cfg(not(all(support_priority, not(feature = "test_no_global_lazy_hint"))))]
+mod inited {
+    #[inline(always)]
+    pub(super) const fn global_inited_hint() -> bool {
+        false
+    }
+}
 
 #[cfg(test)]
 mod test_lazy {
