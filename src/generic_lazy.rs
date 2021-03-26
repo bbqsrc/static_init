@@ -1,9 +1,12 @@
-use crate::{Finaly, Generator, LazySequentializer, Phase, Sequential, StaticInfo,Sequentializer,LockNature,LockResult};
+use crate::{
+    Finaly, Generator, LazySequentializer, LockNature, LockResult, Phase, Sequential,
+    Sequentializer, StaticInfo,
+};
 use core::cell::UnsafeCell;
+use core::hint::unreachable_unchecked;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
-use core::hint::unreachable_unchecked;
 
 #[cfg(debug_mode)]
 use crate::CyclicPanic;
@@ -79,12 +82,12 @@ impl<T> LazyData for DropedUnInited<T> {
 /// initialize the data, at each access depending on the LazyPolicy
 /// provided as generic argument.
 pub struct GenericLazy<T, F, M, S> {
-    value:          T,
-    generator:      F,
+    value: T,
+    generator: F,
     sequentializer: M,
-    phantom:        PhantomData<S>,
+    phantom: PhantomData<S>,
     #[cfg(debug_mode)]
-    _info:          Option<StaticInfo>,
+    _info: Option<StaticInfo>,
 }
 // SAFETY: The synchronization is ensured by the Sequentializer
 //  1. GenericLazy fullfill the requirement that its sequentializer is a field
@@ -102,7 +105,7 @@ unsafe impl<T: LazyData, F: Sync, M: Sync, S> Send for GenericLazy<T, F, M, S> w
 impl<T, F, M, S> GenericLazy<T, F, M, S> {
     /// const initialize the lazy, the inner data may be in an uninitialized state
     ///
-    /// # Safety: 
+    /// # Safety:
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
@@ -119,7 +122,7 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
     /// const initialize the lazy, the inner data may be in an uninitialized state, and store
     /// debug information in debug_mode
     ///
-    /// # Safety: 
+    /// # Safety:
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
@@ -270,12 +273,12 @@ unsafe impl<
 /// initialize the data, at each access depending on the LazyPolicy
 /// provided as generic argument.
 pub struct GenericMutLazy<T, F, M, S> {
-    value:          T,
-    generator:      F,
+    value: T,
+    generator: F,
     sequentializer: M,
-    phantom:        PhantomData<S>,
+    phantom: PhantomData<S>,
     #[cfg(debug_mode)]
-    _info:          Option<StaticInfo>,
+    _info: Option<StaticInfo>,
 }
 
 // SAFETY: The synchronization is ensured by the Sequentializer
@@ -295,7 +298,7 @@ unsafe impl<T: LazyData, F: Sync, M: Sync, S> Send for GenericMutLazy<T, F, M, S
 impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     /// const initialize the lazy, the inner data may be in an uninitialized state
     ///
-    /// # Safety: 
+    /// # Safety:
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
@@ -312,7 +315,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     /// const initialize the lazy, the inner data may be in an uninitialized state and
     /// store some debuging informations
     ///
-    /// # Safety: 
+    /// # Safety:
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
@@ -348,15 +351,14 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         F: 'static + Generator<T::Target>,
         S: 'static + LazyPolicy,
     {
-            if let LockResult::Read(l) = <M as Sequentializer::<'a,Self>>::lock(
-                this,
-                |_| LockNature::Read,
-            ) {
-                l
-            } else {
-                unsafe{unreachable_unchecked()}
-            }
+        if let LockResult::Read(l) =
+            <M as Sequentializer<'a, Self>>::lock(this, |_| LockNature::Read)
+        {
+            l
+        } else {
+            unsafe { unreachable_unchecked() }
         }
+    }
     #[inline(always)]
     /// potentialy initialize the inner data
     ///
@@ -369,15 +371,14 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         F: 'static + Generator<T::Target>,
         S: 'static + LazyPolicy,
     {
-            if let LockResult::Write(l) = <M as Sequentializer::<'a,Self>>::lock(
-                this,
-                |_| LockNature::Write,
-            ) {
-                l
-            } else {
-                unsafe{unreachable_unchecked()}
-            }
+        if let LockResult::Write(l) =
+            <M as Sequentializer<'a, Self>>::lock(this, |_| LockNature::Write)
+        {
+            l
+        } else {
+            unsafe { unreachable_unchecked() }
         }
+    }
     #[inline(always)]
     /// potentialy initialize the inner data
     ///

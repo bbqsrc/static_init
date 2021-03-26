@@ -1,4 +1,4 @@
-// Copyright 2021 Olivier Kannengieser 
+// Copyright 2021 Olivier Kannengieser
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -30,7 +30,6 @@ fn panic_hook(p: &core::panic::PanicInfo<'_>) -> () {
     println!("Panic caught {}", p);
     std::process::exit(1)
 }
-
 
 #[test]
 fn bad_init_unordered() {

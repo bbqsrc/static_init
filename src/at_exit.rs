@@ -1,10 +1,10 @@
 #![cfg(any(elf, mach_o, coff))]
 
 mod exit_manager {
+    use crate::mutex::Mutex;
     use crate::mutex::{LockNature, LockResult, SyncPhaseGuard, SyncReadPhaseGuard};
     use crate::splited_sequentializer::SyncSequentializer as SubSequentializer;
     use crate::Finaly;
-    use crate::mutex::Mutex;
     use crate::{
         LazySequentializer, Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer,
     };
@@ -19,7 +19,7 @@ mod exit_manager {
     /// A sequentializer that store finalize_callback  
     /// for execution at program exit
     pub struct ExitSequentializer {
-        sub:  SubSequentializer,
+        sub: SubSequentializer,
         next: Mutex<Option<&'static Node>>,
     }
 
@@ -38,7 +38,7 @@ mod exit_manager {
             let mut list: Option<&'static Node> = l.0.take();
             drop(l);
             while let Some(on_exit) = list {
-                // SAFETY: 
+                // SAFETY:
                 // the reference created mut point to an object:
                 //   - this is full-filled by the requirement that the ExitSequentializer object
                 //     must be static.
@@ -67,8 +67,11 @@ mod exit_manager {
         {
             let mut l = REGISTER.lock();
             if l.1 {
-                let mut next = Sequential::sequentializer(st) .next .lock() ;
-                assert!(next.is_none(), "Double registration of an ExitSequentializer for finalization at program exit");
+                let mut next = Sequential::sequentializer(st).next.lock();
+                assert!(
+                    next.is_none(),
+                    "Double registration of an ExitSequentializer for finalization at program exit"
+                );
                 *next = l.0.take();
                 *l = (Some(st as &Node), true);
                 true
@@ -80,7 +83,7 @@ mod exit_manager {
     pub use reg::finalize_at_exit;
 
     const GLOBAL_INIT: ExitSequentializer = ExitSequentializer {
-        sub:  SubSequentializer::new(),
+        sub: SubSequentializer::new(),
         next: Mutex::new(None),
     };
 
@@ -104,8 +107,9 @@ mod exit_manager {
             Phased::phase(&this.sub)
         }
     }
-    // SAFETY: it is safe because it does implement synchronized locks 
-    unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>> Sequentializer<'a, T> for ExitSequentializer
+    // SAFETY: it is safe because it does implement synchronized locks
+    unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>> Sequentializer<'a, T>
+        for ExitSequentializer
     where
         T: 'static + Sync,
         T::Data: 'static + Finaly,
@@ -120,8 +124,9 @@ mod exit_manager {
         }
     }
 
-    // SAFETY: it is safe because it does implement synchronized locks 
-    unsafe impl<T: 'static + Sequential<Sequentializer = Self>> LazySequentializer<'static, T> for ExitSequentializer
+    // SAFETY: it is safe because it does implement synchronized locks
+    unsafe impl<T: 'static + Sequential<Sequentializer = Self>> LazySequentializer<'static, T>
+        for ExitSequentializer
     where
         T: 'static + Sync,
         T::Data: 'static + Finaly,
@@ -195,7 +200,7 @@ pub use local_manager::{finalize_at_thread_exit, ThreadExitSequentializer};
 
 #[cfg(feature = "thread_local")]
 mod local_manager {
-    
+
     use crate::splited_sequentializer::UnSyncSequentializer as SubSequentializer;
     use crate::{
         Finaly, LazySequentializer, Phase, Phased, Sequential, Sequentializer,
@@ -217,12 +222,12 @@ mod local_manager {
     /// A sequentializer that store finalize_callback  
     /// for execution at thread exit
     pub struct ThreadExitSequentializer {
-        sub:  SubSequentializer,
+        sub: SubSequentializer,
         next: Cell<Option<&'static Node>>,
     }
 
     const LOCAL_INIT: ThreadExitSequentializer = ThreadExitSequentializer {
-        sub:  SubSequentializer::new(),
+        sub: SubSequentializer::new(),
         next: Cell::new(None),
     };
 
@@ -263,7 +268,7 @@ mod local_manager {
     }
 
     // SAFETY: it is safe because it does implement circular initialization panic
-    unsafe impl< T: 'static + Sequential<Sequentializer = Self>> LazySequentializer<'static, T>
+    unsafe impl<T: 'static + Sequential<Sequentializer = Self>> LazySequentializer<'static, T>
         for ThreadExitSequentializer
     where
         T::Data: 'static + Finaly,

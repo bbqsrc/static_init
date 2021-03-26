@@ -5,10 +5,7 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-#![cfg_attr(
-    not(any(feature="parking_lot_core",debug_mode)),
-    no_std
-)]
+#![cfg_attr(not(any(feature = "parking_lot_core", debug_mode)), no_std)]
 #![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]
 #![cfg_attr(
     feature = "thread_local",
@@ -116,34 +113,36 @@ where
 }
 
 /// A type that implement Sequentializer aims at [phase](Phase) sequencement.
-/// 
+///
 /// The method [`Sequential::sequentializer`] should return an object that implement
 /// this trait.
 ///
-/// # Safety 
+/// # Safety
 ///
 /// The trait is unsafe because the lock should ensure the following lock semantic:
 ///  - if the implementor also implement Sync, the read/write lock semantic should be synchronized
 ///  and if no lock is taken, the call to lock should synchronize with the end of the phase
 ///  transition that put the target object in its current phase.
 ///  - if the implementor is not Sync then the lock should panic if any attempt is made
-///    to take another lock while a write lock is alive or to take a write lock while there 
+///    to take another lock while a write lock is alive or to take a write lock while there
 ///    is already a read_lock.(the lock should behave as a RefCell).
-pub unsafe trait Sequentializer<'a,T: Sequential>: 'static + Sized + Phased {
+pub unsafe trait Sequentializer<'a, T: Sequential>: 'static + Sized + Phased {
     type ReadGuard;
     type WriteGuard;
     /// Lock the phases of an object in order to ensure atomic phase transition.
     ///
     /// The nature of the lock depend on the phase in which is the object, and is determined
     /// by the `lock_nature` argument.
-    fn lock(target: &'a T, lock_nature: impl Fn(Phase) -> LockNature) 
-        -> LockResult<Self::ReadGuard,Self::WriteGuard>;
+    fn lock(
+        target: &'a T,
+        lock_nature: impl Fn(Phase) -> LockNature,
+    ) -> LockResult<Self::ReadGuard, Self::WriteGuard>;
 }
 
 /// A [`LazySequentializer`] sequentialize the [phases](Phase) of a target object to ensure
 /// atomic initialization and finalization.
 ///
-/// # Safety 
+/// # Safety
 ///
 /// The trait is unsafe because the implementor must ensure that:
 ///
@@ -151,9 +150,11 @@ pub unsafe trait Sequentializer<'a,T: Sequential>: 'static + Sized + Phased {
 ///  and if no lock is taken, the call to lock should synchronize with the end of the phase
 ///  transition that put the target object in its current phase.
 ///  - if the implementor is not Sync then the lock should panic if any attempt is made
-///    to take another lock while a write lock is alive or to take a write lock while there 
+///    to take another lock while a write lock is alive or to take a write lock while there
 ///    is already a read_lock.(the lock should behave as a RefCell).
-pub unsafe trait LazySequentializer<'a,T: Sequential<Sequentializer = Self>>: Sequentializer<'a,T> {
+pub unsafe trait LazySequentializer<'a, T: Sequential<Sequentializer = Self>>:
+    Sequentializer<'a, T>
+{
     /// if `shall_init` return true for the target [`Sequential`] object, it initialize
     /// the data of the target object using `init`
     ///
@@ -187,20 +188,22 @@ pub unsafe trait LazySequentializer<'a,T: Sequential<Sequentializer = Self>>: Se
 
 //TODO: doc here
 
-/// A [SplitedLazySequentializer] sequentialize the [phase](Phase) of an object to 
+/// A [SplitedLazySequentializer] sequentialize the [phase](Phase) of an object to
 /// ensure atomic initialization and finalization.
 ///
 /// A sequentializer that implement this trait is not able to register the finalization
 /// for latter call on program exit or thread exit.
 ///
-/// # Safety 
+/// # Safety
 ///
 /// The trait is unsafe because the implementor must ensure that:
 ///
 ///  - either the implementor is Sync and the initialization is performed atomically
 ///  - or the implementor is not Sync and any attempt to perform an initialization while
 ///    an initialization is running will cause a panic.
-pub unsafe trait SplitedLazySequentializer<'a,T: Sequential>: Sequentializer<'a,T> {
+pub unsafe trait SplitedLazySequentializer<'a, T: Sequential>:
+    Sequentializer<'a, T>
+{
     /// if `shall_init` return true for the target [`Sequential`] object, it initialize
     /// the data of the target object using `init`
     ///
@@ -259,10 +262,10 @@ pub struct CyclicPanic;
 /// phases and bits to manipulate them;
 pub mod phase {
     use bitflags::bitflags;
-    pub(crate) const WPARKED_BIT: u32 =  0b1000_0000_0000_0000_0000_0000_0000_0000;
-    pub(crate) const PARKED_BIT: u32 =   0b0100_0000_0000_0000_0000_0000_0000_0000;
-    pub(crate) const LOCKED_BIT: u32 =   0b0010_0000_0000_0000_0000_0000_0000_0000;//Or READER overflow
-    pub(crate) const READER_BITS: u32 =  0b0001_1111_1111_1111_1111_1000_0000_0000;
+    pub(crate) const WPARKED_BIT: u32 = 0b1000_0000_0000_0000_0000_0000_0000_0000;
+    pub(crate) const PARKED_BIT: u32 = 0b0100_0000_0000_0000_0000_0000_0000_0000;
+    pub(crate) const LOCKED_BIT: u32 = 0b0010_0000_0000_0000_0000_0000_0000_0000; //Or READER overflow
+    pub(crate) const READER_BITS: u32 = 0b0001_1111_1111_1111_1111_1000_0000_0000;
     pub(crate) const READER_UNITY: u32 = 0b0000_0000_0000_0000_0000_1000_0000_0000;
 
     bitflags! {
@@ -310,7 +313,7 @@ pub mod generic_lazy;
 pub mod splited_sequentializer;
 
 #[cfg(any(elf, mach_o, coff))]
-/// Provides two lazy sequentializers, one that will finalize the target object at program exit and 
+/// Provides two lazy sequentializers, one that will finalize the target object at program exit and
 /// the other at thread exit.
 pub mod at_exit;
 
@@ -327,7 +330,7 @@ pub mod raw_static;
 
 /// Provides PhaseLockers, that are phase tagged *adaptative* read-write lock types: during the lock loop the nature of the lock that
 /// is attempted to be taken variates depending on the phase.
-/// 
+///
 /// The major difference with a RwLock is that decision to read lock, write lock are to not lock
 /// is taken within the lock loop: on each attempt to take the lock (when unparking for exemple)
 /// the mutex may change its locking strategy or abandon any further attempt to take the lock.
@@ -336,7 +339,7 @@ pub mod raw_static;
 /// is an adaptation of the algorithm provided by parking_lot::RwLock. (TODO: bring more parts
 /// of parking_lot RwLock algorithm to those mutex)
 pub mod mutex;
-pub use mutex::{LockResult,LockNature,PhaseGuard};
+pub use mutex::{LockNature, LockResult, PhaseGuard};
 
 #[derive(Debug)]
 #[doc(hidden)]
@@ -360,9 +363,9 @@ pub enum FinalyMode {
 #[doc(hidden)]
 pub struct StaticInfo {
     pub variable_name: &'static str,
-    pub file_name:     &'static str,
-    pub line:          u32,
-    pub column:        u32,
-    pub init_mode:     InitMode,
-    pub drop_mode:     FinalyMode,
+    pub file_name: &'static str,
+    pub line: u32,
+    pub column: u32,
+    pub init_mode: InitMode,
+    pub drop_mode: FinalyMode,
 }

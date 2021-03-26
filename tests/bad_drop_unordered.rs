@@ -1,4 +1,4 @@
-// Copyright 2021 Olivier Kannengieser 
+// Copyright 2021 Olivier Kannengieser
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -21,7 +21,7 @@ mod test {
     impl Drop for A {
         fn drop(&mut self) {
             if self.0 {
-                unsafe{&*V0};
+                unsafe { &*V0 };
             }
         }
     }
@@ -38,7 +38,7 @@ mod test {
 
     #[destructor(30)]
     extern "C" fn bad_exit() {
-        unsafe{libc::_exit(1)}
+        unsafe { libc::_exit(1) }
     }
 }
 

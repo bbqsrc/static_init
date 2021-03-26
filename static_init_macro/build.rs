@@ -27,6 +27,6 @@ fn main() {
         debug_mode: { any(feature = "debug_order", debug_assertions) },
 
         support_priority: { any(elf,coff) },
-        
+
     }
 }

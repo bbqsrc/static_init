@@ -1,14 +1,16 @@
-use crate::mutex::{SyncPhaseGuard, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncReadPhaseGuard,PhaseGuard};
-use crate::{Finaly,
-    generic_lazy::{GenericLazy, GenericMutLazy, LazyData, LazyPolicy, UnInited, DropedUnInited},
+use crate::mutex::{
+    PhaseGuard, SyncPhaseGuard, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncReadPhaseGuard,
+};
+use crate::{
+    generic_lazy::{DropedUnInited, GenericLazy, GenericMutLazy, LazyData, LazyPolicy, UnInited},
+    mutex::{LockNature, LockResult},
     splited_sequentializer::UnSyncSequentializer,
-    Generator, LazySequentializer, Phase, Phased, Sequential, Sequentializer,
+    Finaly, Generator, LazySequentializer, Phase, Phased, Sequential, Sequentializer,
     SplitedLazySequentializer, StaticInfo,
-    mutex::{LockNature,LockResult},
 };
 
-#[cfg(feature="thread_local")]
-use crate::{at_exit::ThreadExitSequentializer};
+#[cfg(feature = "thread_local")]
+use crate::at_exit::ThreadExitSequentializer;
 
 use crate::{at_exit::ExitSequentializer, splited_sequentializer::SyncSequentializer};
 
@@ -96,15 +98,20 @@ macro_rules! init_only {
 
         // SAFETY: ensured by $sub
         unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>> Sequentializer<'a, T> for $typ {
-            type ReadGuard = $gd_r<'a,T>;
-            type WriteGuard = $gd<'a,T>;
+            type ReadGuard = $gd_r<'a, T>;
+            type WriteGuard = $gd<'a, T>;
             #[inline(always)]
-            fn lock(s: &'a T, shall_proceed: impl Fn(Phase) -> LockNature) -> LockResult<$gd_r<'a,T>,$gd<'a, T>> {
+            fn lock(
+                s: &'a T,
+                shall_proceed: impl Fn(Phase) -> LockNature,
+            ) -> LockResult<$gd_r<'a, T>, $gd<'a, T>> {
                 <$sub as Sequentializer<T>>::lock(s, shall_proceed)
             }
         }
         // SAFETY: ensured by $sub
-        unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>> LazySequentializer<'a, T> for $typ {
+        unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>> LazySequentializer<'a, T>
+            for $typ
+        {
             #[inline(always)]
             fn init(
                 s: &'a T,
@@ -126,7 +133,7 @@ macro_rules! init_only {
                 on_uninited: impl Fn(Phase) -> bool,
                 init: impl FnOnce(&'a <T as Sequential>::Data),
                 init_on_reg_failure: bool,
-            ) -> Self::ReadGuard{
+            ) -> Self::ReadGuard {
                 <$sub as SplitedLazySequentializer<T>>::init_then_read_guard(
                     s,
                     on_uninited,
@@ -141,7 +148,7 @@ macro_rules! init_only {
                 on_uninited: impl Fn(Phase) -> bool,
                 init: impl FnOnce(&'a <T as Sequential>::Data),
                 init_on_reg_failure: bool,
-            ) -> Self::WriteGuard{
+            ) -> Self::WriteGuard {
                 <$sub as SplitedLazySequentializer<T>>::init_then_write_guard(
                     s,
                     on_uninited,
@@ -347,7 +354,7 @@ impl_lazy! {static UnSyncLazyDroped,ThreadExitSequentializer,InitializedAndNonFi
 The method (new)[Self::new] is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
 }
 
-use core::fmt::{self,Debug,Formatter};
+use core::fmt::{self, Debug, Formatter};
 macro_rules! non_static_debug {
     ($tp:ident, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
         impl<T:Debug, G> Debug for $tp<T, G>
@@ -368,23 +375,22 @@ macro_rules! non_static_debug {
 }
 macro_rules! non_static_impls {
     ($tp:ident, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
-        impl<T, G>  $tp<T, G> {
+        impl<T, G> $tp<T, G> {
             pub const fn new(g: G) -> Self {
                 Self::new_static(g)
             }
         }
-        impl<T:Default> Default for $tp<T, fn()->T>
-        {
+        impl<T: Default> Default for $tp<T, fn() -> T> {
             fn default() -> Self {
                 Self::new(T::default)
             }
         }
-    }
+    };
 }
-non_static_impls!{Lazy,UnInited::<T>}
-non_static_debug!{Lazy,UnInited::<T>}
-non_static_impls!{UnSyncLazy,UnInited::<T>}
-non_static_debug!{UnSyncLazy,UnInited::<T>}
+non_static_impls! {Lazy,UnInited::<T>}
+non_static_debug! {Lazy,UnInited::<T>}
+non_static_impls! {UnSyncLazy,UnInited::<T>}
+non_static_debug! {UnSyncLazy,UnInited::<T>}
 
 impl<T, G> Drop for Lazy<T, G> {
     fn drop(&mut self) {
@@ -662,21 +668,17 @@ macro_rules! non_static_mut_debug {
         }
     }
 }
-non_static_impls!{MutLazy,UnInited::<T>}
-non_static_mut_debug!{MutLazy,UnInited::<T>}
-non_static_impls!{UnSyncMutLazy,UnInited::<T>}
-non_static_mut_debug!{UnSyncMutLazy,UnInited::<T>}
+non_static_impls! {MutLazy,UnInited::<T>}
+non_static_mut_debug! {MutLazy,UnInited::<T>}
+non_static_impls! {UnSyncMutLazy,UnInited::<T>}
+non_static_mut_debug! {UnSyncMutLazy,UnInited::<T>}
 
 impl<T, G> Drop for MutLazy<T, G> {
     fn drop(&mut self) {
         if Phased::phase(GenericMutLazy::sequentializer(&self.__private))
             .intersects(Phase::INITIALIZED)
         {
-            unsafe {
-                (&*self.__private)
-                    .get()
-                    .drop_in_place()
-            }
+            unsafe { (&*self.__private).get().drop_in_place() }
         }
     }
 }
@@ -685,15 +687,10 @@ impl<T, G> Drop for UnSyncMutLazy<T, G> {
         if Phased::phase(GenericMutLazy::sequentializer(&self.__private))
             .intersects(Phase::INITIALIZED)
         {
-            unsafe {
-                (&*self.__private)
-                    .get()
-                    .drop_in_place()
-            }
+            unsafe { (&*self.__private).get().drop_in_place() }
         }
     }
 }
-
 
 #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
 mod inited {
@@ -730,15 +727,11 @@ mod test_lazy {
     }
 }
 
-#[cfg(feature="test_no_global_lazy_hint")]
+#[cfg(feature = "test_no_global_lazy_hint")]
 #[cfg(test)]
 mod test_quasi_lazy {
     use super::QuasiLazy;
-    static _X: QuasiLazy<u32, fn() -> u32> = unsafe {
-        QuasiLazy::new_static(|| {
-            22
-        })
-    };
+    static _X: QuasiLazy<u32, fn() -> u32> = unsafe { QuasiLazy::new_static(|| 22) };
     #[test]
     fn test() {
         assert_eq!(*_X, 22);
@@ -769,18 +762,17 @@ mod test_lazy_finalize {
         assert_eq!((*_X).0, 22);
     }
 }
-#[cfg(feature="test_no_global_lazy_hint")]
+#[cfg(feature = "test_no_global_lazy_hint")]
 #[cfg(test)]
 mod test_quasi_lazy_finalize {
-    use crate::Finaly;
     use super::QuasiLazyFinalize;
+    use crate::Finaly;
     #[derive(Debug)]
     struct A(u32);
     impl Finaly for A {
         fn finaly(&self) {}
     }
-    static _X: QuasiLazyFinalize<A, fn() -> A> =
-        unsafe { QuasiLazyFinalize::new_static(|| A(22)) };
+    static _X: QuasiLazyFinalize<A, fn() -> A> = unsafe { QuasiLazyFinalize::new_static(|| A(22)) };
     #[test]
     fn test() {
         assert_eq!((*_X).0, 22);
@@ -827,11 +819,11 @@ mod test_mut_lazy {
         assert_eq!(*_X.read_lock(), 33);
     }
 }
-#[cfg(feature="test_no_global_lazy_hint")]
+#[cfg(feature = "test_no_global_lazy_hint")]
 #[cfg(test)]
 mod test_quasi_mut_lazy {
     use super::QuasiMutLazy;
-    static _X: QuasiMutLazy<u32, fn() -> u32> = unsafe{QuasiMutLazy::new_static(|| 22)};
+    static _X: QuasiMutLazy<u32, fn() -> u32> = unsafe { QuasiMutLazy::new_static(|| 22) };
     #[test]
     fn test() {
         assert_eq!(*_X.read_lock(), 22);
@@ -856,7 +848,7 @@ mod test_mut_lazy_finalize {
         assert_eq!((*_X.read_lock()).0, 33);
     }
 }
-#[cfg(feature="test_no_global_lazy_hint")]
+#[cfg(feature = "test_no_global_lazy_hint")]
 #[cfg(test)]
 mod test_quasi_mut_lazy_finalize {
     use super::QuasiMutLazyFinalize;
@@ -866,7 +858,8 @@ mod test_quasi_mut_lazy_finalize {
     impl Finaly for A {
         fn finaly(&self) {}
     }
-    static _X: QuasiMutLazyFinalize<A, fn() -> A> = unsafe{QuasiMutLazyFinalize::new_static(|| A(22))};
+    static _X: QuasiMutLazyFinalize<A, fn() -> A> =
+        unsafe { QuasiMutLazyFinalize::new_static(|| A(22)) };
     #[test]
     fn test() {
         assert!((*_X.read_lock()).0 == 22);
@@ -885,11 +878,12 @@ mod test_mut_lazy_dropped {
         assert_eq!(*_X.read_lock(), 33);
     }
 }
-#[cfg(feature="test_no_global_lazy_hint")]
+#[cfg(feature = "test_no_global_lazy_hint")]
 #[cfg(test)]
 mod test_quasi_mut_lazy_dropped {
     use super::QuasiMutLazyDroped;
-    static _X: QuasiMutLazyDroped<u32, fn() -> u32> = unsafe{QuasiMutLazyDroped::new_static(|| 22)};
+    static _X: QuasiMutLazyDroped<u32, fn() -> u32> =
+        unsafe { QuasiMutLazyDroped::new_static(|| 22) };
     #[test]
     fn test() {
         assert_eq!(*_X.read_lock(), 22);
@@ -898,7 +892,7 @@ mod test_quasi_mut_lazy_dropped {
     }
 }
 #[cfg(test)]
-#[cfg(feature="thread_local")]
+#[cfg(feature = "thread_local")]
 mod test_unsync_mut_lazy {
     use super::UnSyncMutLazy;
     #[thread_local]
@@ -911,7 +905,7 @@ mod test_unsync_mut_lazy {
     }
 }
 #[cfg(test)]
-#[cfg(feature="thread_local")]
+#[cfg(feature = "thread_local")]
 mod test_unsync_mut_lazy_finalize {
     use super::UnSyncMutLazyFinalize;
     use crate::Finaly;
@@ -921,7 +915,8 @@ mod test_unsync_mut_lazy_finalize {
         fn finaly(&self) {}
     }
     #[thread_local]
-    static _X: UnSyncMutLazyFinalize<A, fn() -> A> = unsafe{UnSyncMutLazyFinalize::new_static(|| A(22))};
+    static _X: UnSyncMutLazyFinalize<A, fn() -> A> =
+        unsafe { UnSyncMutLazyFinalize::new_static(|| A(22)) };
     #[test]
     fn test() {
         assert!((*_X.read_lock()).0 == 22);
@@ -930,11 +925,12 @@ mod test_unsync_mut_lazy_finalize {
     }
 }
 #[cfg(test)]
-#[cfg(feature="thread_local")]
+#[cfg(feature = "thread_local")]
 mod test_unsync_mut_lazy_droped {
     use super::UnSyncMutLazyDroped;
     #[thread_local]
-    static _X: UnSyncMutLazyDroped<u32, fn() -> u32> = unsafe{UnSyncMutLazyDroped::new_static(|| 22)};
+    static _X: UnSyncMutLazyDroped<u32, fn() -> u32> =
+        unsafe { UnSyncMutLazyDroped::new_static(|| 22) };
     #[test]
     fn test() {
         assert_eq!(*_X.read_lock(), 22);

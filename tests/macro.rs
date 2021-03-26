@@ -103,6 +103,7 @@ impl Finaly for A {
 }
 
 #[test]
+#[cfg(not(miri))] //miri do not know about program constructors
 fn inner_static() {
     #[dynamic(0)]
     static IX: usize = unsafe { &IX as *const _ as usize };
@@ -147,8 +148,8 @@ static V6: A = A(33);
 #[dynamic(init = 2, drop = 10)]
 static V7: A = A::new(unsafe { V5.0 });
 
-
 #[test]
+#[cfg(not(miri))] //miri do not know about program constructors
 fn dynamic_init() {
     unsafe {
         assert_eq!(V0.0, 5);
@@ -163,12 +164,11 @@ fn dynamic_init() {
     }
 }
 
-
 mod lazy {
     #[cfg(any(feature = "thread_local"))]
-    use static_init::dynamic;
-    #[cfg(any(feature = "thread_local"))]
     use super::A;
+    #[cfg(any(feature = "thread_local"))]
+    use static_init::dynamic;
 
     #[cfg(feature = "thread_local")]
     #[test]
@@ -177,10 +177,9 @@ mod lazy {
         #[dynamic(lazy)]
         static mut TH_LOCAL: A = A::new(3);
 
-        
-            assert_eq!(TH_LOCAL.read_lock().0, 3);
-            TH_LOCAL.write_lock().0 = 42;
-            assert_eq!(TH_LOCAL.read_lock().0, 42);
+        assert_eq!(TH_LOCAL.read_lock().0, 3);
+        TH_LOCAL.write_lock().0 = 42;
+        assert_eq!(TH_LOCAL.read_lock().0, 42);
         std::thread::spawn(|| {
             assert_eq!(TH_LOCAL.read_lock().0, 3);
         })
@@ -232,28 +231,28 @@ mod lazy {
         assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 4);
     }
 
-#[cfg(feature="global_once")]
-mod global_lazy {
-    use super::super::A;
-    use static_init::dynamic;
-    #[dynamic(lazy)]
-    static L1: A = A::new(L0.read_lock().0 + 1);
+    #[cfg(feature = "global_once")]
+    mod global_lazy {
+        use super::super::A;
+        use static_init::dynamic;
+        #[dynamic(lazy)]
+        static L1: A = A::new(L0.read_lock().0 + 1);
 
-    #[dynamic(lazy)]
-    static mut L0: A = A::new(10);
+        #[dynamic(lazy)]
+        static mut L0: A = A::new(10);
 
-    #[dynamic(quasi_lazy, finalize)]
-    static L3: A = A::new(33);
+        #[dynamic(quasi_lazy, finalize)]
+        static L3: A = A::new(33);
 
-    #[dynamic(quasi_lazy, finalize)]
-    static mut L2: A = A::new(L3.0);
+        #[dynamic(quasi_lazy, finalize)]
+        static mut L2: A = A::new(L3.0);
 
-    #[test]
-    fn lazy_init() {
-        assert_eq!(L0.read_lock().0, 10);
-        assert_eq!(L1.0, 11);
-        assert_eq!(L2.read_lock().0, 33);
-        assert_eq!(L3.0, 33);
+        #[test]
+        fn lazy_init() {
+            assert_eq!(L0.read_lock().0, 10);
+            assert_eq!(L1.0, 11);
+            assert_eq!(L2.read_lock().0, 33);
+            assert_eq!(L3.0, 33);
+        }
     }
-}
 }

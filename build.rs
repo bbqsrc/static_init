@@ -29,9 +29,9 @@ fn main() {
         support_priority: { any(elf,coff) },
 
         cxa_thread_at_exit: { any(
-            target_os = "linux", 
-            target_os = "fushia", 
-            target_os = "redox", 
+            target_os = "linux",
+            target_os = "fushia",
+            target_os = "redox",
             target_os = "emscripten" ,
             target_env = "gnu")},
 

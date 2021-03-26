@@ -1,4 +1,4 @@
-// Copyright 2021 Olivier Kannengieser 
+// Copyright 2021 Olivier Kannengieser
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -47,7 +47,7 @@ static L: AtomicI32 = AtomicI32::new(0);
 #[dynamic(quasi_lazy)]
 static LQ: AtomicI32 = AtomicI32::new(0);
 
-#[cfg(feature="thread_local")]
+#[cfg(feature = "thread_local")]
 #[dynamic(lazy)]
 #[thread_local]
 static LT: AtomicI32 = AtomicI32::new(0);
@@ -55,17 +55,17 @@ static LT: AtomicI32 = AtomicI32::new(0);
 static mut L_: i32 = 0;
 #[dynamic(quasi_lazy)]
 static mut L_QUASI: i32 = 0;
-#[dynamic(lazy,drop)]
+#[dynamic(lazy, drop)]
 static mut L_DROP: i32 = 0;
-#[dynamic(quasi_lazy,drop)]
+#[dynamic(quasi_lazy, drop)]
 static mut L_QUASI_DROP: i32 = 0;
-#[cfg(feature="thread_local")]
+#[cfg(feature = "thread_local")]
 #[dynamic(lazy)]
 #[thread_local]
 static mut LTM: i32 = 0;
 
-#[cfg(feature="thread_local")]
-#[dynamic(lazy,drop)]
+#[cfg(feature = "thread_local")]
+#[dynamic(lazy, drop)]
 #[thread_local]
 static mut LTMD: i32 = 0;
 
@@ -74,14 +74,13 @@ static L_MUTEX: Mutex<Option<i32>> = Mutex::new(None);
 #[dynamic(0)]
 static L_MUTEX_PARKING: parking_lot::Mutex<Option<i32>> = parking_lot::Mutex::new(None);
 
-
 #[bench]
 fn atomic_regular(bench: &mut Bencher) {
     bench.iter(|| O.fetch_add(1, Ordering::Relaxed));
 }
 #[bench]
 fn atomic_dynamic_static(bench: &mut Bencher) {
-    bench.iter(|| unsafe{W.fetch_add(1, Ordering::Relaxed)});
+    bench.iter(|| unsafe { W.fetch_add(1, Ordering::Relaxed) });
 }
 #[bench]
 fn atomic_lazy_static(bench: &mut Bencher) {
@@ -92,7 +91,7 @@ fn atomic_quasi_lazy_static(bench: &mut Bencher) {
     bench.iter(|| LQ.fetch_add(1, Ordering::Relaxed));
 }
 #[bench]
-#[cfg(feature="thread_local")]
+#[cfg(feature = "thread_local")]
 fn atomic_lazy_static_thread_local(bench: &mut Bencher) {
     bench.iter(|| LT.fetch_add(1, Ordering::Relaxed));
 }
@@ -105,15 +104,14 @@ fn atomic_ctor_crate(bench: &mut Bencher) {
     bench.iter(|| WCT.fetch_add(1, Ordering::Relaxed));
 }
 
-
 #[bench]
 fn regular(bench: &mut Bencher) {
-    bench.iter(|| unsafe{O_+=1});
+    bench.iter(|| unsafe { O_ += 1 });
 }
 
 #[bench]
 fn dynamic_static(bench: &mut Bencher) {
-    bench.iter(|| unsafe{*W_+=1});
+    bench.iter(|| unsafe { *W_ += 1 });
 }
 #[bench]
 fn atomic_dynamic_static_mutable(bench: &mut Bencher) {
@@ -121,52 +119,50 @@ fn atomic_dynamic_static_mutable(bench: &mut Bencher) {
 }
 #[bench]
 fn mut_lazy_static(bench: &mut Bencher) {
-    bench.iter(|| *L_.write_lock()+=1);
+    bench.iter(|| *L_.write_lock() += 1);
 }
 #[bench]
 fn quasi_mut_lazy_static(bench: &mut Bencher) {
-    bench.iter(|| *L_QUASI.write_lock()+=1);
+    bench.iter(|| *L_QUASI.write_lock() += 1);
 }
 #[bench]
 fn mut_lazy_droped_static(bench: &mut Bencher) {
-    bench.iter(|| *L_DROP.write_lock()+=1);
+    bench.iter(|| *L_DROP.write_lock() += 1);
 }
 #[bench]
 fn quasi_mut_lazy_droped_static(bench: &mut Bencher) {
-    bench.iter(|| *L_QUASI_DROP.write_lock()+=1);
+    bench.iter(|| *L_QUASI_DROP.write_lock() += 1);
 }
 #[bench]
-#[cfg(feature="thread_local")]
+#[cfg(feature = "thread_local")]
 fn mut_lazy_thread_local(bench: &mut Bencher) {
-    bench.iter(|| *LTM.write_lock()+=1);
+    bench.iter(|| *LTM.write_lock() += 1);
 }
 #[bench]
-#[cfg(feature="thread_local")]
+#[cfg(feature = "thread_local")]
 fn mut_lazy_thread_local_droped(bench: &mut Bencher) {
-    bench.iter(|| *LTMD.write_lock()+=1);
+    bench.iter(|| *LTMD.write_lock() += 1);
 }
 #[bench]
 fn mutex_mut_lazy(bench: &mut Bencher) {
     bench.iter(|| {
-        let mut l = unsafe{L_MUTEX.lock().unwrap()};
+        let mut l = unsafe { L_MUTEX.lock().unwrap() };
         if let Some(v) = &mut *l {
-            *v+=1;
+            *v += 1;
         } else {
-            *l=Some(0)
+            *l = Some(0)
         }
-        });
-    
+    });
 }
 #[bench]
 fn mutex_parking_lot_mut_lazy(bench: &mut Bencher) {
     bench.iter(|| {
-        let mut l = unsafe{L_MUTEX_PARKING.lock()};
+        let mut l = unsafe { L_MUTEX_PARKING.lock() };
         if let Some(v) = &mut *l {
-            *v+=1;
+            *v += 1;
         } else {
-            *l=Some(0)
+            *l = Some(0)
         }
-        });
-    
+    });
 }
 //access to lazy static cost 2ns
