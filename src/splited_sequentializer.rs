@@ -457,27 +457,27 @@ where
 {
     let cur = phase_guard.phase();
 
-    let registrating = cur | Phase::REGISTRATION;
+    //let registrating = cur | Phase::REGISTRATION;
 
     let registration_finished = cur;
 
     let registration_failed = cur | Phase::REGISTRATION_PANICKED | Phase::INITIALIZATION_SKIPED;
 
-    phase_guard.set_phase(registrating);
-    phase_guard.commit_phase();
+    //phase_guard.set_phase(registrating);
+    //phase_guard.commit_phase();
 
     let cond = phase_guard.transition(reg, registration_finished, registration_failed);
 
     if cond {
-        let initializing = registration_finished | Phase::REGISTERED | Phase::INITIALIZATION;
+        //let initializing = registration_finished | Phase::REGISTERED | Phase::INITIALIZATION;
         let initialized = registration_finished | Phase::REGISTERED | Phase::INITIALIZED;
         let initialization_panic = registration_finished
             | Phase::REGISTERED
             | Phase::INITIALIZATION_PANICKED
             | Phase::INITIALIZATION_SKIPED;
 
-        phase_guard.set_phase(initializing);
-        phase_guard.commit_phase();
+        //phase_guard.set_phase(initializing);
+        //phase_guard.commit_phase();
 
         phase_guard.transition(
             |s| init(Sequential::data(s)),
@@ -485,16 +485,16 @@ where
             initialization_panic,
         );
     } else if init_on_reg_failure {
-        let initializing =
-            registration_finished | Phase::REGISTRATION_REFUSED | Phase::INITIALIZATION;
+        //let initializing =
+        //    registration_finished | Phase::REGISTRATION_REFUSED | Phase::INITIALIZATION;
         let initialized = registration_finished | Phase::REGISTRATION_REFUSED | Phase::INITIALIZED;
         let initialization_panic = registration_finished
             | Phase::REGISTRATION_REFUSED
             | Phase::INITIALIZATION_PANICKED
             | Phase::INITIALIZATION_SKIPED;
 
-        phase_guard.set_phase(initializing);
-        phase_guard.commit_phase();
+        //phase_guard.set_phase(initializing);
+        //phase_guard.commit_phase();
 
         phase_guard.transition(
             |s| init(Sequential::data(s)),
@@ -506,7 +506,7 @@ where
             registration_finished | Phase::REGISTRATION_REFUSED | Phase::INITIALIZATION_SKIPED;
 
         phase_guard.set_phase(no_init);
-        phase_guard.commit_phase();
+        //phase_guard.commit_phase();
     }
     phase_guard
 }

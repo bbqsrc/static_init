@@ -290,8 +290,10 @@ mod mutex {
 
     unsafe impl<T: Send> Send for Mutex<T> {}
 
+    #[repr(C)]
     pub(crate) struct Lock<'a> {
         state:     &'a SyncPhasedLocker,
+        init_phase: Phase,
         on_unlock: Phase,
     }
     pub(crate) struct ReadLock<'a> {
@@ -544,7 +546,12 @@ mod mutex {
         #[inline(always)]
         fn drop(&mut self) {
             //state: old_phase | LOCKED_BIT | <0:PARKED_BIT|0:WPARKED_BIT>
-            let p = self.phase();
+            let p = self.init_phase;
+            let p = match self.state.0.value().compare_exchange(p.bits()|LOCKED_BIT,self.on_unlock.bits(),Ordering::Release,Ordering::Relaxed) {
+                Ok(_) => return,
+                Err(x) => Phase::from_bits_truncate(x),
+            };
+            //let p = self.phase();
             let xor = (p ^ self.on_unlock).bits() | LOCKED_BIT;
             let prev = self.state.0.value().fetch_xor(xor, Ordering::Release);
             //state: phase | <1:PARKED_BIT|1:WPARKED_BIT>
@@ -695,7 +702,6 @@ mod mutex {
             hint: Phase,
             #[cfg(debug_mode)] id: &AtomicUsize,
         ) -> LockResult<ReadLock<'_>, Lock<'_>> {
-            let expect = hint.bits();
             match how(hint) {
                 LockNature::None => {
                     let real = self.0.value().load(Ordering::Acquire);
@@ -704,6 +710,7 @@ mod mutex {
                     }
                 }
                 LockNature::Write => {
+                    let expect = hint.bits();
                     if self
                         .0
                         .value()
@@ -717,13 +724,14 @@ mod mutex {
                     {
                         return LockResult::Write(Lock {
                             state:     self,
+                            init_phase: Phase::from_bits_truncate(expect),
                             on_unlock: Phase::from_bits_truncate(expect),
                         });
                     }
                 }
                 LockNature::Read => {
                     let mut spin_wait = SpinWait::new();
-                    let mut expect = expect;
+                    let mut expect = hint.bits();
                     loop {
                         match self.0.value().compare_exchange_weak(
                             expect,
@@ -744,9 +752,15 @@ mod mutex {
                                         || x & (LOCKED_BIT | PARKED_BIT | WPARKED_BIT) == 0) =>
                             {
                                 spin_wait.spin_no_yield();
-                                expect = x;
+                                expect = self.0.value().load(Ordering::Relaxed);
+                                if how(Phase::from_bits_truncate(expect)) == LockNature::Read
+                                    && ((x & READER_BITS != 0
+                                        && x & READER_BITS != READER_BITS)
+                                        || x & (LOCKED_BIT | PARKED_BIT | WPARKED_BIT) == 0){ 
+                                        continue;
+                                    }
                             }
-                            Err(_) => break,
+                            Err(_) => (),
                         }
                     }
                 }
@@ -787,6 +801,7 @@ mod mutex {
                                 Ok(_) => {
                                     return LockResult::Write(Lock {
                                         state:     self,
+                            init_phase: Phase::from_bits_truncate(cur),
                                         on_unlock: Phase::from_bits_truncate(cur),
                                     })
                                 }
@@ -884,6 +899,7 @@ mod mutex {
                             cur = self.0.value().fetch_or(WPARKED_BIT, Ordering::Relaxed);
                             let lock = Lock {
                                 state:     self,
+                                init_phase: Phase::from_bits_truncate(cur),
                                 on_unlock: Phase::from_bits_truncate(cur),
                             };
                             match how(Phase::from_bits_truncate(cur)) {
