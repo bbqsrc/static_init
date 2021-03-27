@@ -46,6 +46,12 @@ lazy_static = "1.4"
 ctor = "0.1"
 libc = "0.2"
 parking_lot = "0.11"
+criterion = "0.3"
+crossbeam = "0.8"
+
+[[bench]]
+name = "init"
+harness = false
 
 [build-dependencies]
 cfg_aliases = "0.1"

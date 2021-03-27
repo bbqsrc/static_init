@@ -320,9 +320,9 @@ pub mod at_exit;
 /// Provides various implementation of lazily initialized types
 pub mod lazy;
 #[doc(inline)]
-pub use lazy::Lazy;
+pub use lazy::{MutLazy,Lazy};
 #[doc(inline)]
-pub use lazy::UnSyncLazy;
+pub use lazy::{UnSyncMutLazy,UnSyncLazy};
 
 #[cfg(any(elf, mach_o, coff))]
 /// Provides types for statics that are meant to run code before main start or after it exit.

@@ -292,9 +292,9 @@ mod mutex {
 
     #[repr(C)]
     pub(crate) struct Lock<'a> {
-        state:     &'a SyncPhasedLocker,
+        state:      &'a SyncPhasedLocker,
         init_phase: Phase,
-        on_unlock: Phase,
+        on_unlock:  Phase,
     }
     pub(crate) struct ReadLock<'a> {
         state:      &'a SyncPhasedLocker,
@@ -515,7 +515,6 @@ mod mutex {
                     });
                     return;
                 }
-                debug_assert_ne!(cur & WPARKED_BIT, 0);
 
                 //state: phase | <1:PARKED_BIT> | WPARKED_BIT
                 self.state
@@ -547,7 +546,12 @@ mod mutex {
         fn drop(&mut self) {
             //state: old_phase | LOCKED_BIT | <0:PARKED_BIT|0:WPARKED_BIT>
             let p = self.init_phase;
-            let p = match self.state.0.value().compare_exchange(p.bits()|LOCKED_BIT,self.on_unlock.bits(),Ordering::Release,Ordering::Relaxed) {
+            let p = match self.state.0.value().compare_exchange(
+                p.bits() | LOCKED_BIT,
+                self.on_unlock.bits(),
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => return,
                 Err(x) => Phase::from_bits_truncate(x),
             };
@@ -723,9 +727,9 @@ mod mutex {
                         .is_ok()
                     {
                         return LockResult::Write(Lock {
-                            state:     self,
+                            state:      self,
                             init_phase: Phase::from_bits_truncate(expect),
-                            on_unlock: Phase::from_bits_truncate(expect),
+                            on_unlock:  Phase::from_bits_truncate(expect),
                         });
                     }
                 }
@@ -754,14 +758,15 @@ mod mutex {
                                 spin_wait.spin_no_yield();
                                 expect = self.0.value().load(Ordering::Relaxed);
                                 if how(Phase::from_bits_truncate(expect)) == LockNature::Read
-                                    && ((x & READER_BITS != 0
-                                        && x & READER_BITS != READER_BITS)
-                                        || x & (LOCKED_BIT | PARKED_BIT | WPARKED_BIT) == 0){ 
-                                        continue;
-                                    }
+                                    && ((x & READER_BITS != 0 && x & READER_BITS != READER_BITS)
+                                        || x & (LOCKED_BIT | PARKED_BIT | WPARKED_BIT) == 0)
+                                {
+                                    continue;
+                                }
                             }
                             Err(_) => (),
                         }
+                        break;
                     }
                 }
             }
@@ -800,9 +805,9 @@ mod mutex {
                             ) {
                                 Ok(_) => {
                                     return LockResult::Write(Lock {
-                                        state:     self,
-                            init_phase: Phase::from_bits_truncate(cur),
-                                        on_unlock: Phase::from_bits_truncate(cur),
+                                        state:      self,
+                                        init_phase: Phase::from_bits_truncate(cur),
+                                        on_unlock:  Phase::from_bits_truncate(cur),
                                     })
                                 }
                                 Err(x) => cur = x,
@@ -898,9 +903,9 @@ mod mutex {
                             //There could have more parked thread
                             cur = self.0.value().fetch_or(WPARKED_BIT, Ordering::Relaxed);
                             let lock = Lock {
-                                state:     self,
+                                state:      self,
                                 init_phase: Phase::from_bits_truncate(cur),
-                                on_unlock: Phase::from_bits_truncate(cur),
+                                on_unlock:  Phase::from_bits_truncate(cur),
                             };
                             match how(Phase::from_bits_truncate(cur)) {
                                 LockNature::Write => return LockResult::Write(lock),
@@ -959,8 +964,8 @@ mod mutex {
         }
     }
 }
-pub(crate) use mutex::{Mutex, SyncPhasedLocker};
-pub use mutex::{SyncPhaseGuard, SyncReadPhaseGuard};
+pub(crate) use mutex::Mutex;
+pub use mutex::{SyncPhaseGuard, SyncPhasedLocker, SyncReadPhaseGuard};
 
 mod local_mutex {
     use super::{LockNature, LockResult, PhaseGuard};
