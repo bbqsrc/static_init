@@ -460,10 +460,9 @@ mod mutex {
 
     impl<'a> Lock<'a> {
         #[inline(always)]
-        fn into_read_lock(self, cur: u32) -> ReadLock<'a> {
+        fn into_read_lock(self, cur: Phase) -> ReadLock<'a> {
             //state: old_phase | LOCKED_BIT | <0:PARKED_BIT|0:WPARKED_BIT>
-            let p = Phase::from_bits_truncate(cur);
-            let xor = (p ^ self.on_unlock).bits() | LOCKED_BIT | READER_UNITY;
+            let xor = (cur ^ self.on_unlock).bits() | LOCKED_BIT | READER_UNITY;
             //state: phase | READER_UNITY | <0:PARKED_BIT|0:WPARKED_BIT>
             let prev = self.state.0.value().fetch_xor(xor, Ordering::Release);
 
@@ -520,7 +519,7 @@ mod mutex {
                 self.state
                     .0
                     .value()
-                    .fetch_xor(WPARKED_BIT | LOCKED_BIT, Ordering::Relaxed);
+                    .fetch_xor(WPARKED_BIT | LOCKED_BIT, Ordering::Release);
                 //state: phase | LOCKED_BIT | <1:PARKED_BIT>
                 if self.state.0.unpark_one_writer() {
                     return;
@@ -549,7 +548,7 @@ mod mutex {
             let p = match self.state.0.value().compare_exchange(
                 p.bits() | LOCKED_BIT,
                 self.on_unlock.bits(),
-                Ordering::Release,
+                Ordering::AcqRel,
                 Ordering::Relaxed,
             ) {
                 Ok(_) => return,
@@ -569,8 +568,9 @@ mod mutex {
     impl<'a> Into<ReadLock<'a>> for Lock<'a> {
         #[inline(always)]
         fn into(self) -> ReadLock<'a> {
-            let cur = self.state.0.value().load(Ordering::Relaxed);
-            self.into_read_lock(cur)
+            //let cur = self.state.0.value().load(Ordering::Relaxed);
+            let p = self.init_phase;
+            self.into_read_lock(p)
         }
     }
     impl<'a> ReadLock<'a> {
@@ -585,7 +585,7 @@ mod mutex {
                     self.state
                         .0
                         .value()
-                        .fetch_xor(WPARKED_BIT | LOCKED_BIT, Ordering::Relaxed);
+                        .fetch_xor(WPARKED_BIT | LOCKED_BIT, Ordering::Release);
                     if self.state.0.unpark_one_writer() {
                         return;
                     };
@@ -758,8 +758,8 @@ mod mutex {
                                 spin_wait.spin_no_yield();
                                 expect = self.0.value().load(Ordering::Relaxed);
                                 if how(Phase::from_bits_truncate(expect)) == LockNature::Read
-                                    && ((x & READER_BITS != 0 && x & READER_BITS != READER_BITS)
-                                        || x & (LOCKED_BIT | PARKED_BIT | WPARKED_BIT) == 0)
+                                    && ((expect & READER_BITS != 0 && expect & READER_BITS != READER_BITS)
+                                        || expect & (LOCKED_BIT | PARKED_BIT | WPARKED_BIT) == 0)
                                 {
                                     continue;
                                 }
@@ -902,6 +902,8 @@ mod mutex {
                         if self.0.park_writer(cur) {
                             //There could have more parked thread
                             cur = self.0.value().fetch_or(WPARKED_BIT, Ordering::Relaxed);
+                            assert_ne!(cur & LOCKED_BIT, 0);
+                            assert_eq!(cur & READER_BITS, 0);
                             let lock = Lock {
                                 state:      self,
                                 init_phase: Phase::from_bits_truncate(cur),
@@ -910,7 +912,7 @@ mod mutex {
                             match how(Phase::from_bits_truncate(cur)) {
                                 LockNature::Write => return LockResult::Write(lock),
                                 LockNature::Read => {
-                                    return LockResult::Read(lock.into_read_lock(cur | WPARKED_BIT))
+                                    return LockResult::Read(lock.into_read_lock(Phase::from_bits_truncate(cur)))
                                 }
                                 LockNature::None => return LockResult::None,
                             }
@@ -943,6 +945,8 @@ mod mutex {
                         }
 
                         if self.0.park_reader(cur) {
+                            fence(Ordering::AcqRel);
+                            let cur = self.0.value().load(Ordering::Relaxed);
                             let lock = ReadLock {
                                 state:      self,
                                 init_phase: Phase::from_bits_truncate(cur),

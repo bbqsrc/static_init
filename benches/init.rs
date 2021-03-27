@@ -116,10 +116,99 @@ fn bench_inited_mut_lazy_writelock(c: &mut Criterion) {
     c.bench_function("mut lazy write access", |b| b.iter(|| { *v.write_lock()}));
 }
 
+struct YY;
+impl Generator<[usize;1024]> for YY {
+    #[inline(always)]
+    fn generate(&self) -> [usize;1024] {
+        let mut arr = [0;1024];
+        let mut i = 0;
+        arr.iter_mut().for_each(|v| {*v=i; i+=1});
+        arr
+    }
+}
+
+fn bench_mut_lazy_multi_access(c: &mut Criterion) {
+    const ITER:usize = 100;
+    static ID: AtomicUsize = AtomicUsize::new(0);
+    bench_init(
+        c,
+        "100 (read/write) large mut lazy access  / 8 concurent accesses time sum",
+        || {let v = MutLazy::new(YY); &*v.read_lock(); v},
+        |l| {
+            let c0 = ID.fetch_add(1000,Ordering::Relaxed);
+            let cs = c0/1000;
+            for k in 0..ITER {
+                if k+cs%8 > 2 {
+                    let l = l.read_lock();
+                    let o0 = l[0];
+                    for (i,v) in l.iter().enumerate() {
+                        let x = *v; 
+                        if x != o0+i {
+                            eprintln!("at read {} i {}, {} ne {}",c0,i, x,o0+i);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    let mut l = l.write_lock();
+                    let o0 = l[0];
+                    for (i,v) in l.iter_mut().enumerate() {
+                        let x = *v; 
+                        if x != o0+i {
+                            eprintln!("at write {} i {}, {} ne {}",c0,i, x,o0+i);
+                            std::process::exit(1);
+                        }
+                        *v = c0 + i + k+1000000*c0;
+                    }
+                }
+            }
+        }
+    )
+}
+fn bench_mut_rwlock_multi_access(c: &mut Criterion) {
+    const ITER:usize = 100;
+    static ID: AtomicUsize = AtomicUsize::new(0);
+    bench_init(
+        c,
+        "100 (read/write) large mut lazy access  / 8 concurent accesses time sum",
+        || RwLock::new(YY.generate()),
+        |l| {
+            let c0 = ID.fetch_add(1000,Ordering::Relaxed);
+            let cs = c0/1000;
+            for k in 0..ITER {
+                if k+cs%8 > 2 {
+                    let l = l.read();
+                    let o0 = l[0];
+                    for (i,v) in l.iter().enumerate() {
+                        let x = *v; 
+                        if x != o0+i {
+                            eprintln!("at read {} i {}, {} ne {}",c0,i, x,o0+i);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    let mut l = l.write();
+                    let o0 = l[0];
+                    for (i,v) in l.iter_mut().enumerate() {
+                        let x = *v; 
+                        if x != o0+i {
+                            eprintln!("at write {} i {}, {} ne {}",c0,i, x,o0+i);
+                            std::process::exit(1);
+                        }
+                        *v = c0 + i + k+1000000*c0;
+                    }
+                }
+            }
+        }
+    )
+}
+
 criterion_group!(name=benches; config=Criterion::default();
-    targets=bench_init_rwlock,bench_init_mut_lazy,bench_init_mut_lazy_r,bench_init_lazy,
+    targets=
+    bench_init_rwlock,bench_init_mut_lazy,bench_init_mut_lazy_r,bench_init_lazy,
     bench_inited_mut_lazy,bench_inited_mut_lazy_r,bench_inited_lazy,
-    bench_inited_lazy_access, bench_inited_mut_lazy_readlock,bench_inited_mut_lazy_writelock
+    bench_inited_lazy_access, bench_inited_mut_lazy_readlock,bench_inited_mut_lazy_writelock,
+    bench_mut_lazy_multi_access,
+    bench_mut_rwlock_multi_access
     );
 criterion_main!(benches);
 
@@ -222,7 +311,15 @@ fn bench_init<T, R>(
                     }
 
                     for _ in 0..NT {
-                        total += receiver.recv().unwrap();
+                        total += loop {
+                            match receiver.recv_timeout(Duration::from_secs(10)) {
+                                Err(_) => {
+                                    eprintln!("Timed out");
+                                    std::process::exit(1);
+                                }
+                                Ok(v) => break v,
+                            }
+                        }
                     }
                     started
                         .compare_exchange(NT + 1, 2 * NT + 10, Ordering::AcqRel, Ordering::Relaxed)
