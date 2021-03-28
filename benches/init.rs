@@ -35,10 +35,10 @@ impl Generator<i32> for XX {
         10
     }
 }
-fn bench_init_rwlock(c: &mut Criterion) {
+fn bench_init_rwlock_<const NT:usize>(c: &mut Criterion, name: &str) {
     bench_init(
         c,
-        "init rwlock / 8 concurent accesses time sum",
+        name,
         || RwLock::<Option<AtomicUsize>>::new(None),
         |v| { let mut l = v.write();
                     match &*l {
@@ -49,61 +49,149 @@ fn bench_init_rwlock(c: &mut Criterion) {
                         Some(x) => x.load(Ordering::Relaxed),
                     }
                 },
+    Config::<true,NT>
     )
 }
 
-fn bench_init_mut_lazy(c: &mut Criterion) {
+fn bench_init_rwlock_1(c: &mut Criterion) {
+    bench_init_rwlock_::<1>(c,"init rwlock (parking_lot) => write_lock / no concurency")
+}
+fn bench_init_rwlock_2(c: &mut Criterion) {
+    bench_init_rwlock_::<2>(c,"init rwlock (parking_lot) => write_lock / 2 concurent accesses time sum")
+}
+fn bench_init_rwlock_4(c: &mut Criterion) {
+    bench_init_rwlock_::<4>(c,"init rwlock (parking_lot) => write_lock / 4 concurent accesses time sum")
+}
+fn bench_init_rwlock_8(c: &mut Criterion) {
+    bench_init_rwlock_::<8>(c,"init rwlock (parking_lot) => write_lock / 8 concurent accesses time sum")
+}
+
+fn bench_init_mut_lazy_<const NT:usize> (c: &mut Criterion,name: &str) {
     bench_init(
         c,
-        "init MutLazy => write_lock / 8 concurent accesses time sum",
+        name,
         || MutLazy::new(XX),
         |l| *l.write_lock(),
+        Config::<true,NT>
     )
 }
-fn bench_init_mut_lazy_r(c: &mut Criterion) {
+fn bench_init_mut_lazy_1(c: &mut Criterion) {
+    bench_init_mut_lazy_::<1>(c,"init mut lazy => write_lock / no concurency")
+}
+fn bench_init_mut_lazy_2(c: &mut Criterion) {
+    bench_init_mut_lazy_::<2>(c,"init mut lazy => write_lock / 2 concurent accesses time sum")
+}
+fn bench_init_mut_lazy_4(c: &mut Criterion) {
+    bench_init_mut_lazy_::<4>(c,"init mut lazy => write_lock / 4 concurent accesses time sum")
+}
+fn bench_init_mut_lazy_8(c: &mut Criterion) {
+    bench_init_mut_lazy_::<8>(c,"init mut lazy => write_lock / 8 concurent accesses time sum")
+}
+
+fn bench_init_mut_lazy_r_<const NT:usize>(c: &mut Criterion,name:&str) {
     bench_init(
         c,
-        "init MutLazy => read_lock / 8 concurent accesses time sum",
+        name,
         || MutLazy::new(XX),
         |l| *l.read_lock(),
+        Config::<true,NT>
     )
 }
-fn bench_init_lazy(c: &mut Criterion) {
+fn bench_init_mut_lazy_r_1(c: &mut Criterion) {
+    bench_init_mut_lazy_r_::<1>(c,"init mut lazy => read_lock / no concurency")
+}
+fn bench_init_mut_lazy_r_2(c: &mut Criterion) {
+    bench_init_mut_lazy_r_::<2>(c,"init mut lazy => read_lock / 2 concurent accesses time sum")
+}
+fn bench_init_mut_lazy_r_4(c: &mut Criterion) {
+    bench_init_mut_lazy_r_::<4>(c,"init mut lazy => read_lock / 4 concurent accesses time sum")
+}
+fn bench_init_mut_lazy_r_8(c: &mut Criterion) {
+    bench_init_mut_lazy_r_::<8>(c,"init mut lazy => read_lock / 8 concurent accesses time sum")
+}
+fn bench_init_lazy_<const NT:usize>(c: &mut Criterion,name: &str) {
     bench_init(
         c,
-        "init Lazy / 8 concurents accesses time sum",
+        name,
         || Lazy::new(XX),
         |l| **l,
+        Config::<true,NT>
     )
 }
-fn bench_inited_mut_lazy(c: &mut Criterion) {
+fn bench_init_lazy_1(c: &mut Criterion) {
+    bench_init_lazy_::<1>(c,"init mut lazy =>  no concurency")
+}
+fn bench_init_lazy_2(c: &mut Criterion) {
+    bench_init_lazy_::<2>(c,"init mut lazy =>  2 concurent accesses time sum")
+}
+fn bench_init_lazy_4(c: &mut Criterion) {
+    bench_init_lazy_::<4>(c,"init mut lazy =>  4 concurent accesses time sum")
+}
+fn bench_init_lazy_8(c: &mut Criterion) {
+    bench_init_lazy_::<8>(c,"init mut lazy =>  8 concurent accesses time sum")
+}
+
+fn bench_inited_mut_lazy_<const NT:usize>(c: &mut Criterion, name: &str) {
     bench_init(
         c,
-        "inited MutLazy => write_lock / 8 concurent accesses time sum",
+        name,
         || {let v = MutLazy::new(XX); &*v.read_lock(); v},
         |l| *l.write_lock(),
+        Config::<true,NT>
     )
 }
-fn bench_inited_mut_lazy_r(c: &mut Criterion) {
+fn bench_inited_mut_lazy_2(c: &mut Criterion) {
+    bench_inited_mut_lazy_::<2>(c,"inited mut lazy => write_lock / 2 concurent accesses time sum")
+}
+fn bench_inited_mut_lazy_4(c: &mut Criterion) {
+    bench_inited_mut_lazy_::<4>(c,"inited mut lazy => write_lock / 4 concurent accesses time sum")
+}
+fn bench_inited_mut_lazy_8(c: &mut Criterion) {
+    bench_inited_mut_lazy_::<8>(c,"inited mut lazy => write_lock / 8 concurent accesses time sum")
+}
+
+
+fn bench_inited_mut_lazy_r_<const NT:usize>(c: &mut Criterion, name: &str) {
     bench_init(
         c,
-        "inited MutLazy => read_lock / 8 concurent accesses time sum",
+        name,
         || {let v = MutLazy::new(XX); &*v.read_lock(); v},
         |l| *l.read_lock(),
+        Config::<true,NT>
     )
 }
-fn bench_inited_lazy(c: &mut Criterion) {
+fn bench_inited_mut_lazy_r_2(c: &mut Criterion) {
+    bench_inited_mut_lazy_r_::<2>(c,"inited mut lazy => read_lock / 2 concurent accesses time sum")
+}
+fn bench_inited_mut_lazy_r_4(c: &mut Criterion) {
+    bench_inited_mut_lazy_r_::<4>(c,"inited mut lazy => read_lock / 4 concurent accesses time sum")
+}
+fn bench_inited_mut_lazy_r_8(c: &mut Criterion) {
+    bench_inited_mut_lazy_r_::<8>(c,"inited mut lazy => read_lock / 8 concurent accesses time sum")
+}
+fn bench_inited_lazy_<const NT:usize>(c: &mut Criterion, name: &str) {
     bench_init(
         c,
-        "inited Lazy / 8 concurents accesses time sum",
+        name,
         || {let v = Lazy::new(XX); &*v; v},
         |l| **l,
+        Config::<true,NT>
     )
 }
+fn bench_inited_lazy_2(c: &mut Criterion) {
+    bench_inited_lazy_::<2>(c,"inited mut lazy =>  2 concurent accesses time sum")
+}
+fn bench_inited_lazy_4(c: &mut Criterion) {
+    bench_inited_lazy_::<4>(c,"inited mut lazy =>  4 concurent accesses time sum")
+}
+fn bench_inited_lazy_8(c: &mut Criterion) {
+    bench_inited_lazy_::<8>(c,"inited mut lazy =>  8 concurent accesses time sum")
+}
+
 fn bench_inited_lazy_access(c: &mut Criterion) {
     let v = Lazy::new(XX);
     &*v;
-    c.bench_function("lazy access", |b| b.iter(|| { *v}));
+    c.bench_function("inited lazy access", |b| b.iter(|| { *v}));
 }
 fn bench_inited_mut_lazy_readlock(c: &mut Criterion) {
     let v = MutLazy::new(XX);
@@ -127,12 +215,12 @@ impl Generator<[usize;1024]> for YY {
     }
 }
 
-fn bench_mut_lazy_multi_access(c: &mut Criterion) {
+fn bench_mut_lazy_multi_access_<const NT:usize>(c: &mut Criterion,name: &str) {
     const ITER:usize = 100;
     static ID: AtomicUsize = AtomicUsize::new(0);
     bench_init(
         c,
-        "100 (read/write) large mut lazy access  / 8 concurent accesses time sum",
+        name,
         || {let v = MutLazy::new(YY); &*v.read_lock(); v},
         |l| {
             let c0 = ID.fetch_add(1000,Ordering::Relaxed);
@@ -162,14 +250,27 @@ fn bench_mut_lazy_multi_access(c: &mut Criterion) {
                 }
             }
         }
+        ,Config::<false,NT>
     )
 }
-fn bench_mut_rwlock_multi_access(c: &mut Criterion) {
+
+fn bench_mut_lazy_multi_access_4(c: &mut Criterion) {
+  bench_mut_lazy_multi_access_::<4>(c,"100 (read/write) large mut lazy access  / 4 concurent accesses time sum")
+}
+fn bench_mut_lazy_multi_access_8(c: &mut Criterion) {
+  bench_mut_lazy_multi_access_::<8>(c,"100 (read/write) large mut lazy access  / 8 concurent accesses time sum")
+}
+
+fn bench_mut_lazy_multi_access_16(c: &mut Criterion) {
+  bench_mut_lazy_multi_access_::<16>(c,"100 (read/write) large mut lazy access  / 16 concurent accesses time sum")
+}
+
+fn bench_mut_rwlock_multi_access_<const NT:usize>(c: &mut Criterion,name: &str) {
     const ITER:usize = 100;
     static ID: AtomicUsize = AtomicUsize::new(0);
     bench_init(
         c,
-        "100 (read/write) large mut lazy access  / 8 concurent accesses time sum",
+        name,
         || RwLock::new(YY.generate()),
         |l| {
             let c0 = ID.fetch_add(1000,Ordering::Relaxed);
@@ -199,26 +300,69 @@ fn bench_mut_rwlock_multi_access(c: &mut Criterion) {
                 }
             }
         }
+        ,Config::<false,NT>
     )
 }
+fn bench_mut_rwlock_multi_access_4(c: &mut Criterion) {
+  bench_mut_rwlock_multi_access_::<4>(c,"100 (read/write) large rwlock (parking_lot) access  / 4 concurent accesses time sum")
+}
+
+fn bench_mut_rwlock_multi_access_8(c: &mut Criterion) {
+  bench_mut_rwlock_multi_access_::<8>(c,"100 (read/write) large rwlock (parking_lot) access  / 8 concurent accesses time sum")
+}
+fn bench_mut_rwlock_multi_access_16(c: &mut Criterion) {
+  bench_mut_rwlock_multi_access_::<16>(c,"100 (read/write) large rwlock (parking_lot) access  / 16 concurent accesses time sum")
+}
+
 
 criterion_group!(name=benches; config=Criterion::default();
     targets=
-    bench_init_rwlock,bench_init_mut_lazy,bench_init_mut_lazy_r,bench_init_lazy,
-    bench_inited_mut_lazy,bench_inited_mut_lazy_r,bench_inited_lazy,
-    bench_inited_lazy_access, bench_inited_mut_lazy_readlock,bench_inited_mut_lazy_writelock,
-    bench_mut_lazy_multi_access,
-    bench_mut_rwlock_multi_access
+    bench_init_rwlock_1,
+    bench_init_rwlock_2,
+    bench_init_rwlock_4,
+    bench_init_rwlock_8,
+    bench_init_mut_lazy_1,
+    bench_init_mut_lazy_2,
+    bench_init_mut_lazy_4,
+    bench_init_mut_lazy_8,
+    bench_init_mut_lazy_r_1,
+    bench_init_mut_lazy_r_2,
+    bench_init_mut_lazy_r_4,
+    bench_init_mut_lazy_r_8,
+    bench_init_lazy_1,
+    bench_init_lazy_2,
+    bench_init_lazy_4,
+    bench_init_lazy_8,
+    bench_inited_lazy_access, 
+    bench_inited_lazy_2, 
+    bench_inited_lazy_4, 
+    bench_inited_lazy_8, 
+    bench_inited_mut_lazy_writelock,
+    bench_inited_mut_lazy_2,
+    bench_inited_mut_lazy_4,
+    bench_inited_mut_lazy_8,
+    bench_inited_mut_lazy_readlock,
+    bench_inited_mut_lazy_r_2,
+    bench_inited_mut_lazy_r_4,
+    bench_inited_mut_lazy_r_8,
+    bench_mut_rwlock_multi_access_4,
+    bench_mut_rwlock_multi_access_8,
+    bench_mut_rwlock_multi_access_16,
+    bench_mut_lazy_multi_access_4,
+    bench_mut_lazy_multi_access_8,
+    bench_mut_lazy_multi_access_16,
     );
 criterion_main!(benches);
 
-fn bench_init<T, R>(
+struct Config<const MICRO_BENCH:bool,const NTHREAD:usize>;
+
+fn bench_init<T, R,const MICRO_BENCH:bool,const NT:usize>(
     c: &mut Criterion,
     name: &str,
     build: impl Fn() -> T,
     access: impl Fn(&T) -> R + Sync,
+    _ : Config<MICRO_BENCH,NT>,
 ) {
-    const NT: usize = 8;
     //static VMX: AtomicUsize = AtomicUsize::new(0);
     //static VP :RwLock<Option<AtomicU32>> = RwLock::const_new(RawRwLock::INIT,None);
 
@@ -257,7 +401,13 @@ fn bench_init<T, R>(
                         Ok(_) => continue,
                     }
                 }
-                let duration = tk.time(|| unsafe { access(&*vm.0.get()) });
+                let duration = if MICRO_BENCH {
+                   tk.time(|| unsafe { access(&*vm.0.get()) })
+                } else {
+                    let s = std::time::Instant::now();
+                    criterion::black_box(unsafe { access(&*vm.0.get()) });
+                    s.elapsed()
+                };
                 //let duration = tk.time(|| { let mut l = VP.write();
                 //    match &*l {
                 //        None => {
