@@ -148,6 +148,8 @@ mod global_once {
     use core::hint::unreachable_unchecked;
     #[cfg(debug_mode)]
     use core::sync::atomic::{AtomicUsize, Ordering};
+    #[cfg(debug_mode)]
+    use crate::CyclicPanic;
 
     //#[inline(never)]
     //#[cold]
@@ -272,33 +274,49 @@ mod global_once {
                 &shall_proceed,
                 &shall_proceed,
                 Phase::INITIALIZED | Phase::REGISTERED,
-                #[cfg(debug_mode)]
-                &this.1,
             )
         }
     }
 
-    macro_rules! debug_save_thread {
-        ($s:expr) => {
+    #[inline(always)]
+    fn debug_save_thread<T:Sequential> (s: &T) 
+        where T::Sequentializer: AsRef<SyncSequentializer>
+        {
             #[cfg(debug_mode)]
             {
-                let this = Sequential::sequentializer($s).as_ref();
+                let this = Sequential::sequentializer(s).as_ref();
                 use parking_lot::lock_api::GetThreadId;
                 this.1.store(
                     parking_lot::RawThreadId.nonzero_thread_id().into(),
                     Ordering::Relaxed,
                 );
             }
-        };
     }
-    macro_rules! debug_thread_zero {
-        ($s:expr) => {
+    #[inline(always)]
+    fn debug_thread_zero<T:Sequential> (s: &T) 
+        where T::Sequentializer: AsRef<SyncSequentializer>
+        {
             #[cfg(debug_mode)]
             {
-                let this = Sequential::sequentializer($s).as_ref();
+                let this = Sequential::sequentializer(s).as_ref();
                 this.1.store(0, Ordering::Relaxed);
             }
-        };
+    }
+    #[inline(always)]
+    fn debug_test<T: Sequential> (s: &T) 
+        where T::Sequentializer: AsRef<SyncSequentializer>
+        {
+          #[cfg(debug_mode)]
+          {
+              let this = Sequential::sequentializer(s).as_ref();
+              let id = this.1.load(Ordering::Relaxed);
+              if id != 0 {
+                  use parking_lot::lock_api::GetThreadId;
+                  if id == parking_lot::RawThreadId.nonzero_thread_id().into() {
+                      std::panic::panic_any(CyclicPanic);
+                  }
+              }
+          }
     }
     // SAFETY: it is safe because it does implement synchronized locks
     unsafe impl<'a, T: Sequential + 'a> SplitedLazySequentializer<'a, T> for SyncSequentializer
@@ -319,6 +337,7 @@ mod global_once {
                 s,
                 |p| {
                     if shall_init(p) {
+                        debug_test(s);
                         LockNature::Write
                     } else {
                         LockNature::None
@@ -326,17 +345,15 @@ mod global_once {
                 },
                 |_| LockNature::Read,
                 Phase::INITIALIZED | Phase::REGISTERED,
-                #[cfg(debug_mode)]
-                &this.1,
             ) {
                 LockResult::None => return,
                 LockResult::Write(l) => l,
                 LockResult::Read(_) => return,
             };
 
-            debug_save_thread!(s);
+            debug_save_thread(s);
             lazy_initialization(phase_guard, init, reg, init_on_reg_failure);
-            debug_thread_zero!(s);
+            debug_thread_zero(s);
         }
         #[inline(always)]
         fn init_then_read_guard(
@@ -352,6 +369,7 @@ mod global_once {
                 s,
                 |p| {
                     if shall_init(p) {
+                        debug_test(s);
                         LockNature::Write
                     } else {
                         LockNature::Read
@@ -359,14 +377,12 @@ mod global_once {
                 },
                 |_| LockNature::Read,
                 Phase::INITIALIZED | Phase::REGISTERED,
-                #[cfg(debug_mode)]
-                &this.1,
             ) {
                 LockResult::Read(l) => l,
                 LockResult::Write(l) => {
-                    debug_save_thread!(s);
+                    debug_save_thread(s);
                     let l = lazy_initialization(l, init, reg, init_on_reg_failure);
-                    debug_thread_zero!(s);
+                    debug_thread_zero(s);
                     l.into()
                 }
                 LockResult::None => unsafe { unreachable_unchecked() },
@@ -383,9 +399,10 @@ mod global_once {
             match <Self as Sequentializer<T>>::lock(s, |_| LockNature::Write) {
                 LockResult::Write(l) => {
                     if shall_init(l.phase()) {
-                        debug_save_thread!(s);
+                        debug_test(s);
+                        debug_save_thread(s);
                         let l = lazy_initialization(l, init, reg, init_on_reg_failure);
-                        debug_thread_zero!(s);
+                        debug_thread_zero(s);
                         l
                     } else {
                         l
@@ -398,17 +415,6 @@ mod global_once {
 
         fn finalize_callback(s: &T, f: impl FnOnce(&T::Data)) {
             let this = Sequential::sequentializer(s).as_ref();
-
-            let _id = {
-                #[cfg(debug_mode)]
-                {
-                    AtomicUsize::new(0)
-                }
-                #[cfg(not(debug_mode))]
-                {
-                    ()
-                }
-            };
 
             let how = |p: Phase| {
                 if (p
@@ -429,8 +435,6 @@ mod global_once {
                 how,
                 |_| LockNature::Write,
                 Phase::INITIALIZED | Phase::REGISTERED,
-                #[cfg(debug_mode)]
-                &_id,
             ) {
                 LockResult::None => return,
                 LockResult::Write(l) => l,
