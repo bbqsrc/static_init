@@ -167,7 +167,7 @@ pub unsafe trait LazySequentializer<'a, T: Sequential<Sequentializer = Self>>:
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
         init_on_reg_failure: bool,
-    );
+    ) -> Phase;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change (Read Lock). The returned lock may be shared.
     fn init_then_read_guard(
@@ -217,7 +217,7 @@ pub unsafe trait SplitedLazySequentializer<'a, T: Sequential>:
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
-    );
+    ) -> Phase;
     fn init_then_read_guard(
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,

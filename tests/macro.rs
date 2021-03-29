@@ -177,11 +177,11 @@ mod lazy {
         #[dynamic(lazy)]
         static mut TH_LOCAL: A = A::new(3);
 
-        assert_eq!(TH_LOCAL.read_lock().0, 3);
-        TH_LOCAL.write_lock().0 = 42;
-        assert_eq!(TH_LOCAL.read_lock().0, 42);
+        assert_eq!(TH_LOCAL.read().0, 3);
+        TH_LOCAL.write().0 = 42;
+        assert_eq!(TH_LOCAL.read().0, 42);
         std::thread::spawn(|| {
-            assert_eq!(TH_LOCAL.read_lock().0, 3);
+            assert_eq!(TH_LOCAL.read().0, 3);
         })
         .join()
         .unwrap();
@@ -217,14 +217,14 @@ mod lazy {
 
         std::thread::spawn(|| {
             &*B1;
-            &*B2.read_lock();
+            &*B2.read();
         })
         .join()
         .unwrap();
         std::thread::spawn(|| ()).join().unwrap();
         std::thread::spawn(|| {
             &*B1;
-            &*B2.read_lock();
+            &*B2.read();
         })
         .join()
         .unwrap();
@@ -236,7 +236,7 @@ mod lazy {
         use super::super::A;
         use static_init::dynamic;
         #[dynamic(lazy)]
-        static L1: A = A::new(L0.read_lock().0 + 1);
+        static L1: A = A::new(L0.read().0 + 1);
 
         #[dynamic(lazy)]
         static mut L0: A = A::new(10);
@@ -249,9 +249,9 @@ mod lazy {
 
         #[test]
         fn lazy_init() {
-            assert_eq!(L0.read_lock().0, 10);
+            assert_eq!(L0.read().0, 10);
             assert_eq!(L1.0, 11);
-            assert_eq!(L2.read_lock().0, 33);
+            assert_eq!(L2.read().0, 33);
             assert_eq!(L3.0, 33);
         }
     }

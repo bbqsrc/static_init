@@ -119,29 +119,29 @@ fn atomic_dynamic_static_mutable(bench: &mut Bencher) {
 }
 #[bench]
 fn mut_lazy_static(bench: &mut Bencher) {
-    bench.iter(|| *L_.write_lock() += 1);
+    bench.iter(|| *L_.write() += 1);
 }
 #[bench]
 fn quasi_mut_lazy_static(bench: &mut Bencher) {
-    bench.iter(|| *L_QUASI.write_lock() += 1);
+    bench.iter(|| *L_QUASI.write() += 1);
 }
 #[bench]
 fn mut_lazy_droped_static(bench: &mut Bencher) {
-    bench.iter(|| *L_DROP.write_lock() += 1);
+    bench.iter(|| *L_DROP.write() += 1);
 }
 #[bench]
 fn quasi_mut_lazy_droped_static(bench: &mut Bencher) {
-    bench.iter(|| *L_QUASI_DROP.write_lock() += 1);
+    bench.iter(|| *L_QUASI_DROP.write() += 1);
 }
 #[bench]
 #[cfg(feature = "thread_local")]
 fn mut_lazy_thread_local(bench: &mut Bencher) {
-    bench.iter(|| *LTM.write_lock() += 1);
+    bench.iter(|| *LTM.write() += 1);
 }
 #[bench]
 #[cfg(feature = "thread_local")]
 fn mut_lazy_thread_local_droped(bench: &mut Bencher) {
-    bench.iter(|| *LTMD.write_lock() += 1);
+    bench.iter(|| *LTMD.write() += 1);
 }
 #[bench]
 fn mutex_mut_lazy(bench: &mut Bencher) {

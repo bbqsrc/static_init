@@ -202,7 +202,7 @@ impl<'a> Lock<'a> {
 
         let r = if prev & PARKED_BIT != 0 {
             wake_readers(&self.futex,0,true)
-        } else {ReadLock::new(self.futex,prev)};
+        } else {ReadLock::new(self.futex,self.on_unlock.bits())};
 
         forget(self);
 
@@ -449,7 +449,7 @@ impl SyncPhasedLocker {
         ) {
             LockResult::Write(l) => LockResult::Write(SyncPhaseGuard::new(v, l)),
             LockResult::Read(l) => LockResult::Read(SyncReadPhaseGuard::new(v, l)),
-            LockResult::None => LockResult::None,
+            LockResult::None(p) => LockResult::None(p),
         }
     }
     #[inline(always)]
@@ -462,8 +462,9 @@ impl SyncPhasedLocker {
         match how(hint) {
             LockNature::None => {
                 let real = self.0.load(Ordering::Acquire);
-                if Phase::from_bits_truncate(real) == hint {
-                    return LockResult::None;
+                let p = Phase::from_bits_truncate(real);
+                if p == hint {
+                    return LockResult::None(p);
                 }
             }
             LockNature::Write => {
@@ -533,7 +534,7 @@ impl SyncPhasedLocker {
             match how(Phase::from_bits_truncate(cur)) {
                 LockNature::None => {
                     fence(Ordering::Acquire);
-                    return LockResult::None;
+                    return LockResult::None(Phase::from_bits_truncate(cur));
                 }
                 LockNature::Write => {
                     if is_write_lockable(cur) {
@@ -647,7 +648,7 @@ impl SyncPhasedLocker {
             match on_parking_how(Phase::from_bits_truncate(cur)) {
                 LockNature::None => {
                     fence(Ordering::Acquire);
-                    return LockResult::None;
+                    return LockResult::None(Phase::from_bits_truncate(cur));
                 }
                 LockNature::Write => {
                     if cur & WPARKED_BIT == 0 {
@@ -678,7 +679,7 @@ impl SyncPhasedLocker {
                                     lock.into_read_lock(Phase::from_bits_truncate(cur)),
                                 )
                             }
-                            LockNature::None => return LockResult::None,
+                            LockNature::None => return LockResult::None(Phase::from_bits_truncate(cur)),
                         }
                     }
                 }
@@ -704,7 +705,7 @@ impl SyncPhasedLocker {
                         let lock = ReadLock::new(&self.0,cur);
                         match how(Phase::from_bits_truncate(cur)) {
                             LockNature::Read => return LockResult::Read(lock),
-                            LockNature::None => return LockResult::None,
+                            LockNature::None => return LockResult::None(Phase::from_bits_truncate(cur)),
                             LockNature::Write => {
                                 spin_wait.reset();
                                 continue;

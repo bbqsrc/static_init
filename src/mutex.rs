@@ -52,6 +52,6 @@ pub enum LockNature {
 pub enum LockResult<R, W> {
     Read(R),
     Write(W),
-    None,
+    None(Phase),
 }
 

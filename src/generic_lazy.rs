@@ -16,8 +16,8 @@ pub trait LazyPolicy {
     /// Shall the initialization be performed if the finalization callback failed to be registred
     const INIT_ON_REG_FAILURE: bool;
     /// shall the initialization be performed (tested at each access)
-    fn shall_proceed(_: Phase) -> bool;
-    fn initialized_ok(_: Phase) -> bool;
+    fn shall_init(_: Phase) -> bool;
+    fn is_accessible(_: Phase) -> bool;
 }
 
 /// Generic lazy interior data storage, uninitialized with interior mutability data storage
@@ -105,7 +105,8 @@ unsafe impl<T: LazyData, F: Sync, M: Sync, S> Send for GenericLazy<T, F, M, S> w
 impl<T, F, M, S> GenericLazy<T, F, M, S> {
     /// const initialize the lazy, the inner data may be in an uninitialized state
     ///
-    /// # Safety:
+    /// # Safety
+    ///
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
@@ -122,7 +123,8 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
     /// const initialize the lazy, the inner data may be in an uninitialized state, and store
     /// debug information in debug_mode
     ///
-    /// # Safety:
+    /// # Safety
+    ///
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
@@ -155,7 +157,7 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
     /// potentialy initialize the inner data
     ///
     /// this method is called every time the generic lazy is dereferenced
-    pub fn init<'a>(this: &'a Self)
+    pub fn init<'a>(this: &'a Self) -> Phase
     where
         T: 'static + LazyData,
         M: 'static,
@@ -167,7 +169,7 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
         {
             LazySequentializer::init(
                 this,
-                S::shall_proceed,
+                S::shall_init,
                 |data: &T| {
                     // SAFETY
                     // This function is called only once within the init function
@@ -176,14 +178,14 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
                     unsafe { data.get().write(d) };
                 },
                 S::INIT_ON_REG_FAILURE,
-            );
+            )
         }
         #[cfg(debug_mode)]
         {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 LazySequentializer::init(
                     this,
-                    S::shall_proceed,
+                    S::shall_init,
                     |data: &T| {
                         // SAFETY
                         // This function is called only once within the init function
@@ -194,7 +196,7 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
                     S::INIT_ON_REG_FAILURE,
                 )
             })) {
-                Ok(_) => (),
+                Ok(p) => p,
                 Err(x) => {
                     if x.is::<CyclicPanic>() {
                         match &this._info {
@@ -222,7 +224,8 @@ where
     type Target = T::Target;
     #[inline(always)]
     fn deref(&self) -> &T::Target {
-        Self::init(self);
+        let phase = Self::init(self);
+        S::is_accessible(phase);
         // SAFETY
         // This is safe as long as the object has been initialized
         // this is the contract ensured by init.
@@ -241,7 +244,8 @@ where
 {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut T::Target {
-        Self::init(self);
+        let phase = Self::init(self);
+        S::is_accessible(phase);
         // SAFETY
         // This is safe as long as the object has been initialized
         // this is the contract ensured by init.
@@ -298,7 +302,8 @@ unsafe impl<T: LazyData, F: Sync, M: Sync, S> Send for GenericMutLazy<T, F, M, S
 impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     /// const initialize the lazy, the inner data may be in an uninitialized state
     ///
-    /// # Safety:
+    /// # Safety
+    ///
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
@@ -315,7 +320,8 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     /// const initialize the lazy, the inner data may be in an uninitialized state and
     /// store some debuging informations
     ///
-    /// # Safety:
+    /// # Safety
+    ///
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
@@ -395,7 +401,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         {
             LazySequentializer::init_then_read_guard(
                 this,
-                S::shall_proceed,
+                S::shall_init,
                 |data: &T| {
                     // SAFETY
                     // This function is called only once within the init function
@@ -411,7 +417,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 LazySequentializer::init_then_read_guard(
                     this,
-                    S::shall_proceed,
+                    S::shall_init,
                     |data: &T| {
                         // SAFETY
                         // This function is called only once within the init function
@@ -452,7 +458,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         {
             LazySequentializer::init_then_write_guard(
                 this,
-                S::shall_proceed,
+                S::shall_init,
                 |data: &T| {
                     // SAFETY
                     // This function is called only once within the init function
@@ -468,7 +474,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 LazySequentializer::init_then_write_guard(
                     this,
-                    S::shall_proceed,
+                    S::shall_init,
                     |data: &T| {
                         // SAFETY
                         // This function is called only once within the init function

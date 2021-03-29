@@ -53,7 +53,7 @@ where
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
-    ) {
+    ) -> Phase {
         let phase_guard = match <Self as Sequentializer<T>>::lock(s, |p| {
             if shall_init(p) {
                 LockNature::Write
@@ -61,12 +61,13 @@ where
                 LockNature::None
             }
         }) {
-            LockResult::None => return,
+            LockResult::None(p) => return p,
             LockResult::Write(l) => l,
             LockResult::Read(_) => unsafe { unreachable_unchecked() },
         };
 
-        lazy_initialization(phase_guard, init, reg, init_on_reg_failure);
+        let ph = lazy_initialization(phase_guard, init, reg, init_on_reg_failure);
+        ph.phase()
     }
     #[inline(always)]
     fn init_then_read_guard(
@@ -88,7 +89,7 @@ where
                 let l = lazy_initialization(l, init, reg, init_on_reg_failure);
                 l.into()
             }
-            LockResult::None => unsafe { unreachable_unchecked() },
+            LockResult::None(_) => unsafe { unreachable_unchecked() },
         }
     }
     #[inline(always)]
@@ -108,7 +109,7 @@ where
                 }
             }
             LockResult::Read(_) => unsafe { unreachable_unchecked() },
-            LockResult::None => unsafe { unreachable_unchecked() },
+            LockResult::None(_) => unsafe { unreachable_unchecked() },
         }
     }
 
@@ -128,7 +129,7 @@ where
                 LockNature::None
             }
         }) {
-            LockResult::None => return,
+            LockResult::None(_) => return,
             LockResult::Write(l) => l,
             LockResult::Read(_) => unsafe { unreachable_unchecked() },
         };
@@ -330,7 +331,7 @@ mod global_once {
             init: impl FnOnce(&'a <T as Sequential>::Data),
             reg: impl FnOnce(&'a T) -> bool,
             init_on_reg_failure: bool,
-        ) {
+        ) -> Phase {
             let this = Sequential::sequentializer(s).as_ref();
 
             let phase_guard = match this.0.lock(
@@ -346,14 +347,15 @@ mod global_once {
                 |_| LockNature::Read,
                 Phase::INITIALIZED | Phase::REGISTERED,
             ) {
-                LockResult::None => return,
+                LockResult::None(p) => return p,
                 LockResult::Write(l) => l,
-                LockResult::Read(_) => return,
+                LockResult::Read(l) => return l.phase(),
             };
 
             debug_save_thread(s);
-            lazy_initialization(phase_guard, init, reg, init_on_reg_failure);
+            let ph = lazy_initialization(phase_guard, init, reg, init_on_reg_failure);
             debug_thread_zero(s);
+            ph.phase()
         }
         #[inline(always)]
         fn init_then_read_guard(
@@ -385,7 +387,7 @@ mod global_once {
                     debug_thread_zero(s);
                     l.into()
                 }
-                LockResult::None => unsafe { unreachable_unchecked() },
+                LockResult::None(_) => unsafe { unreachable_unchecked() },
             }
         }
         #[inline(always)]
@@ -409,7 +411,7 @@ mod global_once {
                     }
                 }
                 LockResult::Read(_) => unsafe { unreachable_unchecked() },
-                LockResult::None => unsafe { unreachable_unchecked() },
+                LockResult::None(_) => unsafe { unreachable_unchecked() },
             }
         }
 
@@ -436,7 +438,7 @@ mod global_once {
                 |_| LockNature::Write,
                 Phase::INITIALIZED | Phase::REGISTERED,
             ) {
-                LockResult::None => return,
+                LockResult::None(_) => return,
                 LockResult::Write(l) => l,
                 LockResult::Read(_) => unsafe { unreachable_unchecked() },
             };

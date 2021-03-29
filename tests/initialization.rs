@@ -120,7 +120,7 @@ macro_rules! acc0 {
 }
 macro_rules! accr {
     ($x:ident) => {
-        $x.read_lock().0
+        $x.read().0
     };
 }
 

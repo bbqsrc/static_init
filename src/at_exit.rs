@@ -137,7 +137,7 @@ mod exit_manager {
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
-        ) {
+        ) -> Phase {
             <SubSequentializer as SplitedLazySequentializer<T>>::init(
                 st,
                 shall_proceed,
@@ -279,7 +279,7 @@ mod local_manager {
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
             init_on_reg_failure: bool,
-        ) {
+        ) -> Phase {
             <SubSequentializer as SplitedLazySequentializer<T>>::init(
                 st,
                 shall_proceed,

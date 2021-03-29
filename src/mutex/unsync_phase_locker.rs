@@ -85,6 +85,10 @@ impl<'a, T: ?Sized> UnSyncReadPhaseGuard<'a, T> {
     pub(crate) fn new(r: &'a T, p: &'a Cell<u32>) -> Self {
         Self(r, p)
     }
+    #[inline(always)]
+    pub fn phase(&self) -> Phase {
+        Phase::from_bits_truncate(self.1.get())
+    }
 }
 
 impl<'a, T: ?Sized> Drop for UnSyncReadPhaseGuard<'a, T> {
@@ -141,7 +145,7 @@ impl UnSyncPhaseLocker {
                 self.0.set(self.0.get() + READER_UNITY);
                 LockResult::Read(UnSyncReadPhaseGuard::new(v, &self.0))
             }
-            LockNature::None => LockResult::None,
+            LockNature::None => LockResult::None(self.phase()),
         }
     }
 }

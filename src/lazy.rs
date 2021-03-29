@@ -21,17 +21,12 @@ pub struct InitializedChecker;
 impl LazyPolicy for InitializedChecker {
     const INIT_ON_REG_FAILURE: bool = false;
     #[inline(always)]
-    fn initialized_ok(_: Phase) -> bool {
-        true
+    fn is_accessible(p: Phase) -> bool {
+        p.intersects(Phase::INITIALIZED)
     }
     #[inline(always)]
-    fn shall_proceed(p: Phase) -> bool {
-        if p.intersects(Phase::INITIALIZED) {
-            false
-        } else {
-            assert!(!p.intersects(Phase::INITIALIZATION_SKIPED));
-            true
-        }
+    fn shall_init(p: Phase) -> bool {
+        p.is_empty()
     }
 }
 
@@ -39,18 +34,12 @@ pub struct InitializedAndNonFinalizedChecker;
 impl LazyPolicy for InitializedAndNonFinalizedChecker {
     const INIT_ON_REG_FAILURE: bool = false;
     #[inline(always)]
-    fn shall_proceed(p: Phase) -> bool {
-        if p.intersects(Phase::INITIALIZED) {
-            assert!(!p.intersects(Phase::FINALIZED));
-            false
-        } else {
-            assert!(!p.intersects(Phase::INITIALIZATION_SKIPED));
-            true
-        }
+    fn shall_init(p: Phase) -> bool {
+        p.is_empty()
     }
     #[inline(always)]
-    fn initialized_ok(p: Phase) -> bool {
-        !p.intersects(Phase::FINALIZED)
+    fn is_accessible(p: Phase) -> bool {
+        !p.intersects(Phase::FINALIZED) && p.intersects(Phase::INITIALIZED)
     }
 }
 //pub struct InitializedRearmingChecker;
@@ -118,7 +107,7 @@ macro_rules! init_only {
                 on_uninited: impl Fn(Phase) -> bool,
                 init: impl FnOnce(&'a <T as Sequential>::Data),
                 init_on_reg_failure: bool,
-            ) {
+            ) -> Phase {
                 <$sub as SplitedLazySequentializer<T>>::init(
                     s,
                     on_uninited,
@@ -217,7 +206,8 @@ macro_rules! impl_lazy {
             fn deref(&self) -> &Self::Target {
                  // SAFETY The object is required to have 'static lifetime by construction
                  let st: &'static GenericLazy<$data, G, $man, $checker> = unsafe{&*(&self.__private as *const _)};
-                 GenericLazy::init(st);
+                 let phase = GenericLazy::init(st);
+                 assert!(<$checker>::is_accessible(phase));
                  unsafe{&* GenericLazy::get_raw_data(&self.__private).get()}
             }
         }
@@ -236,11 +226,15 @@ macro_rules! impl_lazy {
                 if inited::global_inited_hint() {
                     // SAFETY The object is initialized a program start-up as long
                     // as it is constructed through the macros #[dynamic(quasi_lazy)]
+                    // If initialization failed, the program terminates before the
+                    // global_inited_hint is set. So if the global_initied_hint is
+                    // set all QuasiLazy are guaranteed to be initialized
                     unsafe{&* (GenericLazy::get_raw_data(&self.__private).get())}
                     } else {
                         // SAFETY The object is required to have 'static lifetime by construction
                         let st: &'static GenericLazy<$data, G, $man, $checker> = unsafe{&*(&self.__private as *const _)};
-                        GenericLazy::init(st);
+                        let phase = GenericLazy::init(st);
+                        assert!(<$checker>::is_accessible(phase));
                         unsafe{&* GenericLazy::get_raw_data(&self.__private).get()}
                     }
                 }
@@ -307,8 +301,8 @@ macro_rules! impl_lazy {
                 Phased::phase(Sequential::sequentializer(&this.__private))
             }
             #[inline(always)]
-            pub fn init(this: &$($static)? Self) {
-                GenericLazy::init(&this.__private);
+            pub fn init(this: &$($static)? Self) -> Phase {
+                GenericLazy::init(&this.__private)
             }
         }
     };
@@ -455,6 +449,13 @@ where
         unsafe { &*(*self.0).get() }
     }
 }
+impl<T,U> From<WriteGuard<T>> for ReadGuard<U>
+ where U: From<T>
+ {
+     fn from(v: WriteGuard<T>) -> Self {
+         Self(v.0.into())
+     }
+ }
 
 macro_rules! impl_mut_lazy {
     ($tp:ident, $man:ty, $checker:ty, $data:ty, $gdw: ident, $gd: ident $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
@@ -481,11 +482,11 @@ macro_rules! impl_mut_lazy {
         $(T:$tr,)?
         {
             #[inline(always)]
-            pub fn read_lock(&$($static)? self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
+            pub fn read(&$($static)? self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                ReadGuard(GenericMutLazy::init_then_read_lock(&self.__private))
             }
             #[inline(always)]
-            pub fn write_lock(&$($static)? self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
+            pub fn write(&$($static)? self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                WriteGuard(GenericMutLazy::init_then_write_lock(&self.__private))
             }
             #[inline(always)]
@@ -504,19 +505,24 @@ macro_rules! impl_mut_lazy {
         $(T:$tr,)?
         {
             #[inline(always)]
-            pub fn read_lock(&self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
+            pub fn read(&self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                 let st :&'static Self = unsafe {&*(self as *const _)};
-                ReadGuard(GenericMutLazy::init_then_read_lock(&st.__private))
+                let l = GenericMutLazy::init_then_read_lock(&st.__private);
+                assert!(<$checker>::is_accessible(l.phase()));
+                ReadGuard(l)
             }
             #[inline(always)]
-            pub fn write_lock(&self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
+            pub fn write(&self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                 let st :&'static Self = unsafe {&*(self as *const _)};
-                WriteGuard(GenericMutLazy::init_then_write_lock(&st.__private))
+                let l = GenericMutLazy::init_then_write_lock(&st.__private);
+                assert!(<$checker>::is_accessible(l.phase()));
+                WriteGuard(l)
             }
             #[inline(always)]
-            pub fn init(&self) {
+            pub fn init(&self) -> Phase {
                 let st :&'static Self = unsafe {&*(self as *const _)};
-                GenericMutLazy::init_then_write_lock(&st.__private);
+                let l = GenericMutLazy::init_then_write_lock(&st.__private);
+                l.phase()
             }
         }
 
@@ -530,28 +536,31 @@ macro_rules! impl_mut_lazy {
         $(T:$tr,)?
         {
             #[inline(always)]
-            pub fn read_lock(&'static self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
+            pub fn read(&'static self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                 if inited::global_inited_hint() {
                     let l =GenericMutLazy::read_lock(&self.__private);
-                    assert!(<$checker>::initialized_ok($gd::phase(&l)));
                     ReadGuard(l)
                     } else {
-                    ReadGuard(GenericMutLazy::init_then_read_lock(&self.__private))
+                    let l = GenericMutLazy::init_then_read_lock(&self.__private);
+                    assert!(<$checker>::is_accessible(l.phase()),"Incorrect lazy access {:?}",l.phase());
+                    ReadGuard(l)
                 }
             }
             #[inline(always)]
-            pub fn write_lock(&'static self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
+            pub fn write(&'static self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                 if inited::global_inited_hint() {
                     let l = GenericMutLazy::write_lock(&self.__private);
-                    assert!(<$checker>::initialized_ok($gdw::phase(&l)));
                     WriteGuard(l)
                     } else {
-                    WriteGuard(GenericMutLazy::init_then_write_lock(&self.__private))
+                    let l = GenericMutLazy::init_then_write_lock(&self.__private);
+                    assert!(<$checker>::is_accessible(l.phase()));
+                    WriteGuard(l)
                 }
             }
             #[inline(always)]
-            pub fn init(&'static self) {
-                GenericMutLazy::init_then_write_lock(&self.__private);
+            pub fn init(&'static self) -> Phase {
+                let l = GenericMutLazy::init_then_write_lock(&self.__private);
+                l.phase()
             }
         }
 
@@ -662,7 +671,7 @@ macro_rules! non_static_mut_debug {
                 if ($tp::phase(self) & Phase::INITIALIZED).is_empty() {
                     write!(f,"UnInitialized")
                 } else {
-                    write!(f,"{:?}",*self.read_lock())
+                    write!(f,"{:?}",*self.read())
                 }
             }
         }
@@ -814,9 +823,9 @@ mod test_mut_lazy {
     static _X: MutLazy<u32, fn() -> u32> = MutLazy::new_static(|| 22);
     #[test]
     fn test() {
-        assert_eq!(*_X.read_lock(), 22);
-        *_X.write_lock() = 33;
-        assert_eq!(*_X.read_lock(), 33);
+        assert_eq!(*_X.read(), 22);
+        *_X.write() = 33;
+        assert_eq!(*_X.read(), 33);
     }
 }
 #[cfg(feature = "test_no_global_lazy_hint")]
@@ -826,9 +835,9 @@ mod test_quasi_mut_lazy {
     static _X: QuasiMutLazy<u32, fn() -> u32> = unsafe { QuasiMutLazy::new_static(|| 22) };
     #[test]
     fn test() {
-        assert_eq!(*_X.read_lock(), 22);
+        assert_eq!(*_X.read(), 22);
         *_X.write_lock() = 33;
-        assert_eq!(*_X.read_lock(), 33);
+        assert_eq!(*_X.read(), 33);
     }
 }
 #[cfg(test)]
@@ -843,9 +852,9 @@ mod test_mut_lazy_finalize {
     static _X: MutLazyFinalize<A, fn() -> A> = MutLazyFinalize::new_static(|| A(22));
     #[test]
     fn test() {
-        assert!((*_X.read_lock()).0 == 22);
-        *_X.write_lock() = A(33);
-        assert_eq!((*_X.read_lock()).0, 33);
+        assert!((*_X.read()).0 == 22);
+        *_X.write() = A(33);
+        assert_eq!((*_X.read()).0, 33);
     }
 }
 #[cfg(feature = "test_no_global_lazy_hint")]
@@ -862,9 +871,9 @@ mod test_quasi_mut_lazy_finalize {
         unsafe { QuasiMutLazyFinalize::new_static(|| A(22)) };
     #[test]
     fn test() {
-        assert!((*_X.read_lock()).0 == 22);
-        *_X.write_lock() = A(33);
-        assert_eq!((*_X.read_lock()).0, 33);
+        assert!((*_X.read()).0 == 22);
+        *_X.write() = A(33);
+        assert_eq!((*_X.read()).0, 33);
     }
 }
 #[cfg(test)]
@@ -873,9 +882,9 @@ mod test_mut_lazy_dropped {
     static _X: MutLazyDroped<u32, fn() -> u32> = MutLazyDroped::new_static(|| 22);
     #[test]
     fn test() {
-        assert_eq!(*_X.read_lock(), 22);
-        *_X.write_lock() = 33;
-        assert_eq!(*_X.read_lock(), 33);
+        assert_eq!(*_X.read(), 22);
+        *_X.write() = 33;
+        assert_eq!(*_X.read(), 33);
     }
 }
 #[cfg(feature = "test_no_global_lazy_hint")]
@@ -886,9 +895,9 @@ mod test_quasi_mut_lazy_dropped {
         unsafe { QuasiMutLazyDroped::new_static(|| 22) };
     #[test]
     fn test() {
-        assert_eq!(*_X.read_lock(), 22);
-        *_X.write_lock() = 33;
-        assert_eq!(*_X.read_lock(), 33);
+        assert_eq!(*_X.read(), 22);
+        *_X.write() = 33;
+        assert_eq!(*_X.read(), 33);
     }
 }
 #[cfg(test)]
@@ -899,9 +908,9 @@ mod test_unsync_mut_lazy {
     static _X: UnSyncMutLazy<u32, fn() -> u32> = UnSyncMutLazy::new_static(|| 22);
     #[test]
     fn test() {
-        assert_eq!(*_X.read_lock(), 22);
-        *_X.write_lock() = 33;
-        assert_eq!(*_X.read_lock(), 33);
+        assert_eq!(*_X.read(), 22);
+        *_X.write() = 33;
+        assert_eq!(*_X.read(), 33);
     }
 }
 #[cfg(test)]
@@ -919,9 +928,9 @@ mod test_unsync_mut_lazy_finalize {
         unsafe { UnSyncMutLazyFinalize::new_static(|| A(22)) };
     #[test]
     fn test() {
-        assert!((*_X.read_lock()).0 == 22);
-        *_X.write_lock() = A(33);
-        assert_eq!((*_X.read_lock()).0, 33);
+        assert!((*_X.read()).0 == 22);
+        *_X.write() = A(33);
+        assert_eq!((*_X.read()).0, 33);
     }
 }
 #[cfg(test)]
@@ -933,8 +942,8 @@ mod test_unsync_mut_lazy_droped {
         unsafe { UnSyncMutLazyDroped::new_static(|| 22) };
     #[test]
     fn test() {
-        assert_eq!(*_X.read_lock(), 22);
-        *_X.write_lock() = 33;
-        assert_eq!(*_X.read_lock(), 33);
+        assert_eq!(*_X.read(), 22);
+        *_X.write() = 33;
+        assert_eq!(*_X.read(), 33);
     }
 }
