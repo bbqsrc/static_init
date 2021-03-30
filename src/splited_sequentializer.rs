@@ -118,11 +118,11 @@ where
 
         let phase_guard = match this.0.lock(Sequential::data(s), |p| {
             if (p
-                & (Phase::FINALIZATION
-                    | Phase::FINALIZED
+                & (
+                    Phase::FINALIZED
                     | Phase::FINALIZATION_PANICKED
-                    | Phase::INITIALIZATION_SKIPED))
-                .is_empty()
+                    ))
+                .is_empty() && p.intersects(Phase::INITIALIZED)
             {
                 LockNature::Write
             } else {
@@ -151,28 +151,6 @@ mod global_once {
     use core::sync::atomic::{AtomicUsize, Ordering};
     #[cfg(debug_mode)]
     use crate::CyclicPanic;
-
-    //#[inline(never)]
-    //#[cold]
-    //fn atomic_register_uninited<'a, T: Sequential>(
-    //    this: &'a SyncSequentializer,
-    //    s: &'a T,
-    //    shall_proceed: impl Fn(Phase) -> bool,
-    //    init: impl FnOnce(&<T as Sequential>::Data),
-    //    reg: impl FnOnce(&T) -> bool,
-    //    init_on_reg_failure: bool,
-    //    #[cfg(debug_mode)] id: &AtomicUsize,
-    //) -> Option<SyncPhaseGuard<'a, T>> {
-
-    //    let phase_guard = match this.0.lock(s, &shall_proceed) {
-    //        None => return None,
-    //        Some(l) => l,
-    //    };
-
-    //    let phase_guard = lazy_initialization(phase_guard, init, reg, init_on_reg_failure);
-
-    //    return Some(phase_guard);
-    //}
 
     /// Ensure sequentialization.
     ///
@@ -280,12 +258,12 @@ mod global_once {
     }
 
     #[inline(always)]
-    fn debug_save_thread<T:Sequential> (s: &T) 
+    fn debug_save_thread<T:Sequential> (_s: &T) 
         where T::Sequentializer: AsRef<SyncSequentializer>
         {
             #[cfg(debug_mode)]
             {
-                let this = Sequential::sequentializer(s).as_ref();
+                let this = Sequential::sequentializer(_s).as_ref();
                 use parking_lot::lock_api::GetThreadId;
                 this.1.store(
                     parking_lot::RawThreadId.nonzero_thread_id().into(),
@@ -294,22 +272,22 @@ mod global_once {
             }
     }
     #[inline(always)]
-    fn debug_thread_zero<T:Sequential> (s: &T) 
+    fn debug_thread_zero<T:Sequential> (_s: &T) 
         where T::Sequentializer: AsRef<SyncSequentializer>
         {
             #[cfg(debug_mode)]
             {
-                let this = Sequential::sequentializer(s).as_ref();
+                let this = Sequential::sequentializer(_s).as_ref();
                 this.1.store(0, Ordering::Relaxed);
             }
     }
     #[inline(always)]
-    fn debug_test<T: Sequential> (s: &T) 
+    fn debug_test<T: Sequential> (_s: &T) 
         where T::Sequentializer: AsRef<SyncSequentializer>
         {
           #[cfg(debug_mode)]
           {
-              let this = Sequential::sequentializer(s).as_ref();
+              let this = Sequential::sequentializer(_s).as_ref();
               let id = this.1.load(Ordering::Relaxed);
               if id != 0 {
                   use parking_lot::lock_api::GetThreadId;
@@ -420,11 +398,11 @@ mod global_once {
 
             let how = |p: Phase| {
                 if (p
-                    & (Phase::FINALIZATION
-                        | Phase::FINALIZED
+                    & (
+                         Phase::FINALIZED
                         | Phase::FINALIZATION_PANICKED
-                        | Phase::INITIALIZATION_SKIPED))
-                    .is_empty()
+                        ))
+                    .is_empty() && p.intersects(Phase::INITIALIZED)
                 {
                     LockNature::Write
                 } else {
@@ -435,7 +413,7 @@ mod global_once {
             let phase_guard = match this.0.lock(
                 Sequential::data(s),
                 how,
-                |_| LockNature::Write,
+                how,
                 Phase::INITIALIZED | Phase::REGISTERED,
             ) {
                 LockResult::None(_) => return,
@@ -463,27 +441,21 @@ where
 {
     let cur = phase_guard.phase();
 
-    //let registrating = cur | Phase::REGISTRATION;
-
     let registration_finished = cur;
 
     let registration_failed = cur | Phase::REGISTRATION_PANICKED | Phase::INITIALIZATION_SKIPED;
 
-    //phase_guard.set_phase(registrating);
-    //phase_guard.commit_phase();
-
     let cond = phase_guard.transition(reg, registration_finished, registration_failed);
 
     if cond {
-        //let initializing = registration_finished | Phase::REGISTERED | Phase::INITIALIZATION;
+
         let initialized = registration_finished | Phase::REGISTERED | Phase::INITIALIZED;
+
         let initialization_panic = registration_finished
             | Phase::REGISTERED
             | Phase::INITIALIZATION_PANICKED
             | Phase::INITIALIZATION_SKIPED;
 
-        //phase_guard.set_phase(initializing);
-        //phase_guard.commit_phase();
 
         phase_guard.transition(
             |s| init(Sequential::data(s)),
@@ -491,16 +463,13 @@ where
             initialization_panic,
         );
     } else if init_on_reg_failure {
-        //let initializing =
-        //    registration_finished | Phase::REGISTRATION_REFUSED | Phase::INITIALIZATION;
+
         let initialized = registration_finished | Phase::REGISTRATION_REFUSED | Phase::INITIALIZED;
+
         let initialization_panic = registration_finished
             | Phase::REGISTRATION_REFUSED
             | Phase::INITIALIZATION_PANICKED
             | Phase::INITIALIZATION_SKIPED;
-
-        //phase_guard.set_phase(initializing);
-        //phase_guard.commit_phase();
 
         phase_guard.transition(
             |s| init(Sequential::data(s)),
@@ -512,7 +481,6 @@ where
             registration_finished | Phase::REGISTRATION_REFUSED | Phase::INITIALIZATION_SKIPED;
 
         phase_guard.set_phase(no_init);
-        //phase_guard.commit_phase();
     }
     phase_guard
 }
@@ -520,13 +488,9 @@ where
 fn lazy_finalization<'a, T: 'a, P: PhaseGuard<'a, T>>(mut phase_guard: P, f: impl FnOnce(&'a T)) {
     let cur = phase_guard.phase();
 
-    let finalizing = cur | Phase::FINALIZATION;
-
     let finalizing_success = cur | Phase::FINALIZED;
 
     let finalizing_failed = cur | Phase::FINALIZATION_PANICKED;
 
-    phase_guard.set_phase(finalizing);
-    phase_guard.commit_phase();
     phase_guard.transition(f, finalizing_success, finalizing_failed);
 }

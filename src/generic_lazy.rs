@@ -6,7 +6,8 @@ use core::cell::UnsafeCell;
 use core::hint::unreachable_unchecked;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
-use core::ops::{Deref, DerefMut};
+use core::ops::Deref;
+use core::fmt::{Formatter,self,Display};
 
 #[cfg(debug_mode)]
 use crate::CyclicPanic;
@@ -77,6 +78,38 @@ impl<T> LazyData for DropedUnInited<T> {
         self.0.get() as *mut T
     }
 }
+
+/// Errors that happens when trying to get a readable access to a lazy
+#[derive(Copy,Clone,Eq,PartialEq,Hash,Debug)]
+pub struct AccessError {pub phase: Phase}
+
+impl Display for AccessError {
+    fn fmt(&self, ft: &mut Formatter<'_>) -> fmt::Result {
+       write!(ft,"Error: inaccessible lazy in {}",self.phase)
+    }
+}
+
+#[cfg(not(no_std))]
+impl std::error::Error for AccessError {}
+
+/// Errors that happens when trying to get a readable access to a lazy
+#[derive(Copy,Clone,Eq,PartialEq,Hash,Debug)]
+pub enum TryAccessError {
+    InaccessiblePhase(Phase),
+    Locked,
+}
+
+impl Display for TryAccessError {
+    fn fmt(&self, ft: &mut Formatter<'_>) -> fmt::Result {
+        match *self {
+            TryAccessError::InaccessiblePhase(p) => write!(ft,"Error: inaccessible lazy in {}",p),
+            TryAccessError::Locked => write!(ft,"Error: lazy already locked"),
+        }
+    }
+}
+
+#[cfg(not(no_std))]
+impl std::error::Error for TryAccessError {}
 
 /// A type that wrap a Sequentializer and a raw data, and that may
 /// initialize the data, at each access depending on the LazyPolicy
@@ -153,11 +186,8 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
     pub fn get_raw_data(this: &Self) -> &T {
         &this.value
     }
-    #[inline(always)]
-    /// potentialy initialize the inner data
-    ///
-    /// this method is called every time the generic lazy is dereferenced
-    pub fn init<'a>(this: &'a Self) -> Phase
+}
+impl<'a,T, F, M, S> GenericLazy<T, F, M, S>
     where
         T: 'static + LazyData,
         M: 'static,
@@ -165,16 +195,44 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
         F: 'static + Generator<T::Target>,
         S: 'static + LazyPolicy,
     {
+    pub fn get(&'a self) -> &'a T::Target {
+        Self::try_get(self).unwrap()
+    }
+    pub fn try_get(&'a self) -> Result<&'a T::Target, AccessError> {
+        let phase = self.init();
+        if S::is_accessible(phase) {
+            Ok(unsafe { &*self.value.get() })
+        } else {
+            Err(AccessError{phase})
+        }
+    }
+    pub fn get_mut(&'a mut self) -> &'a mut T::Target {
+        Self::try_get_mut(self).unwrap()
+    }
+    pub fn try_get_mut(&'a mut self) -> Result<&'a mut T::Target, AccessError> {
+        let phase = self.init();
+        if S::is_accessible(phase) {
+            Ok(unsafe { &mut *self.value.get() })
+        } else {
+            Err(AccessError{phase})
+        }
+    }
+    #[inline(always)]
+    /// potentialy initialize the inner data
+    ///
+    /// this method is called every time the generic lazy is dereferenced
+    pub fn init(&'a self) -> Phase
+    {
         #[cfg(not(debug_mode))]
         {
             LazySequentializer::init(
-                this,
+                self,
                 S::shall_init,
                 |data: &T| {
                     // SAFETY
                     // This function is called only once within the init function
                     // Only one thread can ever get this mutable access
-                    let d = Generator::generate(&this.generator);
+                    let d = Generator::generate(&self.generator);
                     unsafe { data.get().write(d) };
                 },
                 S::INIT_ON_REG_FAILURE,
@@ -184,13 +242,13 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
         {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 LazySequentializer::init(
-                    this,
+                    self,
                     S::shall_init,
                     |data: &T| {
                         // SAFETY
                         // This function is called only once within the init function
                         // Only one thread can ever get this mutable access
-                        let d = Generator::generate(&this.generator);
+                        let d = Generator::generate(&self.generator);
                         unsafe { data.get().write(d) };
                     },
                     S::INIT_ON_REG_FAILURE,
@@ -199,7 +257,7 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
                 Ok(p) => p,
                 Err(x) => {
                     if x.is::<CyclicPanic>() {
-                        match &this._info {
+                        match &self._info {
                             Some(info) => panic!("Circular initialization of {:#?}", info),
                             None => panic!("Circular lazy initialization detected"),
                         }
@@ -209,47 +267,6 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
                 }
             }
         }
-    }
-}
-
-impl<
-        M: 'static,
-        T: 'static + LazyData,
-        F: 'static + Generator<T::Target>,
-        S: 'static + LazyPolicy,
-    > Deref for GenericLazy<T, F, M, S>
-where
-    for<'a> M: LazySequentializer<'a, Self>,
-{
-    type Target = T::Target;
-    #[inline(always)]
-    fn deref(&self) -> &T::Target {
-        let phase = Self::init(self);
-        S::is_accessible(phase);
-        // SAFETY
-        // This is safe as long as the object has been initialized
-        // this is the contract ensured by init.
-        unsafe { &*self.value.get() }
-    }
-}
-
-impl<
-        M: 'static,
-        T: 'static + LazyData,
-        F: 'static + Generator<T::Target>,
-        S: 'static + LazyPolicy,
-    > DerefMut for GenericLazy<T, F, M, S>
-where
-    for<'a> M: LazySequentializer<'a, Self>,
-{
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut T::Target {
-        let phase = Self::init(self);
-        S::is_accessible(phase);
-        // SAFETY
-        // This is safe as long as the object has been initialized
-        // this is the contract ensured by init.
-        unsafe { &mut *self.value.get() }
     }
 }
 

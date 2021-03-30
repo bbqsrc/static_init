@@ -178,7 +178,7 @@ macro_rules! impl_lazy {
             type Target = T;
             #[inline(always)]
             fn deref(&self) -> &Self::Target {
-                &*self.__private
+                self.__private.get()
             }
         }
 
@@ -190,7 +190,7 @@ macro_rules! impl_lazy {
         {
             #[inline(always)]
             fn deref_mut(&mut self) -> &mut Self::Target {
-                &mut *self.__private
+                self.__private.get_mut()
             }
         }
     };

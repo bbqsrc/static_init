@@ -261,14 +261,19 @@ pub struct CyclicPanic;
 
 /// phases and bits to manipulate them;
 pub mod phase {
+
+    use core::fmt::{Formatter,self,Display};
+
     use bitflags::bitflags;
     pub(crate) const WPARKED_BIT: u32 =  0b1000_0000_0000_0000_0000_0000_0000_0000;
     pub(crate) const PARKED_BIT: u32 =   0b0100_0000_0000_0000_0000_0000_0000_0000;
     pub(crate) const LOCKED_BIT: u32 =   0b0010_0000_0000_0000_0000_0000_0000_0000; //Or READER overflow
-    pub(crate) const READER_BITS: u32 =  0b0000_1111_1111_1111_1111_1000_0000_0000;
+    pub(crate) const READER_BITS: u32 =  0b0000_1111_1111_1111_1111_1111_0000_0000;
     pub(crate) const READER_OVERF: u32 = 0b0001_0000_0000_0000_0000_0000_0000_0000;
-    pub(crate) const READER_UNITY: u32 = 0b0000_0000_0000_0000_0000_1000_0000_0000;
-
+    pub(crate) const READER_UNITY: u32 = 0b0000_0000_0000_0000_0000_0001_0000_0000;
+    // Although some flags exclude others, Phase is represented by
+    // a bitflag to allow xor bit tricks that eases atomic phase
+    // changes in the implementation of SyncPhaseLocker.
     bitflags! {
         /// The lifetime phase of an object, this indicate weither the object was initialized
         /// finalized (droped),...
@@ -278,20 +283,63 @@ pub mod phase {
         /// program exit or thread exit. Depending on the plateform this registration may fail.
         pub struct Phase: u32 {
             const INITIALIZED               = 0b0000_0000_0000_0000_0000_0000_0000_0001;
-            const INITIALIZATION            = 0b0000_0000_0000_0000_0000_0000_0000_0010;
-            const INITIALIZATION_PANICKED   = 0b0000_0000_0000_0000_0000_0000_0000_0100;
-            const INITIALIZATION_SKIPED     = 0b0000_0000_0000_0000_0000_0000_0000_1000;
+            const INITIALIZATION_PANICKED   = 0b0000_0000_0000_0000_0000_0000_0000_0010;
+            const INITIALIZATION_SKIPED     = 0b0000_0000_0000_0000_0000_0000_0000_0100;
 
-            const REGISTERED                = 0b0000_0000_0000_0000_0000_0000_0001_0000;
-            const REGISTRATION              = 0b0000_0000_0000_0000_0000_0000_0010_0000;
-            const REGISTRATION_PANICKED     = 0b0000_0000_0000_0000_0000_0000_0100_0000;
-            const REGISTRATION_REFUSED      = 0b0000_0000_0000_0000_0000_0000_1000_0000;
+            const REGISTERED                = 0b0000_0000_0000_0000_0000_0000_0000_1000;
+            const REGISTRATION_PANICKED     = 0b0000_0000_0000_0000_0000_0000_0001_0000;
+            const REGISTRATION_REFUSED      = 0b0000_0000_0000_0000_0000_0000_0010_0000;
 
-            const FINALIZED                 = 0b0000_0000_0000_0000_0000_0001_0000_0000;
-            const FINALIZATION              = 0b0000_0000_0000_0000_0000_0010_0000_0000;
-            const FINALIZATION_PANICKED     = 0b0000_0000_0000_0000_0000_0100_0000_0000;
+            const FINALIZED                 = 0b0000_0000_0000_0000_0000_0000_0100_0000;
+            const FINALIZATION_PANICKED     = 0b0000_0000_0000_0000_0000_0000_1000_0000;
         }
     }
+
+    impl Display for Phase {
+        fn fmt(&self, ft: &mut Formatter<'_>) -> fmt::Result {
+            if self.is_empty() {
+                write!(ft, "Phase (not initialized)")?;
+            } else {
+                write!(ft, "Phase (")?;
+                let mut is_first = true;
+                let mut write = |s| {
+                        if is_first {
+                            is_first = false;
+                            ft.write_str(s)
+                        } else {
+                            write!(ft, " | {}", s)
+                        }
+                    };
+                if self.intersects(Phase::INITIALIZED) {
+                    write("Initialized")?;
+                }
+                if self.intersects(Phase::INITIALIZATION_PANICKED) {
+                    write("Initialization panicked")?;
+                }
+                if self.intersects(Phase::INITIALIZATION_SKIPED) {
+                    write("Initialization skiped")?;
+                }
+                if self.intersects(Phase::REGISTERED) {
+                    write("Registered")?;
+                }
+                if self.intersects(Phase::REGISTRATION_PANICKED) {
+                    write("Registration panicked")?;
+                }
+                if self.intersects(Phase::REGISTRATION_REFUSED) {
+                    write("Registration refused")?;
+                }
+                if self.intersects(Phase::FINALIZED) {
+                    write("Finalized")?;
+                }
+                if self.intersects(Phase::FINALIZATION_PANICKED) {
+                    write("Finalization panicked")?;
+                }
+                write!(ft,")")?
+            }
+        Ok(())
+        }
+    }
+    
 }
 #[doc(inline)]
 pub use phase::Phase;
