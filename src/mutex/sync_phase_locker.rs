@@ -3,7 +3,7 @@ use super::spin_wait::SpinWait;
 use super::futex::Futex;
 use super::{LockNature, LockResult, PhaseGuard};
 use crate::phase::*;
-use crate::Phase;
+use crate::{Phase, Phased};
 use core::cell::UnsafeCell;
 use core::hint;
 use core::mem::forget;
@@ -83,6 +83,12 @@ unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for SyncPhaseGuard<'a, T> {
     }
 }
 
+impl<'a,T> Phased for SyncPhaseGuard<'a,T> {
+    fn phase(this: &Self) -> Phase {
+        this.1.on_unlock
+    }
+}
+
 // SyncReadPhaseGuard
 //-------------------
 //
@@ -110,6 +116,13 @@ impl<'a, T> From<SyncPhaseGuard<'a,T>> for SyncReadPhaseGuard<'a, T> {
         SyncReadPhaseGuard(this.0, this.1.into())
     }
 }
+
+impl<'a,T> Phased for SyncReadPhaseGuard<'a,T> {
+    fn phase(this: &Self) -> Phase {
+        this.1.init_phase
+    }
+}
+
 
 // Mutex
 //-------------------
@@ -369,6 +382,10 @@ fn has_readers_max(v:u32) -> bool {
 fn is_not_write_locked(v:u32) -> bool {
     v & LOCKED_BIT == 0
 }
+#[inline(always)]
+fn is_write_locked(v:u32) -> bool {
+    v & LOCKED_BIT != 0
+}
 //#[inline(always)]
 //fn is_write_locked(v:u32) -> bool {
 //    v & LOCKED_BIT != 0
@@ -380,6 +397,10 @@ fn has_waiters(v:u32) -> bool {
 #[inline(always)]
 fn has_no_waiters(v:u32) -> bool {
     v & (PARKED_BIT | WPARKED_BIT) == 0 
+}
+#[inline(always)]
+fn is_unparking(v:u32) -> bool {
+    is_not_write_locked(v) && has_no_readers(v) && has_waiters(v)
 }
 
 #[inline(always)]
@@ -450,6 +471,122 @@ impl SyncPhasedLocker {
             LockResult::Write(l) => LockResult::Write(SyncPhaseGuard::new(v, l)),
             LockResult::Read(l) => LockResult::Read(SyncReadPhaseGuard::new(v, l)),
             LockResult::None(p) => LockResult::None(p),
+        }
+    }
+    #[inline(always)]
+    /// try to lock the phase.
+    ///
+    /// If the returned value is a Some(LockResult::Read), then other threads
+    /// may also hold a such a lock. This lock call synchronize with the
+    /// phase transition that leads to the current phase and the phase will
+    /// not change while this lock is held
+    ///
+    /// If the returned value is a Some(LockResult::Write), then only this thread
+    /// hold the lock and the phase can be atomically transitionned using the
+    /// returned lock.
+    ///
+    /// If the returned value is Some(LockResult::None), then the call to lock synchronize
+    /// whit the end of the phase transition that led to the current phase.
+    ///
+    /// If the returned value is None, the the lock is held by other threads and could
+    /// not be obtain.
+    pub fn try_lock<'a, T: ?Sized>(
+        &'a self,
+        v: &'a T,
+        how: impl Fn(Phase) -> LockNature,
+        hint: Phase,
+    ) -> Option<LockResult<SyncReadPhaseGuard<'_, T>, SyncPhaseGuard<'_, T>>> {
+        self.try_raw_lock(
+            how,
+            hint,
+        ).map(|l| match l {
+            LockResult::Write(l) => LockResult::Write(SyncPhaseGuard::new(v, l)),
+            LockResult::Read(l) => LockResult::Read(SyncReadPhaseGuard::new(v, l)),
+            LockResult::None(p) => LockResult::None(p),
+            })
+    }
+    #[inline(always)]
+    fn try_raw_lock(
+        &self,
+        how: impl Fn(Phase) -> LockNature,
+        hint: Phase,
+    ) -> Option<LockResult<ReadLock<'_>, Lock<'_>>> {
+        let mut cur;
+        match how(hint) {
+            LockNature::None => {
+                cur = self.0.load(Ordering::Acquire);
+                let p = Phase::from_bits_truncate(cur);
+                if hint == p {
+                    return Some(LockResult::None(p));
+                }
+            }
+            LockNature::Write => {
+                    match self
+                        .0
+                        .compare_exchange_weak(
+                            hint.bits(),
+                            hint.bits() | LOCKED_BIT,
+                            Ordering::Acquire,
+                            Ordering::Relaxed,
+                        )
+                    {
+                        Ok(x) => return Some(LockResult::Write(Lock::new(&self.0,x))),
+                        Err(x) => cur = x,
+                    }
+            }
+            LockNature::Read => {
+                    match self.0.compare_exchange_weak(
+                        hint.bits(),
+                        hint.bits() + READER_UNITY,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(x) => return Some(LockResult::Read(ReadLock::new(&self.0,x))),
+                        Err(x) => cur = x
+                    }
+            }
+        }
+        loop{
+        match how(Phase::from_bits_truncate(cur)) {
+            LockNature::None => {
+                fence(Ordering::Acquire);
+                let p = Phase::from_bits_truncate(cur);
+                return Some(LockResult::None(p));
+            }
+            LockNature::Write => {
+                if !is_write_locked(cur) && !has_readers(cur) && !is_unparking(cur) {
+                    match self
+                        .0
+                        .compare_exchange_weak(
+                            cur,
+                            cur | LOCKED_BIT,
+                            Ordering::Acquire,
+                            Ordering::Relaxed,
+                        )
+                    {
+                        Ok(x) => return Some(LockResult::Write(Lock::new(&self.0,x))),
+                        Err(x) => {cur = x; continue;}
+                    }
+                } else {
+                    return None;
+                }
+            }
+            LockNature::Read => {
+                if !is_write_locked(cur) && !is_unparking(cur) {
+                    match self.0.compare_exchange_weak(
+                        cur,
+                        cur + READER_UNITY,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(x) => return Some(LockResult::Read(ReadLock::new(&self.0,x))),
+                        Err(x) => {cur = x;continue;}
+                    }
+                } else {
+                    return None
+                }
+            }
+        }
         }
     }
     #[inline(always)]

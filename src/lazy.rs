@@ -2,7 +2,7 @@ use crate::mutex::{
     PhaseGuard, SyncPhaseGuard, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncReadPhaseGuard,
 };
 use crate::{
-    generic_lazy::{DropedUnInited, GenericLazy, GenericMutLazy, LazyData, LazyPolicy, UnInited},
+    generic_lazy::{DropedUnInited, GenericLazy, GenericMutLazy, LazyData, LazyPolicy, UnInited, AccessError},
     mutex::{LockNature, LockResult},
     splited_sequentializer::UnSyncSequentializer,
     Finaly, Generator, LazySequentializer, Phase, Phased, Sequential, Sequentializer,
@@ -46,7 +46,7 @@ impl LazyPolicy for InitializedAndNonFinalizedChecker {
 //impl LazyPolicy for InitializedRearmingChecker {
 //    const INIT_ON_REG_FAILURE: bool = false;
 //    #[inline(always)]
-//    fn shall_proceed(p: Phase) -> bool {
+//    fn lock_nature(p: Phase) -> bool {
 //        if p.intersects(Phase::INITIALIZED) && !p.intersects(Phase::FINALIZED) {
 //            false
 //        } else {
@@ -92,9 +92,16 @@ macro_rules! init_only {
             #[inline(always)]
             fn lock(
                 s: &'a T,
-                shall_proceed: impl Fn(Phase) -> LockNature,
+                lock_nature: impl Fn(Phase) -> LockNature,
             ) -> LockResult<$gd_r<'a, T>, $gd<'a, T>> {
-                <$sub as Sequentializer<T>>::lock(s, shall_proceed)
+                <$sub as Sequentializer<T>>::lock(s, lock_nature)
+            }
+            #[inline(always)]
+            fn try_lock(
+                s: &'a T,
+                lock_nature: impl Fn(Phase) -> LockNature,
+            ) -> Option<LockResult<$gd_r<'a, T>, $gd<'a, T>>> {
+                <$sub as Sequentializer<T>>::try_lock(s, lock_nature)
             }
         }
         // SAFETY: ensured by $sub
@@ -146,6 +153,36 @@ macro_rules! init_only {
                     init_on_reg_failure,
                 )
             }
+            #[inline(always)]
+            fn try_init_then_read_guard(
+                s: &'a T,
+                on_uninited: impl Fn(Phase) -> bool,
+                init: impl FnOnce(&'a <T as Sequential>::Data),
+                init_on_reg_failure: bool,
+            ) -> Option<Self::ReadGuard> {
+                <$sub as SplitedLazySequentializer<T>>::try_init_then_read_guard(
+                    s,
+                    on_uninited,
+                    init,
+                    |_| true,
+                    init_on_reg_failure,
+                )
+            }
+            #[inline(always)]
+            fn try_init_then_write_guard(
+                s: &'a T,
+                on_uninited: impl Fn(Phase) -> bool,
+                init: impl FnOnce(&'a <T as Sequential>::Data),
+                init_on_reg_failure: bool,
+            ) -> Option<Self::WriteGuard> {
+                <$sub as SplitedLazySequentializer<T>>::try_init_then_write_guard(
+                    s,
+                    on_uninited,
+                    init,
+                    |_| true,
+                    init_on_reg_failure,
+                )
+            }
         }
     };
 }
@@ -168,7 +205,30 @@ macro_rules! impl_lazy {
         impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe,'static}
         impl_lazy! {@deref_static $tp,$man,$checker,$data$(,T:$tr)?$(,G:$trg)?}
     };
-    (@deref $tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)? $(, Static: $assert_static:ident)?) => {
+    (@deref $tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
+        impl<T, G> $tp<T, G>
+        where $data: 'static + LazyData<Target=T>,
+        G: 'static + Generator<T>,
+        $(G:$trg, T:Sync,)?
+        $(T:$tr,)?
+        {
+            #[inline(always)]
+            pub fn get(this: &Self) -> &T {
+                this.__private.init_then_get()
+            }
+            #[inline(always)]
+            pub fn get_mut(this: &mut Self) -> &mut T {
+                this.__private.init_then_get_mut()
+            }
+            #[inline(always)]
+            pub fn try_get(this: &Self) -> Result<&'_ T,AccessError> {
+                this.__private.init_then_try_get()
+            }
+            #[inline(always)]
+            pub fn try_get_mut(this: &mut Self) -> Result<&'_ mut T,AccessError> {
+                this.__private.init_then_try_get_mut()
+            }
+        }
         impl<T, G> Deref for $tp<T, G>
         where $data: 'static + LazyData<Target=T>,
         G: 'static + Generator<T>,
@@ -178,7 +238,7 @@ macro_rules! impl_lazy {
             type Target = T;
             #[inline(always)]
             fn deref(&self) -> &Self::Target {
-                self.__private.get()
+                Self::get(self)
             }
         }
 
@@ -190,11 +250,28 @@ macro_rules! impl_lazy {
         {
             #[inline(always)]
             fn deref_mut(&mut self) -> &mut Self::Target {
-                self.__private.get_mut()
+                Self::get_mut(self)
             }
         }
     };
-    (@deref_static $tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)? $(, Static: $assert_static:ident)?) => {
+    (@deref_static $tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
+        impl<T, G> $tp<T, G>
+        where $data: 'static + LazyData<Target=T>,
+        G: 'static + Generator<T>,
+        $(G:$trg, T:Sync,)?
+        $(T:$tr,)?
+        {
+            #[inline(always)]
+            pub fn get(this: &'static Self) -> &'static T {
+                 // SAFETY The object is required to have 'static lifetime by construction
+                 this.__private.init_then_get()
+            }
+            #[inline(always)]
+            pub fn try_get(this: &'static Self) -> Result<&'static T,AccessError> {
+                 // SAFETY The object is required to have 'static lifetime by construction
+                 this.__private.init_then_try_get()
+            }
+        }
         impl<T, G> Deref for $tp<T, G>
         where $data: 'static + LazyData<Target=T>,
         G: 'static + Generator<T>,
@@ -205,15 +282,46 @@ macro_rules! impl_lazy {
             #[inline(always)]
             fn deref(&self) -> &Self::Target {
                  // SAFETY The object is required to have 'static lifetime by construction
-                 let st: &'static GenericLazy<$data, G, $man, $checker> = unsafe{&*(&self.__private as *const _)};
-                 let phase = GenericLazy::init(st);
-                 assert!(<$checker>::is_accessible(phase));
-                 unsafe{&* GenericLazy::get_raw_data(&self.__private).get()}
+                 Self::get(unsafe{as_static(self)})
             }
         }
 
     };
     (@deref_global $tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
+        impl<T, G> $tp<T, G>
+        where $data: 'static + LazyData<Target=T>,
+        G: 'static + Generator<T>,
+        $(G:$trg, T:Sync,)?
+        $(T:$tr,)?
+        {
+            #[inline(always)]
+            pub fn try_get(this: &'static Self) -> Result<&'static T, AccessError> {
+                if inited::global_inited_hint() {
+                    // SAFETY The object is initialized a program start-up as long
+                    // as it is constructed through the macros #[dynamic(quasi_lazy)]
+                    // If initialization failed, the program terminates before the
+                    // global_inited_hint is set. So if the global_initied_hint is
+                    // set all QuasiLazy are guaranteed to be initialized
+                    // TODO: get_unchecked
+                    Ok(unsafe{this.__private.get_unchecked()})
+                } else {
+                    this.__private.init_then_try_get()
+                }
+            }
+            #[inline(always)]
+            pub fn get(this: &'static Self) -> &'static T {
+                if inited::global_inited_hint() {
+                    // SAFETY The object is initialized a program start-up as long
+                    // as it is constructed through the macros #[dynamic(quasi_lazy)]
+                    // If initialization failed, the program terminates before the
+                    // global_inited_hint is set. So if the global_initied_hint is
+                    // set all QuasiLazy are guaranteed to be initialized
+                    unsafe{this.__private.get_unchecked()}
+                } else {
+                    this.__private.init_then_get()
+                }
+            }
+        }
         impl<T, G> Deref for $tp<T, G>
         where $data: 'static + LazyData<Target=T>,
         G: 'static + Generator<T>,
@@ -223,22 +331,14 @@ macro_rules! impl_lazy {
             type Target = T;
             #[inline(always)]
             fn deref(&self) -> &Self::Target {
-                if inited::global_inited_hint() {
-                    // SAFETY The object is initialized a program start-up as long
-                    // as it is constructed through the macros #[dynamic(quasi_lazy)]
-                    // If initialization failed, the program terminates before the
-                    // global_inited_hint is set. So if the global_initied_hint is
-                    // set all QuasiLazy are guaranteed to be initialized
-                    unsafe{&* (GenericLazy::get_raw_data(&self.__private).get())}
-                    } else {
-                        // SAFETY The object is required to have 'static lifetime by construction
-                        let st: &'static GenericLazy<$data, G, $man, $checker> = unsafe{&*(&self.__private as *const _)};
-                        let phase = GenericLazy::init(st);
-                        assert!(<$checker>::is_accessible(phase));
-                        unsafe{&* GenericLazy::get_raw_data(&self.__private).get()}
-                    }
-                }
+                // SAFETY The object is initialized a program start-up as long
+                // as it is constructed through the macros #[dynamic(quasi_lazy)]
+                // If initialization failed, the program terminates before the
+                // global_inited_hint is set. So if the global_initied_hint is
+                // set all QuasiLazy are guaranteed to be initialized
+                Self::get(unsafe{as_static(self)})
             }
+        }
 
         //impl<T, G> DerefMut for $tp<T, G>
         //where $data: 'static + LazyData<Target=T>,
@@ -295,7 +395,6 @@ macro_rules! impl_lazy {
         $(G:$trg, T:Sync,)?
         $(T:$tr,)?
         {
-            //TODO: method => associated function
             #[inline(always)]
             pub fn phase(this: &Self) -> Phase {
                 Phased::phase(Sequential::sequentializer(&this.__private))
@@ -506,22 +605,15 @@ macro_rules! impl_mut_lazy {
         {
             #[inline(always)]
             pub fn read(&self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
-                let st :&'static Self = unsafe {&*(self as *const _)};
-                let l = GenericMutLazy::init_then_read_lock(&st.__private);
-                assert!(<$checker>::is_accessible(l.phase()));
-                ReadGuard(l)
+                ReadGuard(GenericMutLazy::init_then_read_lock(unsafe{as_static(&self.__private)}))
             }
             #[inline(always)]
             pub fn write(&self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
-                let st :&'static Self = unsafe {&*(self as *const _)};
-                let l = GenericMutLazy::init_then_write_lock(&st.__private);
-                assert!(<$checker>::is_accessible(l.phase()));
-                WriteGuard(l)
+                WriteGuard(GenericMutLazy::init_then_write_lock(unsafe{as_static(&self.__private)}))
             }
             #[inline(always)]
             pub fn init(&self) -> Phase {
-                let st :&'static Self = unsafe {&*(self as *const _)};
-                let l = GenericMutLazy::init_then_write_lock(&st.__private);
+                let l = GenericMutLazy::init_then_write_lock(unsafe{as_static(&self.__private)});
                 l.phase()
             }
         }
@@ -538,23 +630,19 @@ macro_rules! impl_mut_lazy {
             #[inline(always)]
             pub fn read(&'static self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                 if inited::global_inited_hint() {
-                    let l =GenericMutLazy::read_lock(&self.__private);
+                    let l = unsafe{GenericMutLazy::read_lock_unchecked(&self.__private)};
                     ReadGuard(l)
-                    } else {
-                    let l = GenericMutLazy::init_then_read_lock(&self.__private);
-                    assert!(<$checker>::is_accessible(l.phase()),"Incorrect lazy access {:?}",l.phase());
-                    ReadGuard(l)
+                } else {
+                    ReadGuard(GenericMutLazy::init_then_read_lock(&self.__private))
                 }
             }
             #[inline(always)]
             pub fn write(&'static self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                 if inited::global_inited_hint() {
-                    let l = GenericMutLazy::write_lock(&self.__private);
+                    let l = unsafe{GenericMutLazy::write_lock_unchecked(&self.__private)};
                     WriteGuard(l)
-                    } else {
-                    let l = GenericMutLazy::init_then_write_lock(&self.__private);
-                    assert!(<$checker>::is_accessible(l.phase()));
-                    WriteGuard(l)
+                } else {
+                    WriteGuard(GenericMutLazy::init_then_write_lock(&self.__private))
                 }
             }
             #[inline(always)]
@@ -946,4 +1034,17 @@ mod test_unsync_mut_lazy_droped {
         *_X.write() = 33;
         assert_eq!(*_X.read(), 33);
     }
+}
+
+#[inline(always)]
+/// # Safety
+/// v must refer to a static
+unsafe fn as_static<T>(v: &T) -> &'static T {
+    &*(v as *const _)
+}
+#[inline(always)]
+/// # Safety
+/// v must refer to a static
+unsafe fn as_static_mut<T>(v: &T) -> &'static T {
+    &*(v as *const _)
 }

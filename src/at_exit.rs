@@ -122,6 +122,12 @@ mod exit_manager {
         ) -> LockResult<SyncReadPhaseGuard<'a, T>, SyncPhaseGuard<'a, T>> {
             <SubSequentializer as Sequentializer<T>>::lock(st, shall_proceed)
         }
+        fn try_lock(
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> LockNature,
+        ) -> Option<LockResult<SyncReadPhaseGuard<'a, T>, SyncPhaseGuard<'a, T>>> {
+            <SubSequentializer as Sequentializer<T>>::try_lock(st, shall_proceed)
+        }
     }
 
     // SAFETY: it is safe because it does implement synchronized locks
@@ -169,6 +175,36 @@ mod exit_manager {
             init_on_reg_failure: bool,
         ) -> Self::WriteGuard {
             <SubSequentializer as SplitedLazySequentializer<T>>::init_then_write_guard(
+                st,
+                shall_proceed,
+                init,
+                finalize_at_exit,
+                init_on_reg_failure,
+            )
+        }
+        #[inline(always)]
+        fn try_init_then_read_guard(
+            st: &'static T,
+            shall_proceed: impl Fn(Phase) -> bool,
+            init: impl FnOnce(&'static <T as Sequential>::Data),
+            init_on_reg_failure: bool,
+        ) -> Option<Self::ReadGuard> {
+            <SubSequentializer as SplitedLazySequentializer<T>>::try_init_then_read_guard(
+                st,
+                shall_proceed,
+                init,
+                finalize_at_exit,
+                init_on_reg_failure,
+            )
+        }
+        #[inline(always)]
+        fn try_init_then_write_guard(
+            st: &'static T,
+            shall_proceed: impl Fn(Phase) -> bool,
+            init: impl FnOnce(&'static <T as Sequential>::Data),
+            init_on_reg_failure: bool,
+        ) -> Option<Self::WriteGuard> {
+            <SubSequentializer as SplitedLazySequentializer<T>>::try_init_then_write_guard(
                 st,
                 shall_proceed,
                 init,
@@ -265,6 +301,13 @@ mod local_manager {
         ) -> LockResult<UnSyncReadPhaseGuard<'a, T>, UnSyncPhaseGuard<'a, T>> {
             <SubSequentializer as Sequentializer<T>>::lock(st, shall_proceed)
         }
+        #[inline(always)]
+        fn try_lock(
+            st: &'a T,
+            shall_proceed: impl Fn(Phase) -> LockNature,
+        ) -> Option<LockResult<UnSyncReadPhaseGuard<'a, T>, UnSyncPhaseGuard<'a, T>>> {
+            <SubSequentializer as Sequentializer<T>>::try_lock(st, shall_proceed)
+        }
     }
 
     // SAFETY: it is safe because it does implement circular initialization panic
@@ -311,6 +354,36 @@ mod local_manager {
             init_on_reg_failure: bool,
         ) -> Self::WriteGuard {
             <SubSequentializer as SplitedLazySequentializer<T>>::init_then_write_guard(
+                st,
+                shall_proceed,
+                init,
+                finalize_at_thread_exit,
+                init_on_reg_failure,
+            )
+        }
+        #[inline(always)]
+        fn try_init_then_read_guard(
+            st: &'static T,
+            shall_proceed: impl Fn(Phase) -> bool,
+            init: impl FnOnce(&'static <T as Sequential>::Data),
+            init_on_reg_failure: bool,
+        ) -> Option<Self::ReadGuard> {
+            <SubSequentializer as SplitedLazySequentializer<T>>::try_init_then_read_guard(
+                st,
+                shall_proceed,
+                init,
+                finalize_at_thread_exit,
+                init_on_reg_failure,
+            )
+        }
+        #[inline(always)]
+        fn try_init_then_write_guard(
+            st: &'static T,
+            shall_proceed: impl Fn(Phase) -> bool,
+            init: impl FnOnce(&'static <T as Sequential>::Data),
+            init_on_reg_failure: bool,
+        ) -> Option<Self::WriteGuard> {
+            <SubSequentializer as SplitedLazySequentializer<T>>::try_init_then_write_guard(
                 st,
                 shall_proceed,
                 init,
