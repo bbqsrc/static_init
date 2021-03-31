@@ -9,8 +9,11 @@
 #![feature(thread_local)]
 #![feature(asm)]
 
+//TODO
+#![allow(dead_code)]
+
 extern crate static_init;
-use static_init::Lazy;
+use static_init::{Lazy,dynamic};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 //use ctor::ctor;
@@ -217,35 +220,51 @@ impl Generator<[usize;1024]> for YY {
 
 fn bench_mut_lazy_multi_access_<const NT:usize>(c: &mut Criterion,name: &str) {
     const ITER:usize = 1000;
-    static ID: AtomicUsize = AtomicUsize::new(0);
+    static ID: [AtomicUsize;32] = [AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0),AtomicUsize::new(0)];
+    static THREAD_IDS: AtomicUsize = AtomicUsize::new(0);
+    #[dynamic]
+    #[thread_local]
+    static THREAD_ID: usize = THREAD_IDS.fetch_add(1,Ordering::Relaxed);
     bench_init(
         c,
         name,
         || {let v = MutLazy::new(YY); v.read(); v},
         |l| {
-            let c0 = ID.fetch_add(1000,Ordering::Relaxed);
-            let cs = c0/1000;
+            let c0 = ID[*THREAD_ID].fetch_add(1,Ordering::Relaxed);
             for k in 0..ITER {
-                if k+cs%8 > 2 {
+                if k > 2 {
                     let l = l.read();
                     let o0 = l[0];
                     for (i,v) in l.iter().enumerate() {
                         let x = *v; 
                         if x != o0+i {
-                            eprintln!("at read {} i {}, {} ne {}",c0,i, x,o0+i);
+                            eprintln!("at read thread {} tryal id {}, loop id {}, elem {}, {} ne {}",*THREAD_ID, c0, k,i, x,o0+i);
+                            std::thread::yield_now();
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            std::thread::yield_now();
+                            let o0 = l[0];
+                            for (i,v) in l.iter().enumerate() {
+                                let x = *v; 
+                                if x != o0+i {
+                                    eprintln!("later read error thread {} tryal id {}, loop id {}, elem {}, {} ne {}",*THREAD_ID, c0, k,i, x,o0+i);
+                                    eprintln!("this was a write error?");
+                                    std::process::exit(1);
+                                }
+                            }
+                            eprintln!("this was a read error?");
                             std::process::exit(1);
                         }
                     }
                 } else {
                     let mut l = l.write();
                     let o0 = l[0];
-                    for (i,v) in l.iter_mut().enumerate() {
+                    for (i,v) in l.iter_mut().enumerate().rev() {
                         let x = *v; 
                         if x != o0+i {
-                            eprintln!("at write {} i {}, {} ne {}",c0,i, x,o0+i);
+                            eprintln!("at write thread {} tryial id {}, loop id {}, elem {}, {} ne {}",*THREAD_ID, c0, k,i, x,o0+i);
                             std::process::exit(1);
                         }
-                        *v = c0 + i + k+1000000*c0;
+                        *v = i + k*1000 + 1000000*c0+*THREAD_ID * 1_000_000_000;
                     }
                 }
             }

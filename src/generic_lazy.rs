@@ -89,7 +89,7 @@ impl Display for AccessError {
     }
 }
 
-#[cfg(not(no_std))]
+#[cfg(feature="parking_lot_core")]
 impl std::error::Error for AccessError {}
 
 /// A type that wrap a Sequentializer and a raw data, and that may

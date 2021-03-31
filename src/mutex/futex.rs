@@ -7,7 +7,7 @@ mod linux {
     use core::ops::Deref;
     use core::sync::atomic::AtomicU32;
     use libc::{
-        sched_yield, syscall, SYS_futex, FUTEX_PRIVATE_FLAG, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET,
+        syscall, SYS_futex, FUTEX_PRIVATE_FLAG, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET,
     };
 
     pub(crate) struct Futex {
@@ -57,7 +57,7 @@ mod linux {
                     ptr::null::<u32>(),
                     ptr::null::<u32>(),
                     1,
-                )
+                ) as usize
             }
         }
         pub(crate) fn wake_one_writer(&self) -> bool {
@@ -78,7 +78,7 @@ mod linux {
     impl Deref for Futex {
         type Target = AtomicU32;
         fn deref(&self) -> &Self::Target {
-            &self.0
+            &self.futex
         }
     }
 }
