@@ -538,7 +538,7 @@ impl SyncPhasedLocker {
                     match self.0.compare_exchange_weak(
                         hint.bits(),
                         hint.bits() + READER_UNITY,
-                        Ordering::Acquire,
+                        Ordering::AcqRel,
                         Ordering::Relaxed,
                     ) {
                         Ok(x) => return Some(LockResult::Read(ReadLock::new(&self.0,x))),
@@ -576,7 +576,7 @@ impl SyncPhasedLocker {
                     match self.0.compare_exchange_weak(
                         cur,
                         cur + READER_UNITY,
-                        Ordering::Acquire,
+                        Ordering::AcqRel,
                         Ordering::Relaxed,
                     ) {
                         Ok(x) => return Some(LockResult::Read(ReadLock::new(&self.0,x))),
@@ -626,7 +626,7 @@ impl SyncPhasedLocker {
                     match self.0.compare_exchange_weak(
                         expect,
                         expect + READER_UNITY,
-                        Ordering::Acquire,
+                        Ordering::AcqRel,
                         Ordering::Relaxed,
                     ) {
                         Ok(_) => {
@@ -711,7 +711,8 @@ impl SyncPhasedLocker {
                                 cur = self.0.load(Ordering::Relaxed);
                                 if has_no_readers(cur) {
                                     fence(Ordering::Acquire);
-                                    return LockResult::Write(Lock::new(&self.0,cur));                                }
+                                    return LockResult::Write(Lock::new(&self.0,cur));
+                                    }
                             }
                             loop {
                                 match self.0.compare_exchange_weak(
@@ -753,7 +754,7 @@ impl SyncPhasedLocker {
                             match self.0.compare_exchange_weak(
                                 cur,
                                 cur + READER_UNITY,
-                                Ordering::Acquire,
+                                Ordering::AcqRel,
                                 Ordering::Relaxed,
                             ) {
                                 Ok(_) =>

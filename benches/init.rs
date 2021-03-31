@@ -216,12 +216,12 @@ impl Generator<[usize;1024]> for YY {
 }
 
 fn bench_mut_lazy_multi_access_<const NT:usize>(c: &mut Criterion,name: &str) {
-    const ITER:usize = 100;
+    const ITER:usize = 1000;
     static ID: AtomicUsize = AtomicUsize::new(0);
     bench_init(
         c,
         name,
-        || {let v = MutLazy::new(YY); &*v.read(); v},
+        || {let v = MutLazy::new(YY); v.read(); v},
         |l| {
             let c0 = ID.fetch_add(1000,Ordering::Relaxed);
             let cs = c0/1000;
@@ -324,7 +324,7 @@ criterion_group!(name=benches; config=Criterion::default();
     //bench_init_mut_lazy_1,
     //bench_init_mut_lazy_2,
     //bench_init_mut_lazy_4,
-    bench_init_mut_lazy_8,
+    //bench_init_mut_lazy_8,
     //bench_init_mut_lazy_r_1,
     //bench_init_mut_lazy_r_2,
     //bench_init_mut_lazy_r_4,

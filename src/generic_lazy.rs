@@ -124,7 +124,7 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
-    pub const unsafe fn new_static(generator: F, sequentializer: M, value: T) -> Self {
+    pub const unsafe fn new(generator: F, sequentializer: M, value: T) -> Self {
         Self {
             value,
             generator,
@@ -142,7 +142,7 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
-    pub const unsafe fn new_static_with_info(
+    pub const unsafe fn new_with_info(
         generator: F,
         sequentializer: M,
         value: T,
@@ -300,7 +300,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
-    pub const unsafe fn new_static(generator: F, sequentializer: M, value: T) -> Self {
+    pub const unsafe fn new(generator: F, sequentializer: M, value: T) -> Self {
         Self {
             value,
             generator,
@@ -318,7 +318,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
-    pub const unsafe fn new_static_with_info(
+    pub const unsafe fn new_with_info(
         generator: F,
         sequentializer: M,
         value: T,
