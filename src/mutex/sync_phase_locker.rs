@@ -237,7 +237,7 @@ impl<'a> Lock<'a> {
 
             //state: phase | <1:PARKED_BIT> | WPARKED_BIT
             self.futex
-                .fetch_xor(WPARKED_BIT | LOCKED_BIT, Ordering::Release);
+                .fetch_xor(WPARKED_BIT | LOCKED_BIT, Ordering::Relaxed);
             //state: phase | LOCKED_BIT | <1:PARKED_BIT>
             if self.futex.wake_one_writer() {
                 return;
@@ -246,7 +246,7 @@ impl<'a> Lock<'a> {
             //cur: phase | LOCKED_BIT
             cur = self
                 .futex
-                .fetch_and(!LOCKED_BIT, Ordering::Release);
+                .fetch_and(!LOCKED_BIT, Ordering::Relaxed);
             if has_no_waiters(cur) {
                 break;
             } //else new threads were parked
@@ -307,7 +307,7 @@ impl<'a> ReadLock<'a> {
             if cur & WPARKED_BIT != 0 {
                 //state: phase | <PARKED_BIT> | WPARKED_BIT
                 self.futex
-                    .fetch_xor(WPARKED_BIT | LOCKED_BIT, Ordering::Release);
+                    .fetch_xor(WPARKED_BIT | LOCKED_BIT, Ordering::Relaxed);
                 if self.futex.wake_one_writer() {
                     return;
                 };
@@ -328,7 +328,7 @@ impl<'a> ReadLock<'a> {
             //cur: phase | LOCKED_BIT
             cur = self
                 .futex
-                .fetch_and(!LOCKED_BIT, Ordering::Release);
+                .fetch_and(!LOCKED_BIT, Ordering::Relaxed);
             if has_no_waiters(cur) {
                 break;
             } //else new threads were parked
@@ -346,7 +346,6 @@ impl<'a> Drop for ReadLock<'a> {
             .futex
             .fetch_sub(READER_UNITY, Ordering::Release);
         //state: phase | <LOCKED_BIT> | READER_UNITY*(n-1) | <1:PARKED_BIT> |<1:WPARKED_BIT>
-
         if has_one_reader(prev) && is_not_write_locked(prev) && has_waiters(prev) 
         {
             //state: phase | PARKED_BIT <|> WPARKED_BIT
@@ -419,12 +418,12 @@ fn wake_readers(futex: &Futex, to_unactivate: u32, converting: bool) -> ReadLock
    let rb = if converting { 0 } else {READER_UNITY};
    futex.fetch_xor(
        PARKED_BIT | to_unactivate | READER_OVERF | rb,
-       Ordering::Release,
+       Ordering::Relaxed,
    );
    let c = futex.wake_readers();
    assert!(c <= MAX_WAKED_READERS);
    let cur = futex
-       .fetch_sub(READER_OVERF - READER_UNITY * (c as u32), Ordering::Release);
+       .fetch_sub(READER_OVERF - READER_UNITY * (c as u32), Ordering::Relaxed);
    ReadLock::new(futex,cur)
 }
 
@@ -822,7 +821,7 @@ impl SyncPhasedLocker {
                     }
 
                     if self.0.compare_and_wait_as_reader(cur) {
-                        let cur = self.0.load(Ordering::Acquire);
+                        let cur = self.0.load(Ordering::Relaxed);
                         let lock = ReadLock::new(&self.0,cur);
                         match how(Phase::from_bits_truncate(cur)) {
                             LockNature::Read => return LockResult::Read(lock),
