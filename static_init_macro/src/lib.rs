@@ -831,8 +831,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 ::static_init::lazy::QuasiMutLazy::<#stat_typ>
             }
         }
-    } else {
-        if stat.mutability.is_none() {
+    } else if stat.mutability.is_none() {
             parse_quote! {
                 ::static_init::lazy::Lazy::<#stat_typ>
             }
@@ -841,8 +840,8 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             parse_quote! {
                 ::static_init::lazy::MutLazy::<#stat_typ>
             }
-        }
-    };
+   };
+    
 
     let sp = stat.expr.span();
 

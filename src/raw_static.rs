@@ -16,6 +16,7 @@ mod static_impl {
     use core::cell::UnsafeCell;
     use core::mem::ManuallyDrop;
     use core::ops::{Deref, DerefMut};
+    use core::cmp::Ordering::*;
     /// The actual type of mutable *dynamic statics*.
     ///
     /// It implements `Deref<Target=T>` and `DerefMut`.
@@ -46,6 +47,12 @@ mod static_impl {
 
     impl<T> Static<T> {
         #[inline]
+        /// Build an uninitialized Static
+        ///
+        /// # Safety
+        ///
+        /// The target object should be a mutable statics to ensure
+        /// that all accesses to this object are unsafe.
         pub const unsafe fn uninit(info: StaticInfo) -> Self {
             Self(StaticBase { k: () }, info, AtomicI32::new(0))
         }
@@ -61,12 +68,15 @@ mod static_impl {
         }
 
         #[inline]
-        pub unsafe fn set_to(this: &mut Self, v: T) {
+        pub fn set_to(this: &mut Self, v: T) {
             this.0.v = ManuallyDrop::new(v);
             this.2.store(1, Ordering::Relaxed);
         }
 
         #[inline]
+        /// # Safety
+        ///
+        /// The objet should not be accessed after this call
         pub unsafe fn drop(this: &mut Self) {
             if let FinalyMode::ProgramDestructor(prio) = &this.1.drop_mode {
                 CUR_DROP_PRIO.store(*prio as i32, Ordering::Relaxed);
@@ -103,42 +113,45 @@ mod static_impl {
         let drop_prio = CUR_DROP_PRIO.load(Ordering::Relaxed);
 
         if let FinalyMode::ProgramDestructor(prio) = &info.drop_mode {
-            if drop_prio == *prio as i32 {
-                core::panic!(
+            match drop_prio.cmp(&(*prio as i32)) {
+                Equal => core::panic!(
                     "This access to variable {:#?} is not sequenced before to its drop. Tip \
                      increase drop priority of this static to a value larger than {prio} \
                      (attribute syntax: `#[dynamic(drop=<prio>)]`)",
                     info,
                     prio = drop_prio
-                )
-            } else if drop_prio > *prio as i32 {
+                ),
+               Greater =>
                 core::panic!(
                     "Unexpected initialization order while accessing {:#?} from drop priority {}. \
                      This is a bug of `static_init` library, please report \"
              the issue inside `static_init` repository.",
                     info,
                     drop_prio
-                )
+                ),
+               Less => (),
             }
         }
 
         if let InitMode::ProgramConstructor(prio) = &info.init_mode {
-            if init_prio == *prio as i32 {
+            match init_prio.cmp(&(*prio as i32)) {
+              Equal => 
                 core::panic!(
                     "This access to variable {:#?} is not sequenced after construction of this \
                      static. Tip increase init priority of this static to a value larger than \
                      {prio} (attribute syntax: `#[dynamic(init=<prio>)]`)",
                     info,
                     prio = init_prio
-                )
-            } else if init_prio > *prio as i32 {
+                ),
+              Greater => 
                 core::panic!(
                     "Unexpected initialization order while accessing {:#?} from init priority {}. \
                      This is a bug of `static_init` library, please report \"
              the issue inside `static_init` repository.",
                     info,
                     init_prio,
-                )
+                ),
+              Less => ()
             }
         }
     }
@@ -161,6 +174,12 @@ mod static_impl {
 
     impl<T> ConstStatic<T> {
         #[inline]
+        /// Build an uninitialized ConstStatic
+        ///
+        /// # Safety 
+        ///
+        /// The target object should be a mutable static to 
+        /// ensure that all accesses to the object are unsafe.
         pub const unsafe fn uninit(info: StaticInfo) -> Self {
             Self(UnsafeCell::new(Static::uninit(info)))
         }
@@ -169,10 +188,16 @@ mod static_impl {
             Self(UnsafeCell::new(Static::from(v, info)))
         }
         #[inline]
+        /// # Safety
+        ///
+        /// The reference to self should be unique. 
         pub unsafe fn set_to(this: &Self, v: T) {
             Static::set_to(&mut (*this.0.get()), v)
         }
         #[inline]
+        /// # Safety
+        ///
+        /// The objet should not be accessed after this call
         pub unsafe fn drop(this: &Self) {
             Static::drop(&mut *this.0.get());
         }
@@ -219,6 +244,12 @@ mod static_impl {
     //As a trait in order to avoid noise;
     impl<T> Static<T> {
         #[inline]
+        /// Build a new static.
+        ///
+        /// # Safety
+        ///
+        /// It should always initialize a mutable static
+        /// to ensure that any access to such object is unsafe
         pub const unsafe fn uninit() -> Self {
             Self(StaticBase { k: () })
         }
@@ -230,11 +261,16 @@ mod static_impl {
         }
 
         #[inline]
-        pub unsafe fn set_to(this: &mut Self, v: T) {
+        pub fn set_to(this: &mut Self, v: T) {
             this.0.v = ManuallyDrop::new(v);
         }
 
         #[inline]
+        /// Drop the inner object
+        /// 
+        /// # Safety
+        ///
+        /// The object should have been previously initialized
         pub unsafe fn drop(this: &mut Self) {
             ManuallyDrop::drop(&mut this.0.v);
         }
@@ -256,6 +292,12 @@ mod static_impl {
 
     impl<T> ConstStatic<T> {
         #[inline]
+        /// Build a new ConstStatic
+        ///
+        /// # Safety
+        ///
+        /// The object should always be a mutable static as acces to
+        /// it is always unsafe
         pub const unsafe fn uninit() -> Self {
             Self(UnsafeCell::new(Static::uninit()))
         }
@@ -264,10 +306,16 @@ mod static_impl {
             Self(UnsafeCell::new(Static::from(v)))
         }
         #[inline]
+        /// # Safety
+        /// 
+        /// The reference to Self should be unique
         pub unsafe fn set_to(this: &Self, v: T) {
             Static::set_to(&mut (*this.0.get()), v)
         }
         #[inline]
+        /// # Safety
+        ///
+        /// The object should have been previously initialized
         pub unsafe fn drop(this: &Self) {
             Static::drop(&mut *this.0.get());
         }

@@ -82,6 +82,9 @@ mod exit_manager {
     }
     pub use reg::finalize_at_exit;
 
+   
+    #[allow(clippy::declare_interior_mutable_const)]
+    /// This object is only used to be copied 
     const GLOBAL_INIT: ExitSequentializer = ExitSequentializer {
         sub:  SubSequentializer::new(),
         next: Mutex::new(None),
@@ -262,6 +265,8 @@ mod local_manager {
         next: Cell<Option<&'static Node>>,
     }
 
+    #[allow(clippy::declare_interior_mutable_const)]
+    /// This object is only used to be copied 
     const LOCAL_INIT: ThreadExitSequentializer = ThreadExitSequentializer {
         sub:  SubSequentializer::new(),
         next: Cell::new(None),

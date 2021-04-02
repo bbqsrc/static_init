@@ -62,12 +62,12 @@ unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for UnSyncPhaseGuard<'a, T> {
         res
     }
 }
-impl<'a, T: ?Sized> Into<UnSyncReadPhaseGuard<'a, T>> for UnSyncPhaseGuard<'a, T> {
+impl<'a, T: ?Sized> From<UnSyncPhaseGuard<'a, T>> for UnSyncReadPhaseGuard<'a, T> {
     #[inline(always)]
-    fn into(self) -> UnSyncReadPhaseGuard<'a, T> {
-        self.1.set(self.2.bits() | READER_UNITY);
-        let r = UnSyncReadPhaseGuard(self.0, self.1);
-        forget(self);
+    fn from(l: UnSyncPhaseGuard<'a,T>) -> UnSyncReadPhaseGuard<'a, T> {
+        l.1.set(l.2.bits() | READER_UNITY);
+        let r = UnSyncReadPhaseGuard(l.0, l.1);
+        forget(l);
         r
     }
 }

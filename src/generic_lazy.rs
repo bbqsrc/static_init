@@ -6,7 +6,7 @@ use core::cell::UnsafeCell;
 use core::hint::unreachable_unchecked;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
-use core::ops::Deref;
+use core::ops::{Deref,DerefMut};
 use core::fmt::{Formatter,self,Display};
 
 #[cfg(debug_mode)]
@@ -176,56 +176,97 @@ impl<'a,T, F, M, S> GenericLazy<T, F, M, S>
         F: 'static + Generator<T::Target>,
         S: 'static + LazyPolicy,
     {
+    /// Get a reference to the target
+    ///
+    /// # Safety
+    ///
+    /// Undefined behaviour if the referenced value has not been initialized
     pub unsafe fn get_unchecked(&'a self) -> &'a T::Target {
         &*self.value.get()
     }
 
+    /// Get a reference to the target, returning an error if the
+    /// target is not in the correct phase.
     pub fn try_get(&'a self) -> Result<&'a T::Target,AccessError> {
         check_access::<*mut T::Target,S>(self.value.get(),Phased::phase(&self.sequentializer)).map(|ptr| unsafe{&*ptr})
     }
 
+    /// Get a reference to the target
+    ///
+    /// # Panics
+    ///
+    /// Panic if the target is not in the correct phase
     pub fn get(&'a self) -> &'a T::Target {
         self.try_get().unwrap()
     }
 
+    /// Get a mutable reference to the target
+    ///
+    /// # Safety
+    ///
+    /// Undefined behaviour if the referenced value has not been initialized
     pub unsafe fn get_mut_unchecked(&'a mut self) -> &'a mut T::Target {
         &mut *self.value.get()
     }
 
+    /// Get a mutable reference to the target, returning an error if the
+    /// target is not in the correct phase.
     pub fn try_get_mut(&'a self) -> Result<&'a mut T::Target,AccessError> {
         check_access::<*mut T::Target,S>(self.value.get(),Phased::phase(&self.sequentializer)).map(|ptr| unsafe{&mut *ptr})
     }
 
+    /// Get a reference to the target
+    ///
+    /// # Panics
+    ///
+    /// Panic if the target is not in the correct phase
     pub fn get_mut(&'a mut self) -> &'a mut T::Target {
         self.try_get_mut().unwrap()
     }
 
+    /// Attempt initialization then get a reference to the target
+    ///
+    /// # Safety
+    ///
+    /// Undefined behaviour if the referenced value has not been initialized
     pub unsafe fn init_then_get_unchecked(&'a self) -> &'a T::Target {
         self.init();
         self.get_unchecked()
     }
+    /// Attempt initialization then get a reference to the target, returning an error if the
+    /// target is not in the correct phase.
     pub fn init_then_try_get(&'a self) -> Result<&'a T::Target, AccessError> {
         let phase = self.init();
         check_access::<*mut T::Target,S>(self.value.get(), phase).map(|ptr| unsafe{&*ptr})
     }
+    /// Attempt initialization then get a reference to the target, returning an error if the
+    /// target is not in the correct phase.
     pub fn init_then_get(&'a self) -> &'a T::Target {
         Self::init_then_try_get(self).unwrap()
     }
+    /// Attempt initialization then get a mutable reference to the target
+    ///
+    /// # Safety
+    ///
+    /// Undefined behaviour if the referenced value has not been initialized
     pub unsafe fn init_then_get_mut_unchecked(&'a mut self) -> &'a mut T::Target {
         self.init();
         &mut *self.value.get()
     }
+    /// Attempt initialization then get a mutable reference to the target, returning an error if the
+    /// target is not in the correct phase.
     pub fn init_then_try_get_mut(&'a mut self) -> Result<&'a mut T::Target, AccessError> {
         let phase = self.init();
         check_access::<* mut T::Target,S>(self.value.get(), phase).map(|ptr| unsafe{&mut *ptr})
     }
+    /// Attempt initialization then get a mutable reference to the target, returning an error if the
+    /// target is not in the correct phase.
     pub fn init_then_get_mut(&'a mut self) -> &'a mut T::Target {
         Self::init_then_try_get_mut(self).unwrap()
     }
     #[inline(always)]
-    /// potentialy initialize the inner data
-    ///
-    /// this method is called every time the generic lazy is dereferenced
+    /// Potentialy initialize the inner data, returning the 
+    /// phase reached at the end of the initialization attempt
     pub fn init(&'a self) -> Phase
     {
         may_debug(|| 
@@ -245,6 +286,65 @@ impl<'a,T, F, M, S> GenericLazy<T, F, M, S>
             )
     }
 }
+
+pub struct WriteGuard<T>(T);
+
+impl<T> Deref for WriteGuard<T>
+where
+    T: Deref,
+    <T as Deref>::Target: Deref,
+    <<T as Deref>::Target as Deref>::Target: LazyData,
+{
+    type Target = <<<T as Deref>::Target as Deref>::Target as LazyData>::Target;
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*(*self.0).get() }
+    }
+}
+impl<T> DerefMut for WriteGuard<T>
+where
+    T: Deref,
+    <T as Deref>::Target: Deref,
+    <<T as Deref>::Target as Deref>::Target: LazyData,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(*self.0).get() }
+    }
+}
+
+impl<T> Phased for WriteGuard<T> where T:Phased {
+    fn phase(this: &Self) -> Phase {
+        Phased::phase(&this.0)
+    }
+}
+
+pub struct ReadGuard<T>(T);
+
+impl<T> Deref for ReadGuard<T>
+where
+    T: Deref,
+    <T as Deref>::Target: Deref,
+    <<T as Deref>::Target as Deref>::Target: LazyData,
+{
+    type Target = <<<T as Deref>::Target as Deref>::Target as LazyData>::Target;
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*(*self.0).get() }
+    }
+}
+impl<T,U> From<WriteGuard<T>> for ReadGuard<U>
+ where U: From<T>
+ {
+     fn from(v: WriteGuard<T>) -> Self {
+         Self(v.0.into())
+     }
+ }
+
+impl<T> Phased for ReadGuard<T> where T:Phased {
+    fn phase(this: &Self) -> Phase {
+        Phased::phase(&this.0)
+    }
+}
+
+
 
 //SAFETY: data and sequentialize are two fields of Self.
 unsafe impl<
@@ -349,101 +449,165 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
         M::ReadGuard: Phased,
         M::WriteGuard: Phased,
     {
+    /// Attempt to get a read lock the LazyData object (not the target), returning None
+    /// if a unique lock is already held or in high contention cases.
+    ///
+    /// # Safety
+    ///
+    /// The obtained [ReadGuard] may reference an uninitialized target.
     #[inline(always)]
-    pub unsafe fn fast_read_lock_unchecked(this: &'a Self) -> Option<M::ReadGuard>
+    pub unsafe fn fast_read_lock_unchecked(this: &'a Self) -> Option<ReadGuard<M::ReadGuard>>
     {
         <M as Sequentializer<'a, Self>>::try_lock(this, |_| LockNature::Read).map(|l|
             if let LockResult::Read(l) = l
             {
-                l
+                ReadGuard(l)
             } else {
                 unreachable_unchecked()
             })
     }
+    /// Attempt to get a read lock the LazyData object (not the target), returning None
+    /// if a unique lock is already held or in high contention cases.
+    ///
+    /// If the lock succeeds and the object is not in an accessible phase, some error is returned
     #[inline(always)]
-    pub fn fast_try_read_lock(this: &'a Self) -> Option<Result<M::ReadGuard,AccessError>>
+    pub fn fast_try_read_lock(this: &'a Self) -> Option<Result<ReadGuard<M::ReadGuard>,AccessError>>
     {
-        unsafe{Self::fast_read_lock_unchecked(this)}.map(checked_access::<M::ReadGuard,S>)
+        unsafe{Self::fast_read_lock_unchecked(this)}.map(checked_access::<ReadGuard<M::ReadGuard>,S>)
     }
 
+    /// Attempt to get a read lock the LazyData object (not the target), returning None
+    /// if a unique lock is already held or in high contention cases.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the lock succeeds and the object is not in an accessible phase.
     #[inline(always)]
-    pub fn fast_read_lock(this: &'a Self) -> Option<M::ReadGuard> {
+    pub fn fast_read_lock(this: &'a Self) -> Option<ReadGuard<M::ReadGuard>> {
         Self::fast_try_read_lock(this).map(|r| r.unwrap())
     }
 
+    /// Get a read lock the LazyData object (not the target)
+    ///
+    /// # Safety
+    ///
+    /// The obtained [ReadGuard] may reference an uninitialized target.
     #[inline(always)]
-    pub unsafe fn read_lock_unchecked(this: &'a Self) -> M::ReadGuard
+    pub unsafe fn read_lock_unchecked(this: &'a Self) -> ReadGuard<M::ReadGuard>
     {
         if let LockResult::Read(l) =
             <M as Sequentializer<'a, Self>>::lock(this, |_| LockNature::Read)
         {
-            l
+            ReadGuard(l)
         } else {
             unreachable_unchecked()
         }
     }
 
+    /// Get a read lock the LazyData object (not the target)
+    ///
+    /// If the object is not in an accessible phase, some error is returned
     #[inline(always)]
-    pub fn try_read_lock(this: &'a Self) -> Result<M::ReadGuard,AccessError>
+    pub fn try_read_lock(this: &'a Self) -> Result<ReadGuard<M::ReadGuard>,AccessError>
     {
-        checked_access::<M::ReadGuard,S>(unsafe{Self::read_lock_unchecked(this)})
+        checked_access::<ReadGuard<M::ReadGuard>,S>(unsafe{Self::read_lock_unchecked(this)})
     }
 
+    /// Get a read lock the LazyData object (not the target).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the lock succeeds and the object is not in an accessible phase.
     #[inline(always)]
-    pub fn read_lock(this: &'a Self) -> M::ReadGuard
+    pub fn read_lock(this: &'a Self) -> ReadGuard<M::ReadGuard>
     {
         Self::try_read_lock(this).unwrap()
     }
 
+    /// Attempt to get a write lock the LazyData object (not the target), returning None
+    /// if a lock is already held or in high contention cases.
+    ///
+    /// # Safety
+    ///
+    /// The obtained [ReadGuard] may reference an uninitialized target.
     #[inline(always)]
-    pub unsafe fn fast_write_lock_unchecked(this: &'a Self) -> Option<M::WriteGuard>
+    pub unsafe fn fast_write_lock_unchecked(this: &'a Self) -> Option<WriteGuard<M::WriteGuard>>
     {
        <M as Sequentializer<'a, Self>>::try_lock(this, |_| LockNature::Write).map(|l| 
             if let LockResult::Write(l) = l
             {
-                l
+                WriteGuard(l)
             } else {
                 unreachable_unchecked()
             })
     }
 
+    /// Attempt to get a write lock the LazyData object (not the target), returning None
+    /// if a lock is already held or in high contention cases.
+    ///
+    /// If the lock succeeds and the object is not in an accessible phase, some error is returned
     #[inline(always)]
-    pub fn fast_try_write_lock(this: &'a Self) -> Option<Result<M::WriteGuard,AccessError>>
+    pub fn fast_try_write_lock(this: &'a Self) -> Option<Result<WriteGuard<M::WriteGuard>,AccessError>>
     {
-        unsafe{Self::fast_write_lock_unchecked(this)}.map(checked_access::<M::WriteGuard,S>)
+        unsafe{Self::fast_write_lock_unchecked(this)}.map(checked_access::<WriteGuard<M::WriteGuard>,S>)
     }
 
+    /// Attempt to get a write lock the LazyData object (not the target), returning None
+    /// if a lock is already held or in high contention cases.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the lock succeeds and the object is not in an accessible phase.
     #[inline(always)]
-    pub fn fast_write_lock(this: &'a Self) -> Option<M::WriteGuard> {
+    pub fn fast_write_lock(this: &'a Self) -> Option<WriteGuard<M::WriteGuard>> {
         Self::fast_try_write_lock(this).map(|r| r.unwrap())
     }
 
+    /// Get a write lock the LazyData object (not the target)
+    ///
+    /// # Safety
+    ///
+    /// The obtained [ReadGuard] may reference an uninitialized target.
     #[inline(always)]
-    pub unsafe fn write_lock_unchecked(this: &'a Self) -> M::WriteGuard
+    pub unsafe fn write_lock_unchecked(this: &'a Self) -> WriteGuard<M::WriteGuard>
     {
         if let LockResult::Write(l) = <M as Sequentializer<'a, Self>>::lock(this, |_| LockNature::Write)
         {
-            l
+            WriteGuard(l)
         } else {
             unreachable_unchecked()
         }
     }
 
+    /// Get a read lock the LazyData object (not the target)
+    ///
+    /// If the object is not in an accessible phase, an error is returned
     #[inline(always)]
-    pub fn try_write_lock(this: &'a Self) -> Result<M::WriteGuard,AccessError>
+    pub fn try_write_lock(this: &'a Self) -> Result<WriteGuard<M::WriteGuard>,AccessError>
     {
-        checked_access::<M::WriteGuard,S>(unsafe{Self::write_lock_unchecked(this)})
+        checked_access::<WriteGuard<M::WriteGuard>,S>(unsafe{Self::write_lock_unchecked(this)})
     }
 
+    /// Get a write lock the LazyData object (not the target).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the lock succeeds and the object is not in an accessible phase.
     #[inline(always)]
-    pub fn write_lock(this: &'a Self) -> M::WriteGuard {
+    pub fn write_lock(this: &'a Self) -> WriteGuard<M::WriteGuard> {
         Self::try_write_lock(this).unwrap()
     }
 
     #[inline(always)]
-    pub unsafe fn init_then_read_lock_unchecked(this: &'a Self) -> M::ReadGuard
+    /// Initialize if necessary then return a read lock
+    ///
+    /// # Safety
+    ///
+    /// Undefined behaviour if after initialization the return object is not in an accessible
+    /// state.
+    pub unsafe fn init_then_read_lock_unchecked(this: &'a Self) -> ReadGuard<M::ReadGuard>
     {
-       may_debug(||
+       ReadGuard(may_debug(||
             LazySequentializer::init_then_read_guard(
                 this,
                 S::shall_init,
@@ -457,23 +621,40 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
                 S::INIT_ON_REG_FAILURE,
             ),
             #[cfg(debug_mode)] &this._info
-            )
+            ))
     }
 
+    /// Initialize if necessary then return a read lock
+    ///
+    /// Returns an error if after initialization the return object is not in an accessible
+    /// state.
     #[inline(always)]
-    pub fn init_then_try_read_lock(this: &'a Self) -> Result<M::ReadGuard,AccessError>
+    pub fn init_then_try_read_lock(this: &'a Self) -> Result<ReadGuard<M::ReadGuard>,AccessError>
     {
-        checked_access::<M::ReadGuard,S>(unsafe {Self::init_then_read_lock_unchecked(this)})
+        checked_access::<ReadGuard<M::ReadGuard>,S>(unsafe {Self::init_then_read_lock_unchecked(this)})
     }
 
+    /// Initialize if necessary then return a read lock
+    ///
+    /// # Panics
+    ///
+    /// Panics if after initialization the return object is not in an accessible
+    /// state.
     #[inline(always)]
-    pub fn init_then_read_lock(this: &'a Self) -> M::ReadGuard
+    pub fn init_then_read_lock(this: &'a Self) -> ReadGuard<M::ReadGuard>
     {
         Self::init_then_try_read_lock(this).unwrap()
     }
 
+    /// If necessary attempt to get a write_lock initilialize the object then turn the write
+    /// lock into a read lock, otherwise attempt to get directly a read_lock. Attempt to take
+    /// a lock may fail because other locks are held or because of contention.
+    ///
+    /// # Safety
+    ///
+    /// If the target is not accessible this may cause undefined behaviour.
     #[inline(always)]
-    pub unsafe fn fast_init_then_read_lock_unchecked(this: &'a Self) -> Option<M::ReadGuard>
+    pub unsafe fn fast_init_then_read_lock_unchecked(this: &'a Self) -> Option<ReadGuard<M::ReadGuard>>
     {
         may_debug(||
             LazySequentializer::try_init_then_read_guard(
@@ -489,25 +670,42 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
                 S::INIT_ON_REG_FAILURE,
             ),
             #[cfg(debug_mode)] &this._info
-            )
+            ).map(ReadGuard)
     }
 
 
     #[inline(always)]
-    pub fn fast_init_then_try_read_lock(this: &'a Self) -> Option<Result<M::ReadGuard,AccessError>>
+    /// If necessary attempt to get a write_lock initilialize the object then turn the write
+    /// lock into a read lock, otherwise attempt to get directly a read_lock. Attempt to take
+    /// a lock may fail because other locks are held or because of contention.
+    ///
+    /// If the target is not accessible some error is returned.
+    pub fn fast_init_then_try_read_lock(this: &'a Self) -> Option<Result<ReadGuard<M::ReadGuard>,AccessError>>
     {
-        unsafe {Self::fast_init_then_read_lock_unchecked(this)}.map(checked_access::<M::ReadGuard,S>)
+        unsafe {Self::fast_init_then_read_lock_unchecked(this)}.map(checked_access::<ReadGuard<M::ReadGuard>,S>)
     }
 
     #[inline(always)]
-    pub fn fast_init_then_read_lock(this: &'a Self) -> Option<M::ReadGuard> {
+    /// If necessary attempt to get a write_lock initilialize the object then turn the write
+    /// lock into a read lock, otherwise attempt to get directly a read_lock. Attempt to take
+    /// a lock may fail because other locks are held or because of contention.
+    ///
+    /// # Panics 
+    ///
+    /// If the target is not accessible some error is returned.
+    pub fn fast_init_then_read_lock(this: &'a Self) -> Option<ReadGuard<M::ReadGuard>> {
         Self::fast_init_then_try_read_lock(this).map(|r| r.unwrap())
     }
 
     #[inline(always)]
-    pub unsafe fn init_then_write_lock_unchecked(this: &'a Self) -> M::WriteGuard
+    /// Get a write locks, initialize the target if necessary then returns a readlock.
+    ///
+    /// # Safety
+    ///
+    /// If the target object is not accessible, this will cause undefined behaviour
+    pub unsafe fn init_then_write_lock_unchecked(this: &'a Self) -> WriteGuard<M::WriteGuard>
     {
-       may_debug(|| LazySequentializer::init_then_write_guard(
+       WriteGuard(may_debug(|| LazySequentializer::init_then_write_guard(
                 this,
                 S::shall_init,
                 |data: &T| {
@@ -520,22 +718,35 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
                 S::INIT_ON_REG_FAILURE,
             ),
             #[cfg(debug_mode)] &this._info
-            )
+            ))
     }
 
     #[inline(always)]
-    pub fn init_then_try_write_lock(this: &'a Self) -> Result<M::WriteGuard,AccessError>
+    /// Get a write locks, initialize the target if necessary then returns the write lock.
+    ///
+    /// If the target object is not accessible an error is returned.
+    pub fn init_then_try_write_lock(this: &'a Self) -> Result<WriteGuard<M::WriteGuard>,AccessError>
     {
-        checked_access::<M::WriteGuard,S>(unsafe{Self::init_then_write_lock_unchecked(this)})
+        checked_access::<WriteGuard<M::WriteGuard>,S>(unsafe{Self::init_then_write_lock_unchecked(this)})
     }
     #[inline(always)]
-    pub fn init_then_write_lock(this: &'a Self) -> M::WriteGuard
+    /// Get a write locks, initialize the target if necessary then returns a write lock.
+    ///
+    /// Panics if the target object is not accessible.
+    #[inline(always)]
+    pub fn init_then_write_lock(this: &'a Self) -> WriteGuard<M::WriteGuard>
     {
         Self::init_then_try_write_lock(this).unwrap()
     }
 
     #[inline(always)]
-    pub unsafe fn fast_init_then_write_lock_unchecked(this: &'a Self) -> Option<M::WriteGuard>
+    /// Attempt to get a write locks then initialize the target if necessary and returns the 
+    /// writelock.
+    ///
+    /// # Safety
+    ///
+    /// Undefined behavior if the target object is not accessible.
+    pub unsafe fn fast_init_then_write_lock_unchecked(this: &'a Self) -> Option<WriteGuard<M::WriteGuard>>
     {
        may_debug(|| LazySequentializer::try_init_then_write_guard(
                 this,
@@ -550,15 +761,25 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
                 S::INIT_ON_REG_FAILURE,
             ),
             #[cfg(debug_mode)] &this._info
-            )
+            ).map(WriteGuard)
     }
+    /// Attempt to get a write locks then initialize the target if necessary and returns the 
+    /// writelock.
+    ///
+    /// Returns an error if the target object is not accessible.
     #[inline(always)]
-    pub fn fast_init_then_try_write_lock(this: &'a Self) -> Option<Result<M::WriteGuard,AccessError>>
+    pub fn fast_init_then_try_write_lock(this: &'a Self) -> Option<Result<WriteGuard<M::WriteGuard>,AccessError>>
     {
-      Self::fast_init_then_write_lock(this).map(checked_access::<M::WriteGuard,S>)
+      Self::fast_init_then_write_lock(this).map(checked_access::<WriteGuard<M::WriteGuard>,S>)
     }
+    /// Attempt to get a write locks then initialize the target if necessary and returns the 
+    /// writelock.
+    ///
+    /// # Panics 
+    ///
+    /// Panics if the target object is not accessible.
     #[inline(always)]
-    pub fn fast_init_then_write_lock(this: &'a Self) -> Option<M::WriteGuard> {
+    pub fn fast_init_then_write_lock(this: &'a Self) -> Option<WriteGuard<M::WriteGuard>> {
         Self::fast_init_then_try_write_lock(this).map(|r| r.unwrap())
     }
 }

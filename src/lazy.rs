@@ -1,8 +1,8 @@
 use crate::mutex::{
-    PhaseGuard, SyncPhaseGuard, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncReadPhaseGuard,
+     SyncPhaseGuard, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncReadPhaseGuard,
 };
 use crate::{
-    generic_lazy::{DropedUnInited, GenericLazy, GenericMutLazy, LazyData, LazyPolicy, UnInited, AccessError},
+    generic_lazy::{DropedUnInited, GenericLazy, GenericMutLazy, LazyData, LazyPolicy, UnInited, AccessError,ReadGuard,WriteGuard},
     mutex::{LockNature, LockResult},
     splited_sequentializer::UnSyncSequentializer,
     Finaly, Generator, LazySequentializer, Phase, Phased, Sequential, Sequentializer,
@@ -359,6 +359,12 @@ macro_rules! impl_lazy {
         }
 
         impl<T, G> $tp<T, G> {
+            /// Build a new static object
+            ///
+            /// # Safety
+            /// 
+            /// This function may be unsafe if building any thing else than a thread local object
+            /// or a static will be the cause of undefined behavior
             pub const $($safe)? fn new_static(f: G) -> Self {
                 #[allow(unused_unsafe)]
                 Self {
@@ -366,6 +372,12 @@ macro_rules! impl_lazy {
                     __private: unsafe{GenericLazy::new(f, <$man>::new(),<$data>::INIT)},
                 }
             }
+            /// Build a new static object with debug information
+            ///
+            /// # Safety
+            /// 
+            /// This function may be unsafe if building any thing else than a thread local object
+            /// or a static will be the cause of undefined behavior
             pub const $($safe)?  fn new_static_with_info(f: G, info: StaticInfo) -> Self {
                 #[allow(unused_unsafe)]
                 Self {
@@ -497,50 +509,6 @@ impl<T, G> Drop for UnSyncLazy<T, G> {
     }
 }
 
-pub struct WriteGuard<T>(T);
-
-impl<T> Deref for WriteGuard<T>
-where
-    T: Deref,
-    <T as Deref>::Target: Deref,
-    <<T as Deref>::Target as Deref>::Target: LazyData,
-{
-    type Target = <<<T as Deref>::Target as Deref>::Target as LazyData>::Target;
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*(*self.0).get() }
-    }
-}
-impl<T> DerefMut for WriteGuard<T>
-where
-    T: Deref,
-    <T as Deref>::Target: Deref,
-    <<T as Deref>::Target as Deref>::Target: LazyData,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *(*self.0).get() }
-    }
-}
-pub struct ReadGuard<T>(T);
-
-impl<T> Deref for ReadGuard<T>
-where
-    T: Deref,
-    <T as Deref>::Target: Deref,
-    <<T as Deref>::Target as Deref>::Target: LazyData,
-{
-    type Target = <<<T as Deref>::Target as Deref>::Target as LazyData>::Target;
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*(*self.0).get() }
-    }
-}
-impl<T,U> From<WriteGuard<T>> for ReadGuard<U>
- where U: From<T>
- {
-     fn from(v: WriteGuard<T>) -> Self {
-         Self(v.0.into())
-     }
- }
-
 macro_rules! impl_mut_lazy {
     ($tp:ident, $man:ty, $checker:ty, $data:ty, $gdw: ident, $gd: ident $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
         impl_mut_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?}
@@ -572,7 +540,7 @@ macro_rules! impl_mut_lazy {
             ///
             /// Panics if initialization panics or if initialization has panicked in a previous attempt to initialize.
             pub fn read(&$($static)? self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
-               ReadGuard(GenericMutLazy::init_then_read_lock(&self.__private))
+               GenericMutLazy::init_then_read_lock(&self.__private)
             }
             #[inline(always)]
             /// Initialize if necessary and returns some read lock if the lazy is not
@@ -582,17 +550,17 @@ macro_rules! impl_mut_lazy {
             ///
             /// If locks succeeds, panics if initialization panics or if initialization has panicked in a previous attempt to initialize.
             pub fn fast_read(&$($static)? self) -> Option<ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>>> {
-               GenericMutLazy::fast_init_then_read_lock(&self.__private).map(ReadGuard)
+               GenericMutLazy::fast_init_then_read_lock(&self.__private)
             }
             #[inline(always)]
             /// Get a read lock if the lazy is initialized or an [AccessError]
             pub fn try_read(&$($static)? self) -> Result<ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError> {
-               GenericMutLazy::try_read_lock(&self.__private).map(ReadGuard)
+               GenericMutLazy::try_read_lock(&self.__private)
             }
             #[inline(always)]
             /// if the lazy is not already write locked: get a read lock if the lazy is initialized or an [AccessError]. Otherwise returns `None`
             pub fn fast_try_read(&$($static)? self) -> Option<Result<ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError>> {
-               GenericMutLazy::fast_try_read_lock(&self.__private).map(|o| o.map(ReadGuard))
+               GenericMutLazy::fast_try_read_lock(&self.__private)
             }
             #[inline(always)]
             /// Initialize if necessary and returns a write lock
@@ -601,7 +569,7 @@ macro_rules! impl_mut_lazy {
             ///
             /// Panics if initialization panics or if initialization has panicked in a previous attempt to initialize.
             pub fn write(&$($static)? self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
-               WriteGuard(GenericMutLazy::init_then_write_lock(&self.__private))
+               GenericMutLazy::init_then_write_lock(&self.__private)
             }
             #[inline(always)]
             /// Initialize if necessary and returns some write lock if the lazy is not
@@ -611,17 +579,17 @@ macro_rules! impl_mut_lazy {
             ///
             /// If locks succeeds, panics if initialization panics or if initialization has panicked in a previous attempt to initialize.
             pub fn fast_write(&$($static)? self) -> Option<WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>>> {
-               GenericMutLazy::fast_init_then_write_lock(&self.__private).map(WriteGuard)
+               GenericMutLazy::fast_init_then_write_lock(&self.__private)
             }
             #[inline(always)]
             /// Get a read lock if the lazy is initialized or an [AccessError]
             pub fn try_write(&$($static)? self) -> Result<WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError> {
-               GenericMutLazy::try_write_lock(&self.__private).map(WriteGuard)
+               GenericMutLazy::try_write_lock(&self.__private)
             }
             #[inline(always)]
             /// if the lazy is not already read or write locked: get a write lock if the lazy is initialized or an [AccessError] . Otherwise returns `None`
             pub fn fast_try_write(&$($static)? self) -> Option<Result<WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError>> {
-               GenericMutLazy::fast_try_write_lock(&self.__private).map(|o| o.map(WriteGuard))
+               GenericMutLazy::fast_try_write_lock(&self.__private)
             }
             #[inline(always)]
             /// Initialize the lazy if no previous attempt to initialized it where performed
@@ -646,7 +614,7 @@ macro_rules! impl_mut_lazy {
             ///
             /// Panics if initialization panics or if initialization has panicked in a previous attempt to initialize.
             pub fn read(&self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
-                ReadGuard(GenericMutLazy::init_then_read_lock(unsafe{as_static(&self.__private)}))
+                GenericMutLazy::init_then_read_lock(unsafe{as_static(&self.__private)})
             }
             #[inline(always)]
             /// Initialize if necessary and returns some read lock if the lazy is not
@@ -656,17 +624,17 @@ macro_rules! impl_mut_lazy {
             ///
             /// If locks succeeds, panics if initialization panics or if initialization has panicked in a previous attempt to initialize.
             pub fn fast_read(&self) -> Option<ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>>> {
-               GenericMutLazy::fast_init_then_read_lock(unsafe{as_static(&self.__private)}).map(ReadGuard)
+               GenericMutLazy::fast_init_then_read_lock(unsafe{as_static(&self.__private)})
             }
             #[inline(always)]
             /// Get a read lock if the lazy is initialized or an [AccessError]
             pub fn try_read(&self) -> Result<ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError> {
-               GenericMutLazy::try_read_lock(unsafe{as_static(&self.__private)}).map(ReadGuard)
+               GenericMutLazy::try_read_lock(unsafe{as_static(&self.__private)})
             }
             #[inline(always)]
             /// if the lazy is not already write locked: get a read lock if the lazy is initialized or an [AccessError]. Otherwise returns `None`
             pub fn fast_try_read(&self) -> Option<Result<ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError>> {
-               GenericMutLazy::fast_try_read_lock(unsafe{as_static(&self.__private)}).map(|o| o.map(ReadGuard))
+               GenericMutLazy::fast_try_read_lock(unsafe{as_static(&self.__private)})
             }
             #[inline(always)]
             /// Initialize if necessary and returns a write lock
@@ -675,7 +643,7 @@ macro_rules! impl_mut_lazy {
             ///
             /// Panics if initialization panics or if initialization has panicked in a previous attempt to initialize.
             pub fn write(&self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
-                WriteGuard(GenericMutLazy::init_then_write_lock(unsafe{as_static(&self.__private)}))
+                GenericMutLazy::init_then_write_lock(unsafe{as_static(&self.__private)})
             }
             #[inline(always)]
             /// Initialize if necessary and returns some write lock if the lazy is not
@@ -685,23 +653,23 @@ macro_rules! impl_mut_lazy {
             ///
             /// If locks succeeds, panics if initialization panics or if initialization has panicked in a previous attempt to initialize.
             pub fn fast_write(&self) -> Option<WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>>> {
-               GenericMutLazy::fast_init_then_write_lock(unsafe{as_static(&self.__private)}).map(WriteGuard)
+               GenericMutLazy::fast_init_then_write_lock(unsafe{as_static(&self.__private)})
             }
             #[inline(always)]
             /// Get a read lock if the lazy is initialized or an [AccessError]
             pub fn try_write(&self) -> Result<WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError> {
-               GenericMutLazy::try_write_lock(unsafe{as_static(&self.__private)}).map(WriteGuard)
+               GenericMutLazy::try_write_lock(unsafe{as_static(&self.__private)})
             }
             #[inline(always)]
             /// if the lazy is not already read or write locked: get a write lock if the lazy is initialized or an [AccessError] . Otherwise returns `None`
             pub fn fast_try_write(&self) -> Option<Result<WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError>> {
-               GenericMutLazy::fast_try_write_lock(unsafe{as_static(&self.__private)}).map(|o| o.map(WriteGuard))
+               GenericMutLazy::fast_try_write_lock(unsafe{as_static(&self.__private)})
             }
             #[inline(always)]
             /// Initialize the lazy if no previous attempt to initialized it where performed
             pub fn init(&self) -> Phase {
                 let l = GenericMutLazy::init_then_write_lock(unsafe{as_static(&self.__private)});
-                l.phase()
+                Phased::phase(&l)
             }
         }
 
@@ -723,9 +691,9 @@ macro_rules! impl_mut_lazy {
             pub fn read(&'static self) -> ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                 if inited::global_inited_hint() {
                     let l = unsafe{GenericMutLazy::read_lock_unchecked(&self.__private)};
-                    ReadGuard(l)
+                    l
                 } else {
-                    ReadGuard(GenericMutLazy::init_then_read_lock(&self.__private))
+                    GenericMutLazy::init_then_read_lock(&self.__private)
                 }
             }
             /// Initialize if necessary and returns some read lock if the lazy is not
@@ -737,27 +705,27 @@ macro_rules! impl_mut_lazy {
             #[inline(always)]
             pub fn fast_read(&'static self) -> Option<ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>>> {
                 if inited::global_inited_hint() {
-                    unsafe{GenericMutLazy::fast_read_lock_unchecked(&self.__private)}.map(ReadGuard)
+                    unsafe{GenericMutLazy::fast_read_lock_unchecked(&self.__private)}
                 } else {
-                    GenericMutLazy::fast_init_then_read_lock(&self.__private).map(ReadGuard)
+                    GenericMutLazy::fast_init_then_read_lock(&self.__private)
                 }
             }
             #[inline(always)]
             /// Get a read lock if the lazy is initialized or an [AccessError]
             pub fn try_read(&'static self) -> Result<ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError> {
                 if inited::global_inited_hint() {
-                    Ok(ReadGuard(unsafe{GenericMutLazy::read_lock_unchecked(&self.__private)}))
+                    Ok(unsafe{GenericMutLazy::read_lock_unchecked(&self.__private)})
                 } else {
-                    GenericMutLazy::try_read_lock(&self.__private).map(ReadGuard)
+                    GenericMutLazy::try_read_lock(&self.__private)
                 }
             }
             /// if the lazy is not already write locked: get a read lock if the lazy is initialized or an [AccessError]. Otherwise returns `None`
             #[inline(always)]
             pub fn fast_try_read(&'static self) -> Option<Result<ReadGuard<$gd::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError>> {
                 if inited::global_inited_hint() {
-                    unsafe{GenericMutLazy::fast_read_lock_unchecked(&self.__private)}.map(|l| Ok(ReadGuard(l)))
+                    unsafe{GenericMutLazy::fast_read_lock_unchecked(&self.__private)}.map(Ok)
                 } else {
-                    GenericMutLazy::fast_try_read_lock(&self.__private).map(|o| o.map(ReadGuard))
+                    GenericMutLazy::fast_try_read_lock(&self.__private)
                 }
             }
             /// Initialize if necessary and returns a write lock
@@ -768,10 +736,9 @@ macro_rules! impl_mut_lazy {
             #[inline(always)]
             pub fn write(&'static self) -> WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>> {
                 if inited::global_inited_hint() {
-                    let l = unsafe{GenericMutLazy::write_lock_unchecked(&self.__private)};
-                    WriteGuard(l)
+                    unsafe{GenericMutLazy::write_lock_unchecked(&self.__private)}
                 } else {
-                    WriteGuard(GenericMutLazy::init_then_write_lock(&self.__private))
+                    GenericMutLazy::init_then_write_lock(&self.__private)
                 }
             }
             /// Initialize if necessary and returns some write lock if the lazy is not
@@ -783,34 +750,34 @@ macro_rules! impl_mut_lazy {
             #[inline(always)]
             pub fn fast_write(&'static self) -> Option<WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>>> {
                 if inited::global_inited_hint() {
-                    unsafe{GenericMutLazy::fast_write_lock_unchecked(&self.__private)}.map(WriteGuard)
+                    unsafe{GenericMutLazy::fast_write_lock_unchecked(&self.__private)}
                 } else {
-                    GenericMutLazy::fast_init_then_write_lock(&self.__private).map(WriteGuard)
+                    GenericMutLazy::fast_init_then_write_lock(&self.__private)
                 }
             }
             /// Get a read lock if the lazy is initialized or an [AccessError]
             #[inline(always)]
             pub fn try_write(&'static self) -> Result<WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError> {
                 if inited::global_inited_hint() {
-                    Ok(WriteGuard(unsafe{GenericMutLazy::write_lock_unchecked(&self.__private)}))
+                    Ok(unsafe{GenericMutLazy::write_lock_unchecked(&self.__private)})
                 } else {
-                    GenericMutLazy::try_write_lock(&self.__private).map(WriteGuard)
+                    GenericMutLazy::try_write_lock(&self.__private)
                 }
             }
             /// if the lazy is not already read or write locked: get a write lock if the lazy is initialized or an [AccessError] . Otherwise returns `None`
             #[inline(always)]
             pub fn fast_try_write(&'static self) -> Option<Result<WriteGuard<$gdw::<'_,GenericMutLazy<$data, G, $man, $checker>>>,AccessError>> {
                 if inited::global_inited_hint() {
-                    unsafe{GenericMutLazy::fast_write_lock_unchecked(&self.__private)}.map(|l| Ok(WriteGuard(l)))
+                    unsafe{GenericMutLazy::fast_write_lock_unchecked(&self.__private)}.map(Ok)
                 } else {
-                    GenericMutLazy::fast_try_write_lock(&self.__private).map(|o| o.map(WriteGuard))
+                    GenericMutLazy::fast_try_write_lock(&self.__private)
                 }
             }
             /// Initialize the lazy if no previous attempt to initialized it where performed
             #[inline(always)]
             pub fn init(&'static self) -> Phase {
                 let l = GenericMutLazy::init_then_write_lock(&self.__private);
-                l.phase()
+                Phased::phase(&l)
             }
         }
 
@@ -832,6 +799,12 @@ macro_rules! impl_mut_lazy {
         }
 
         impl<T, G> $tp<T, G> {
+            /// Build a new static object.
+            ///
+            /// # Safety
+            ///
+            /// This function may be unsafe if build this object as anything else than
+            /// a static or a thread local static would be the cause of undefined behavior
             pub const $($safe)? fn new_static(f: G) -> Self {
                 #[allow(unused_unsafe)]
                 Self {
@@ -839,6 +812,12 @@ macro_rules! impl_mut_lazy {
                     __private: unsafe{GenericMutLazy::new(f, <$man>::new(),<$data>::INIT)},
                 }
             }
+            /// Build a new static object with debug informations.
+            ///
+            /// # Safety
+            ///
+            /// This function may be unsafe if build this object as anything else than
+            /// a static or a thread local static would be the cause of undefined behavior
             pub const $($safe)?  fn new_static_with_info(f: G, info: StaticInfo) -> Self {
                 #[allow(unused_unsafe)]
                 Self {
