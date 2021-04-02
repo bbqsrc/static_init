@@ -26,6 +26,7 @@ fn main() {
 
         debug_mode: { any(feature = "debug_order", debug_assertions) },
 
+        //TODO: use crate linkme to implement priorities for mach_o
         support_priority: { any(elf,coff) },
 
         cxa_thread_at_exit: { any(
