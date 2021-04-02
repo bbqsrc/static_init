@@ -56,8 +56,8 @@ harness = false
 [build-dependencies]
 cfg_aliases = "0.1"
 
-[profile.bench]
-lto = true
+#[profile.bench]
+#lto = true
 
 [profile.dev]
 panic="abort"
