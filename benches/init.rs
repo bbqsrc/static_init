@@ -869,15 +869,15 @@ targets=
 //bench_mut_rwlock_multi_access_4,
 //bench_mut_rwlock_multi_access_8,
 //bench_mut_rwlock_multi_access_16,
-//bench_mut_lazy_multi_access_4,
-//bench_mut_lazy_multi_access_8,
+bench_mut_lazy_multi_access_4,
+bench_mut_lazy_multi_access_8,
 bench_mut_lazy_multi_access_16,
 //bench_rwlock_multi_fast_access_4,
 //bench_rwlock_multi_fast_access_8,
 //bench_rwlock_multi_fast_access_16,
-//bench_mut_lazy_multi_fast_access_4,
-//bench_mut_lazy_multi_fast_access_8,
-//bench_mut_lazy_multi_fast_access_16,
+bench_mut_lazy_multi_fast_access_4,
+bench_mut_lazy_multi_fast_access_8,
+bench_mut_lazy_multi_fast_access_16,
 );
 criterion_main!(benches);
 
