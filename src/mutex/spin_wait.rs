@@ -37,11 +37,11 @@ impl SpinWait {
     /// to yielding the CPU to the OS after a few iterations.
     #[inline]
     pub fn spin(&mut self) -> bool {
-        if self.counter >= 10 {
+        if self.counter >= 16 {
             return false;
         }
         self.counter += 1;
-        if self.counter <= 3 {
+        if self.counter <= 4 {
             cpu_relax(1 << self.counter);
         } else {
             yield_now();
@@ -56,12 +56,11 @@ impl SpinWait {
     /// contention.
     #[inline]
     pub fn spin_no_yield(&mut self) -> bool {
-        if self.counter >= 10 {
-            cpu_relax(1 << self.counter);
-            return false;
+        self.counter += 1;
+        if self.counter > 10 {
+            self.counter = 10;
         }
         cpu_relax(1 << self.counter);
-        self.counter += 1;
         true
     }
 }
