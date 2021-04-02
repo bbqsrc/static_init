@@ -571,7 +571,7 @@ impl SyncPhasedLocker {
                 }
             }
             LockNature::Read => {
-                if !is_write_locked(cur) && !is_unparking(cur) {
+                if is_read_lockable(cur) {
                     match self.0.compare_exchange_weak(
                         cur,
                         cur + READER_UNITY,

@@ -770,7 +770,7 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
     #[inline(always)]
     pub fn fast_init_then_try_write_lock(this: &'a Self) -> Option<Result<WriteGuard<M::WriteGuard>,AccessError>>
     {
-      Self::fast_init_then_write_lock(this).map(checked_access::<WriteGuard<M::WriteGuard>,S>)
+      unsafe{Self::fast_init_then_write_lock_unchecked(this)}.map(checked_access::<WriteGuard<M::WriteGuard>,S>)
     }
     /// Attempt to get a write locks then initialize the target if necessary and returns the 
     /// writelock.
