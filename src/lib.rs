@@ -94,7 +94,7 @@ pub unsafe trait Sequential {
     type Sequentializer;
     fn sequentializer(this: &Self) -> &Self::Sequentializer;
     fn data(this: &Self) -> &Self::Data;
-    fn sequentializer_data_mut(this: &mut Self) -> (&mut Self::Sequentializer,&Self::Data);
+    fn sequentializer_data_mut(this: &mut Self) -> (&mut Self::Sequentializer, &Self::Data);
 }
 
 /// Trait for objects that know in which [phase](Phase) they are.
@@ -149,10 +149,7 @@ pub unsafe trait Sequentializer<'a, T: Sequential>: 'static + Sized + Phased {
     ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>>;
 
     /// Lock the phases of an object in order to ensure atomic phase transition.
-    fn lock_mut(
-        target: &'a mut T,
-    ) -> Self::WriteGuard;
-
+    fn lock_mut(target: &'a mut T) -> Self::WriteGuard;
 }
 
 /// A [`LazySequentializer`] sequentialize the [phases](Phase) of a target object to ensure
@@ -168,9 +165,7 @@ pub unsafe trait Sequentializer<'a, T: Sequential>: 'static + Sized + Phased {
 ///  - if the implementor is not Sync then the lock should panic if any attempt is made
 ///    to take another lock while a write lock is alive or to take a write lock while there
 ///    is already a read_lock.(the lock should behave as a RefCell).
-pub unsafe trait LazySequentializer<'a, T: Sequential>:
-    Sequentializer<'a, T>
-{
+pub unsafe trait LazySequentializer<'a, T: Sequential>: Sequentializer<'a, T> {
     /// if `shall_init` return true for the target [`Sequential`] object, it initialize
     /// the data of the target object using `init`
     ///
@@ -326,13 +321,13 @@ pub struct CyclicPanic;
 /// phases and bits to manipulate them;
 pub mod phase {
 
-    use core::fmt::{Formatter,self,Display};
+    use core::fmt::{self, Display, Formatter};
 
     use bitflags::bitflags;
-    pub(crate) const WPARKED_BIT: u32 =  0b1000_0000_0000_0000_0000_0000_0000_0000;
-    pub(crate) const PARKED_BIT: u32 =   0b0100_0000_0000_0000_0000_0000_0000_0000;
-    pub(crate) const LOCKED_BIT: u32 =   0b0010_0000_0000_0000_0000_0000_0000_0000; //Or READER overflow
-    pub(crate) const READER_BITS: u32 =  0b0000_1111_1111_1111_1111_1111_0000_0000;
+    pub(crate) const WPARKED_BIT: u32 = 0b1000_0000_0000_0000_0000_0000_0000_0000;
+    pub(crate) const PARKED_BIT: u32 = 0b0100_0000_0000_0000_0000_0000_0000_0000;
+    pub(crate) const LOCKED_BIT: u32 = 0b0010_0000_0000_0000_0000_0000_0000_0000; //Or READER overflow
+    pub(crate) const READER_BITS: u32 = 0b0000_1111_1111_1111_1111_1111_0000_0000;
     pub(crate) const READER_OVERF: u32 = 0b0001_0000_0000_0000_0000_0000_0000_0000;
     pub(crate) const READER_UNITY: u32 = 0b0000_0000_0000_0000_0000_0001_0000_0000;
     // Although some flags exclude others, Phase is represented by
@@ -367,13 +362,13 @@ pub mod phase {
                 write!(ft, "Phase (")?;
                 let mut is_first = true;
                 let mut write = |s| {
-                        if is_first {
-                            is_first = false;
-                            ft.write_str(s)
-                        } else {
-                            write!(ft, " | {}", s)
-                        }
-                    };
+                    if is_first {
+                        is_first = false;
+                        ft.write_str(s)
+                    } else {
+                        write!(ft, " | {}", s)
+                    }
+                };
                 if self.intersects(Phase::INITIALIZED) {
                     write("Initialized")?;
                 }
@@ -398,12 +393,11 @@ pub mod phase {
                 if self.intersects(Phase::FINALIZATION_PANICKED) {
                     write("Finalization panicked")?;
                 }
-                write!(ft,")")?
+                write!(ft, ")")?
             }
-        Ok(())
+            Ok(())
         }
     }
-    
 }
 #[doc(inline)]
 pub use phase::Phase;
@@ -446,14 +440,13 @@ pub mod generic_lazy;
 /// Provides various implementation of lazily initialized types
 pub mod lazy;
 #[doc(inline)]
-pub use lazy::{MutLazy,Lazy};
+pub use lazy::{Lazy, MutLazy};
 #[doc(inline)]
-pub use lazy::{UnSyncMutLazy,UnSyncLazy};
+pub use lazy::{UnSyncLazy, UnSyncMutLazy};
 
 #[cfg(any(elf, mach_o, coff))]
 /// Provides types for statics that are meant to run code before main start or after it exit.
 pub mod raw_static;
-
 
 #[derive(Debug)]
 #[doc(hidden)]

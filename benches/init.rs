@@ -244,7 +244,10 @@ impl Generator<[usize; 1024]> for YY {
     }
 }
 
-fn bench_mut_lazy_multi_access_<const NT: usize, const INIT_THEN_READ: bool>(c: &mut Criterion, name: &str) {
+fn bench_mut_lazy_multi_access_<const NT: usize, const INIT_THEN_READ: bool>(
+    c: &mut Criterion,
+    name: &str,
+) {
     const ITER: usize = 100;
     static ID: [AtomicUsize; 64] = [
         AtomicUsize::new(0),
@@ -327,7 +330,7 @@ fn bench_mut_lazy_multi_access_<const NT: usize, const INIT_THEN_READ: bool>(c: 
         |l| {
             let c0 = ID[*THREAD_ID].fetch_add(1, Ordering::Relaxed);
             for k in 0..ITER {
-                if (INIT_THEN_READ && k > 2) || (!INIT_THEN_READ && (k+c0)%8 > 2) {
+                if (INIT_THEN_READ && k > 2) || (!INIT_THEN_READ && (k + c0) % 8 > 2) {
                     let l = l.read();
                     let o0 = l[0];
                     for (i, v) in l.iter().enumerate() {
@@ -394,45 +397,48 @@ fn bench_mut_lazy_multi_access_<const NT: usize, const INIT_THEN_READ: bool>(c: 
 }
 
 fn bench_mut_lazy_multi_access_4(c: &mut Criterion) {
-    bench_mut_lazy_multi_access_::<4,false>(
+    bench_mut_lazy_multi_access_::<4, false>(
         c,
         "100 (read/write) large mut lazy access  / 4 concurent accesses time sum",
     )
 }
 fn bench_mut_lazy_multi_access_8(c: &mut Criterion) {
-    bench_mut_lazy_multi_access_::<8,false>(
+    bench_mut_lazy_multi_access_::<8, false>(
         c,
         "100 (read/write) large mut lazy access  / 8 concurent accesses time sum",
     )
 }
 
 fn bench_mut_lazy_multi_access_16(c: &mut Criterion) {
-    bench_mut_lazy_multi_access_::<16,false>(
+    bench_mut_lazy_multi_access_::<16, false>(
         c,
         "100 (read/write) large mut lazy access  / 16 concurent accesses time sum",
     )
 }
 fn bench_mut_lazy_multi_init_access_4(c: &mut Criterion) {
-    bench_mut_lazy_multi_access_::<4,true>(
+    bench_mut_lazy_multi_access_::<4, true>(
         c,
         "init then read large mut lazy access  / 4 concurent accesses time sum",
     )
 }
 fn bench_mut_lazy_multi_init_access_8(c: &mut Criterion) {
-    bench_mut_lazy_multi_access_::<8,true>(
+    bench_mut_lazy_multi_access_::<8, true>(
         c,
         "init then read large mut lazy access  / 8 concurent accesses time sum",
     )
 }
 
 fn bench_mut_lazy_multi_init_access_16(c: &mut Criterion) {
-    bench_mut_lazy_multi_access_::<16,true>(
+    bench_mut_lazy_multi_access_::<16, true>(
         c,
         "init then read large mut lazy access  / 16 concurent accesses time sum",
     )
 }
 
-fn bench_mut_rwlock_multi_access_<const NT: usize,const INIT_THEN_READ: bool>(c: &mut Criterion, name: &str) {
+fn bench_mut_rwlock_multi_access_<const NT: usize, const INIT_THEN_READ: bool>(
+    c: &mut Criterion,
+    name: &str,
+) {
     const ITER: usize = 100;
     static ID: [AtomicUsize; 64] = [
         AtomicUsize::new(0),
@@ -511,7 +517,7 @@ fn bench_mut_rwlock_multi_access_<const NT: usize,const INIT_THEN_READ: bool>(c:
         |l| {
             let c0 = ID[*THREAD_ID].fetch_add(1, Ordering::Relaxed);
             for k in 0..ITER {
-                if (INIT_THEN_READ && k > 2) || (!INIT_THEN_READ && (k+c0)%8 > 2) {
+                if (INIT_THEN_READ && k > 2) || (!INIT_THEN_READ && (k + c0) % 8 > 2) {
                     let l = l.read();
                     let o0 = l[0];
                     for (i, v) in l.iter().enumerate() {
@@ -539,45 +545,48 @@ fn bench_mut_rwlock_multi_access_<const NT: usize,const INIT_THEN_READ: bool>(c:
     )
 }
 fn bench_mut_rwlock_multi_access_4(c: &mut Criterion) {
-    bench_mut_rwlock_multi_access_::<4,false>(
+    bench_mut_rwlock_multi_access_::<4, false>(
         c,
         "100 (read/write) large rwlock (parking_lot) access  / 4 concurent accesses time sum",
     )
 }
 
 fn bench_mut_rwlock_multi_access_8(c: &mut Criterion) {
-    bench_mut_rwlock_multi_access_::<8,false>(
+    bench_mut_rwlock_multi_access_::<8, false>(
         c,
         "100 (read/write) large rwlock (parking_lot) access  / 8 concurent accesses time sum",
     )
 }
 fn bench_mut_rwlock_multi_access_16(c: &mut Criterion) {
-    bench_mut_rwlock_multi_access_::<16,false>(
+    bench_mut_rwlock_multi_access_::<16, false>(
         c,
         "100 (read/write) large rwlock (parking_lot) access  / 16 concurent accesses time sum",
     )
 }
 fn bench_mut_rwlock_multi_init_access_4(c: &mut Criterion) {
-    bench_mut_rwlock_multi_access_::<4,true>(
+    bench_mut_rwlock_multi_access_::<4, true>(
         c,
         "init then read large rwlock (parking_lot) access  / 4 concurent accesses time sum",
     )
 }
 
 fn bench_mut_rwlock_multi_init_access_8(c: &mut Criterion) {
-    bench_mut_rwlock_multi_access_::<8,true>(
+    bench_mut_rwlock_multi_access_::<8, true>(
         c,
         "init then read large rwlock (parking_lot) access  / 8 concurent accesses time sum",
     )
 }
 fn bench_mut_rwlock_multi_init_access_16(c: &mut Criterion) {
-    bench_mut_rwlock_multi_access_::<16,true>(
+    bench_mut_rwlock_multi_access_::<16, true>(
         c,
         "init then read large rwlock (parking_lot) access  / 16 concurent accesses time sum",
     )
 }
 
-fn bench_mut_lazy_multi_fast_access_<const NT: usize, const INIT_THEN_READ: bool>(c: &mut Criterion, name: &str) {
+fn bench_mut_lazy_multi_fast_access_<const NT: usize, const INIT_THEN_READ: bool>(
+    c: &mut Criterion,
+    name: &str,
+) {
     const ITER: usize = 100;
     static ID: [AtomicUsize; 32] = [
         AtomicUsize::new(0),
@@ -629,7 +638,7 @@ fn bench_mut_lazy_multi_fast_access_<const NT: usize, const INIT_THEN_READ: bool
             let c0 = ID[*THREAD_ID].fetch_add(1, Ordering::Relaxed);
             let mut k = 0;
             while k < ITER {
-                if (INIT_THEN_READ && k > 2) || (!INIT_THEN_READ && (k+c0)%8 > 2) {
+                if (INIT_THEN_READ && k > 2) || (!INIT_THEN_READ && (k + c0) % 8 > 2) {
                     let l = l.fast_read();
                     if let Some(l) = l {
                         let o0 = l[0];
@@ -653,8 +662,8 @@ fn bench_mut_lazy_multi_fast_access_<const NT: usize, const INIT_THEN_READ: bool
                                     let x = *v;
                                     if x != o0 + i {
                                         eprintln!(
-                                            "later read error thread {} tryal id {}, loop id {}, elem \
-                                             {}, {} ne {}",
+                                            "later read error thread {} tryal id {}, loop id {}, \
+                                             elem {}, {} ne {}",
                                             *THREAD_ID,
                                             c0,
                                             k,
@@ -682,7 +691,8 @@ fn bench_mut_lazy_multi_fast_access_<const NT: usize, const INIT_THEN_READ: bool
                             let x = *v;
                             if x != o0 + i {
                                 eprintln!(
-                                    "at write thread {} tryial id {}, loop id {}, elem {}, {} ne {}",
+                                    "at write thread {} tryial id {}, loop id {}, elem {}, {} ne \
+                                     {}",
                                     *THREAD_ID,
                                     c0,
                                     k,
@@ -706,26 +716,29 @@ fn bench_mut_lazy_multi_fast_access_<const NT: usize, const INIT_THEN_READ: bool
 }
 
 fn bench_mut_lazy_multi_fast_access_4(c: &mut Criterion) {
-    bench_mut_lazy_multi_fast_access_::<4,false>(
+    bench_mut_lazy_multi_fast_access_::<4, false>(
         c,
         "100 (read/write) large mut lazy fast access  / 4 concurent accesses time sum",
     )
 }
 fn bench_mut_lazy_multi_fast_access_8(c: &mut Criterion) {
-    bench_mut_lazy_multi_fast_access_::<8,false>(
+    bench_mut_lazy_multi_fast_access_::<8, false>(
         c,
         "100 (read/write) large mut lazy fast access  / 8 concurent accesses time sum",
     )
 }
 
 fn bench_mut_lazy_multi_fast_access_16(c: &mut Criterion) {
-    bench_mut_lazy_multi_fast_access_::<16,false>(
+    bench_mut_lazy_multi_fast_access_::<16, false>(
         c,
         "100 (read/write) large mut lazy fast access  / 16 concurent accesses time sum",
     )
 }
 
-fn bench_rwlock_multi_fast_access_<const NT: usize,const INIT_THEN_READ: bool>(c: &mut Criterion, name: &str) {
+fn bench_rwlock_multi_fast_access_<const NT: usize, const INIT_THEN_READ: bool>(
+    c: &mut Criterion,
+    name: &str,
+) {
     const ITER: usize = 100;
     static ID: [AtomicUsize; 32] = [
         AtomicUsize::new(0),
@@ -773,7 +786,7 @@ fn bench_rwlock_multi_fast_access_<const NT: usize,const INIT_THEN_READ: bool>(c
             let c0 = ID[*THREAD_ID].fetch_add(1, Ordering::Relaxed);
             let mut k = 0;
             while k < ITER {
-                if (INIT_THEN_READ && k > 2) || (!INIT_THEN_READ && (k+c0)%8 > 2) {
+                if (INIT_THEN_READ && k > 2) || (!INIT_THEN_READ && (k + c0) % 8 > 2) {
                     let l = l.try_read();
                     if let Some(l) = l {
                         let o0 = l[0];
@@ -800,7 +813,7 @@ fn bench_rwlock_multi_fast_access_<const NT: usize,const INIT_THEN_READ: bool>(c
                             }
                             *v = i + k * 1000 + 1000000 * c0 + *THREAD_ID * 1_000_000_000;
                         }
-                        k+=1;
+                        k += 1;
                     } else {
                         std::thread::yield_now()
                     }
@@ -812,69 +825,69 @@ fn bench_rwlock_multi_fast_access_<const NT: usize,const INIT_THEN_READ: bool>(c
 }
 
 fn bench_rwlock_multi_fast_access_4(c: &mut Criterion) {
-    bench_rwlock_multi_fast_access_::<4,false>(
+    bench_rwlock_multi_fast_access_::<4, false>(
         c,
         "100 (read/write) large rwlock (parking_lot) fast access  / 4 concurent accesses time sum",
     )
 }
 
 fn bench_rwlock_multi_fast_access_8(c: &mut Criterion) {
-    bench_rwlock_multi_fast_access_::<8,false>(
+    bench_rwlock_multi_fast_access_::<8, false>(
         c,
         "100 (read/write) large rwlock (parking_lot) fast access  / 8 concurent accesses time sum",
     )
 }
 fn bench_rwlock_multi_fast_access_16(c: &mut Criterion) {
-    bench_rwlock_multi_fast_access_::<16,false>(
+    bench_rwlock_multi_fast_access_::<16, false>(
         c,
         "100 (read/write) large rwlock (parking_lot) fast access  / 16 concurent accesses time sum",
     )
 }
 criterion_group!(name=benches; config=Criterion::default();
 targets=
-//bench_init_rwlock_1,
-//bench_init_rwlock_2,
-//bench_init_rwlock_4,
-//bench_init_rwlock_8,
-//bench_init_mut_lazy_1,
-//bench_init_mut_lazy_2,
-//bench_init_mut_lazy_4,
-//bench_init_mut_lazy_8,
-//bench_init_mut_lazy_r_1,
-//bench_init_mut_lazy_r_2,
-//bench_init_mut_lazy_r_4,
-//bench_init_mut_lazy_r_8,
-//bench_init_lazy_1,
-//bench_init_lazy_2,
-//bench_init_lazy_4,
-//bench_init_lazy_8,
-//bench_inited_lazy_access,
-//bench_inited_lazy_2,
-//bench_inited_lazy_4,
-//bench_inited_lazy_8,
-//bench_inited_mut_lazy_writelock,
-//bench_inited_mut_lazy_2,
-//bench_inited_mut_lazy_4,
-//bench_inited_mut_lazy_8,
-//bench_inited_mut_lazy_readlock,
-//bench_inited_mut_lazy_r_2,
-//bench_inited_mut_lazy_r_4,
-//bench_inited_mut_lazy_r_8,
-//bench_mut_rwlock_multi_init_access_4,
-//bench_mut_rwlock_multi_init_access_8,
-//bench_mut_rwlock_multi_init_access_16,
-//bench_mut_lazy_multi_init_access_4,
-//bench_mut_lazy_multi_init_access_8,
-//bench_mut_lazy_multi_init_access_16,
-//bench_mut_rwlock_multi_access_4,
-//bench_mut_rwlock_multi_access_8,
-//bench_mut_rwlock_multi_access_16,
+bench_init_rwlock_1,
+bench_init_rwlock_2,
+bench_init_rwlock_4,
+bench_init_rwlock_8,
+bench_init_mut_lazy_1,
+bench_init_mut_lazy_2,
+bench_init_mut_lazy_4,
+bench_init_mut_lazy_8,
+bench_init_mut_lazy_r_1,
+bench_init_mut_lazy_r_2,
+bench_init_mut_lazy_r_4,
+bench_init_mut_lazy_r_8,
+bench_init_lazy_1,
+bench_init_lazy_2,
+bench_init_lazy_4,
+bench_init_lazy_8,
+bench_inited_lazy_access,
+bench_inited_lazy_2,
+bench_inited_lazy_4,
+bench_inited_lazy_8,
+bench_inited_mut_lazy_writelock,
+bench_inited_mut_lazy_2,
+bench_inited_mut_lazy_4,
+bench_inited_mut_lazy_8,
+bench_inited_mut_lazy_readlock,
+bench_inited_mut_lazy_r_2,
+bench_inited_mut_lazy_r_4,
+bench_inited_mut_lazy_r_8,
+bench_mut_rwlock_multi_init_access_4,
+bench_mut_rwlock_multi_init_access_8,
+bench_mut_rwlock_multi_init_access_16,
+bench_mut_lazy_multi_init_access_4,
+bench_mut_lazy_multi_init_access_8,
+bench_mut_lazy_multi_init_access_16,
+bench_mut_rwlock_multi_access_4,
+bench_mut_rwlock_multi_access_8,
+bench_mut_rwlock_multi_access_16,
 bench_mut_lazy_multi_access_4,
 bench_mut_lazy_multi_access_8,
 bench_mut_lazy_multi_access_16,
-//bench_rwlock_multi_fast_access_4,
-//bench_rwlock_multi_fast_access_8,
-//bench_rwlock_multi_fast_access_16,
+bench_rwlock_multi_fast_access_4,
+bench_rwlock_multi_fast_access_8,
+bench_rwlock_multi_fast_access_16,
 bench_mut_lazy_multi_fast_access_4,
 bench_mut_lazy_multi_fast_access_8,
 bench_mut_lazy_multi_fast_access_16,

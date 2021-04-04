@@ -22,12 +22,11 @@ impl<'a, T> Deref for UnSyncPhaseGuard<'a, T> {
     }
 }
 
-impl<'a,T> Phased for UnSyncPhaseGuard<'a,T> {
+impl<'a, T> Phased for UnSyncPhaseGuard<'a, T> {
     fn phase(this: &Self) -> Phase {
         this.2
     }
 }
-
 
 impl<'a, T: ?Sized> UnSyncPhaseGuard<'a, T> {
     #[inline(always)]
@@ -36,8 +35,8 @@ impl<'a, T: ?Sized> UnSyncPhaseGuard<'a, T> {
     }
 
     #[inline(always)]
-    pub fn map<S:?Sized>(self, f: impl Fn(&'a T) -> &'a S) -> UnSyncPhaseGuard<'a,S> {
-        let p = UnSyncPhaseGuard(f(self.0),self.1,self.2);
+    pub fn map<S: ?Sized>(self, f: impl Fn(&'a T) -> &'a S) -> UnSyncPhaseGuard<'a, S> {
+        let p = UnSyncPhaseGuard(f(self.0), self.1, self.2);
         forget(self);
         p
     }
@@ -71,7 +70,7 @@ unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for UnSyncPhaseGuard<'a, T> {
 }
 impl<'a, T: ?Sized> From<UnSyncPhaseGuard<'a, T>> for UnSyncReadPhaseGuard<'a, T> {
     #[inline(always)]
-    fn from(l: UnSyncPhaseGuard<'a,T>) -> UnSyncReadPhaseGuard<'a, T> {
+    fn from(l: UnSyncPhaseGuard<'a, T>) -> UnSyncReadPhaseGuard<'a, T> {
         l.1.set(l.2.bits() | READER_UNITY);
         let r = UnSyncReadPhaseGuard(l.0, l.1);
         forget(l);
@@ -94,7 +93,7 @@ impl<'a, T> Deref for UnSyncReadPhaseGuard<'a, T> {
     }
 }
 
-impl<'a,T> Phased for UnSyncReadPhaseGuard<'a,T> {
+impl<'a, T> Phased for UnSyncReadPhaseGuard<'a, T> {
     fn phase(this: &Self) -> Phase {
         this.phase()
     }
@@ -110,8 +109,8 @@ impl<'a, T: ?Sized> UnSyncReadPhaseGuard<'a, T> {
         Phase::from_bits_truncate(self.1.get())
     }
     #[inline(always)]
-    pub fn map<S:?Sized>(self, f: impl Fn(&'a T) -> &'a S) -> UnSyncReadPhaseGuard<'a,S> {
-        let p = UnSyncReadPhaseGuard(f(self.0),self.1);
+    pub fn map<S: ?Sized>(self, f: impl Fn(&'a T) -> &'a S) -> UnSyncReadPhaseGuard<'a, S> {
+        let p = UnSyncReadPhaseGuard(f(self.0), self.1);
         forget(self);
         p
     }
@@ -169,10 +168,7 @@ impl UnSyncPhaseLocker {
     }
     #[inline(always)]
     /// Return a mutable phase lock
-    pub fn lock_mut<'a, T: ?Sized>(
-        &'a mut self,
-        v: &'a T,
-    ) -> UnSyncPhaseGuard<'_, T> {
+    pub fn lock_mut<'a, T: ?Sized>(&'a mut self, v: &'a T) -> UnSyncPhaseGuard<'_, T> {
         self.0.set(self.0.get() | LOCKED_BIT);
         UnSyncPhaseGuard::new(v, &self.0)
     }

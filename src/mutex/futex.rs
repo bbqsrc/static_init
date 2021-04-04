@@ -3,12 +3,10 @@
     any(target_os = "linux", target_os = "android")
 ))]
 mod linux {
-    use core::ptr;
     use core::ops::Deref;
+    use core::ptr;
     use core::sync::atomic::AtomicU32;
-    use libc::{
-        syscall, SYS_futex, FUTEX_PRIVATE_FLAG, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET,
-    };
+    use libc::{syscall, SYS_futex, FUTEX_PRIVATE_FLAG, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET};
 
     pub(crate) struct Futex {
         futex: AtomicU32,
@@ -73,7 +71,6 @@ mod linux {
                 ) == 1
             }
         }
-
     }
     impl Deref for Futex {
         type Target = AtomicU32;

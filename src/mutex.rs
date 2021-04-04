@@ -10,7 +10,6 @@ mod unsync_phase_locker;
 pub use unsync_phase_locker::UnSyncPhaseLocker;
 pub use unsync_phase_locker::{UnSyncPhaseGuard, UnSyncReadPhaseGuard};
 
-
 use super::Phase;
 
 /// A phase guard ensure that the target object will
@@ -65,4 +64,3 @@ pub enum LockResult<R, W> {
     Write(W),
     None(Phase),
 }
-

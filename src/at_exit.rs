@@ -23,7 +23,7 @@ mod exit_manager {
 
     /// A sequentializer that store finalize_callback  
     /// for execution at program exit
-    pub struct ExitSequentializer<const INIT_ON_REF_FAILURE:bool>(ExitSequentializerBase);
+    pub struct ExitSequentializer<const INIT_ON_REF_FAILURE: bool>(ExitSequentializerBase);
 
     mod reg {
 
@@ -61,7 +61,7 @@ mod exit_manager {
         /// finalize call back at program exit
         pub fn finalize_at_exit<
             T: 'static + Sequential<Sequentializer = ExitSequentializer<IRF>> + Sync,
-            const IRF:bool,
+            const IRF: bool,
         >(
             st: &'static T,
         ) -> bool
@@ -85,15 +85,14 @@ mod exit_manager {
     }
     pub use reg::finalize_at_exit;
 
-   
     #[allow(clippy::declare_interior_mutable_const)]
-    /// This object is only used to be copied 
+    /// This object is only used to be copied
     const GLOBAL_INIT: ExitSequentializerBase = ExitSequentializerBase {
         sub:  SubSequentializer::new(),
         next: Mutex::new(None),
     };
 
-    impl<const IRF:bool> ExitSequentializer<IRF> {
+    impl<const IRF: bool> ExitSequentializer<IRF> {
         /// Create a new ExitSequentializer
         ///
         /// Useless if the target object is not 'static
@@ -102,25 +101,25 @@ mod exit_manager {
         }
     }
 
-    impl<const IRF:bool> AsRef<SubSequentializer> for ExitSequentializer<IRF> {
+    impl<const IRF: bool> AsRef<SubSequentializer> for ExitSequentializer<IRF> {
         fn as_ref(&self) -> &SubSequentializer {
             &self.0.sub
         }
     }
-    impl<const IRF:bool> AsMut<SubSequentializer> for ExitSequentializer<IRF> {
+    impl<const IRF: bool> AsMut<SubSequentializer> for ExitSequentializer<IRF> {
         fn as_mut(&mut self) -> &mut SubSequentializer {
             &mut self.0.sub
         }
     }
 
-    impl<const IRF:bool> Phased for ExitSequentializer<IRF> {
+    impl<const IRF: bool> Phased for ExitSequentializer<IRF> {
         fn phase(this: &Self) -> Phase {
             Phased::phase(&this.0.sub)
         }
     }
     // SAFETY: it is safe because it does implement synchronized locks
-    unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>, const IRF:bool> Sequentializer<'a, T>
-        for ExitSequentializer<IRF>
+    unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>, const IRF: bool>
+        Sequentializer<'a, T> for ExitSequentializer<IRF>
     where
         T: 'static + Sync,
         T::Data: 'static + Finaly,
@@ -139,16 +138,14 @@ mod exit_manager {
         ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>> {
             <SubSequentializer as Sequentializer<T>>::try_lock(st, lock_nature)
         }
-        fn lock_mut(
-            st: &'a mut T,
-        ) -> SyncPhaseGuard<'a, T::Data> {
+        fn lock_mut(st: &'a mut T) -> SyncPhaseGuard<'a, T::Data> {
             <SubSequentializer as Sequentializer<T>>::lock_mut(st)
         }
     }
 
     // SAFETY: it is safe because it does implement synchronized locks
-    unsafe impl<T: 'static + Sequential<Sequentializer = Self>, const IRF:bool> LazySequentializer<'static, T>
-        for ExitSequentializer<IRF>
+    unsafe impl<T: 'static + Sequential<Sequentializer = Self>, const IRF: bool>
+        LazySequentializer<'static, T> for ExitSequentializer<IRF>
     where
         T: 'static + Sync,
         T::Data: 'static + Finaly,
@@ -173,11 +170,7 @@ mod exit_manager {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Phase {
-            <SubSequentializer as LazySequentializer<T>>::init_unique(
-                st,
-                shall_init,
-                init,
-            )
+            <SubSequentializer as LazySequentializer<T>>::init_unique(st, shall_init, init)
         }
         #[inline(always)]
         fn init_then_read_guard(
@@ -237,7 +230,7 @@ mod exit_manager {
         }
     }
 
-    impl<T: Sequential<Sequentializer = ExitSequentializer<IRF>>,const IRF:bool> OnExit for T
+    impl<T: Sequential<Sequentializer = ExitSequentializer<IRF>>, const IRF: bool> OnExit for T
     where
         T::Data: 'static + Finaly,
     {
@@ -287,41 +280,43 @@ mod local_manager {
     #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
     /// A sequentializer that store finalize_callback  
     /// for execution at thread exit
-    pub struct ThreadExitSequentializer<const INIT_ON_REF_FAILURE: bool>(ThreadExitSequentializerBase); 
+    pub struct ThreadExitSequentializer<const INIT_ON_REF_FAILURE: bool>(
+        ThreadExitSequentializerBase,
+    );
 
     #[allow(clippy::declare_interior_mutable_const)]
-    /// This object is only used to be copied 
+    /// This object is only used to be copied
     const LOCAL_INIT: ThreadExitSequentializerBase = ThreadExitSequentializerBase {
         sub:  SubSequentializer::new(),
         next: Cell::new(None),
     };
 
-    impl<const IRF:bool> ThreadExitSequentializer<IRF> {
+    impl<const IRF: bool> ThreadExitSequentializer<IRF> {
         /// Useless if the target object is not a static thread_local
         pub const fn new() -> Self {
             Self(LOCAL_INIT)
         }
     }
 
-    impl<const IRF:bool> AsRef<SubSequentializer> for ThreadExitSequentializer<IRF> {
+    impl<const IRF: bool> AsRef<SubSequentializer> for ThreadExitSequentializer<IRF> {
         fn as_ref(&self) -> &SubSequentializer {
             &self.0.sub
         }
     }
-    impl<const IRF:bool> AsMut<SubSequentializer> for ThreadExitSequentializer<IRF> {
+    impl<const IRF: bool> AsMut<SubSequentializer> for ThreadExitSequentializer<IRF> {
         fn as_mut(&mut self) -> &mut SubSequentializer {
             &mut self.0.sub
         }
     }
 
-    impl<const IRF:bool> Phased for ThreadExitSequentializer<IRF> {
+    impl<const IRF: bool> Phased for ThreadExitSequentializer<IRF> {
         fn phase(this: &Self) -> Phase {
             Phased::phase(&this.0.sub)
         }
     }
     // SAFETY: it is safe because it does implement locking panic
-    unsafe impl<'a, T: 'static + Sequential<Sequentializer = Self>,const IRF:bool> Sequentializer<'a, T>
-        for ThreadExitSequentializer<IRF>
+    unsafe impl<'a, T: 'static + Sequential<Sequentializer = Self>, const IRF: bool>
+        Sequentializer<'a, T> for ThreadExitSequentializer<IRF>
     where
         T::Data: 'static + Finaly,
     {
@@ -343,16 +338,14 @@ mod local_manager {
             <SubSequentializer as Sequentializer<T>>::try_lock(st, lock_nature)
         }
         #[inline(always)]
-        fn lock_mut(
-            st: &'a mut T,
-        ) -> UnSyncPhaseGuard<'a, T::Data> {
+        fn lock_mut(st: &'a mut T) -> UnSyncPhaseGuard<'a, T::Data> {
             <SubSequentializer as Sequentializer<T>>::lock_mut(st)
         }
     }
 
     // SAFETY: it is safe because it does implement circular initialization panic
-    unsafe impl<T: 'static + Sequential<Sequentializer = Self>,const IRF:bool> LazySequentializer<'static, T>
-        for ThreadExitSequentializer<IRF>
+    unsafe impl<T: 'static + Sequential<Sequentializer = Self>, const IRF: bool>
+        LazySequentializer<'static, T> for ThreadExitSequentializer<IRF>
     where
         T::Data: 'static + Finaly,
     {
@@ -376,11 +369,7 @@ mod local_manager {
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Phase {
-            <SubSequentializer as LazySequentializer<T>>::init_unique(
-                st,
-                shall_proceed,
-                init,
-            )
+            <SubSequentializer as LazySequentializer<T>>::init_unique(st, shall_proceed, init)
         }
         #[inline(always)]
         fn init_then_read_guard(
@@ -440,7 +429,10 @@ mod local_manager {
         }
     }
 
-    impl<T: 'static + Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,const IRF:bool> OnExit for T
+    impl<
+            T: 'static + Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,
+            const IRF: bool,
+        > OnExit for T
     where
         T::Data: 'static + Finaly,
     {
@@ -513,7 +505,10 @@ mod local_manager {
         #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
-        pub fn finalize_at_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,const IRF:bool>(
+        pub fn finalize_at_thread_exit<
+            T: Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,
+            const IRF: bool,
+        >(
             st: &'static T,
         ) -> bool
         where
@@ -582,7 +577,7 @@ mod local_manager {
         /// finalize call back at thread exit
         pub fn finalize_at_thread_exit<
             T: 'static + Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,
-            const IRF: bool
+            const IRF: bool,
         >(
             st: &'static T,
         ) -> bool
@@ -678,7 +673,10 @@ mod local_manager {
             }
             Some(key as pthread_key_t)
         }
-        fn register_on_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,const IRF:bool>(
+        fn register_on_thread_exit<
+            T: Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,
+            const IRF: bool,
+        >(
             st: &'static T,
             key: pthread_key_t,
         ) -> bool
@@ -708,7 +706,10 @@ mod local_manager {
         #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
-        pub fn finalize_at_thread_exit<T: Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,const IRF:bool>(
+        pub fn finalize_at_thread_exit<
+            T: Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,
+            const IRF: bool,
+        >(
             st: &'static T,
         ) -> bool
         where

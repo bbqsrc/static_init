@@ -1,8 +1,9 @@
-use crate::mutex::{
-     SyncPhaseGuard, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncReadPhaseGuard,
-};
+use crate::mutex::{SyncPhaseGuard, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncReadPhaseGuard};
 use crate::{
-    generic_lazy::{DropedUnInited, GenericLazy, GenericMutLazy, LazyData, LazyPolicy, UnInited, AccessError,ReadGuard,WriteGuard},
+    generic_lazy::{
+        AccessError, DropedUnInited, GenericLazy, GenericMutLazy, LazyData, LazyPolicy, ReadGuard,
+        UnInited, WriteGuard,
+    },
     splited_sequentializer::UnSyncSequentializer,
     Finaly, Generator, Phase, Phased, StaticInfo,
 };
@@ -17,7 +18,6 @@ use core::ops::{Deref, DerefMut};
 pub struct InitializedChecker;
 
 impl LazyPolicy for InitializedChecker {
-    const INIT_ON_REG_FAILURE: bool = false;
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
         p.is_empty()
@@ -34,7 +34,6 @@ impl LazyPolicy for InitializedChecker {
 
 pub struct InitializedAndNonFinalizedChecker;
 impl LazyPolicy for InitializedAndNonFinalizedChecker {
-    const INIT_ON_REG_FAILURE: bool = false;
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
         p.is_empty()
@@ -50,7 +49,6 @@ impl LazyPolicy for InitializedAndNonFinalizedChecker {
 }
 //pub struct InitializedRearmingChecker;
 //impl LazyPolicy for InitializedRearmingChecker {
-//    const INIT_ON_REG_FAILURE: bool = false;
 //    #[inline(always)]
 //    fn lock_nature(p: Phase) -> bool {
 //        if p.intersects(Phase::INITIALIZED) && !p.intersects(Phase::FINALIZED) {
@@ -61,7 +59,6 @@ impl LazyPolicy for InitializedAndNonFinalizedChecker {
 //        }
 //    }
 //}
-
 
 macro_rules! impl_lazy {
     ($tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
@@ -235,7 +232,7 @@ macro_rules! impl_lazy {
             /// Build a new static object
             ///
             /// # Safety
-            /// 
+            ///
             /// This function may be unsafe if building any thing else than a thread local object
             /// or a static will be the cause of undefined behavior
             pub const $($safe)? fn new_static(f: G) -> Self {
@@ -248,7 +245,7 @@ macro_rules! impl_lazy {
             /// Build a new static object with debug information
             ///
             /// # Safety
-            /// 
+            ///
             /// This function may be unsafe if building any thing else than a thread local object
             /// or a static will be the cause of undefined behavior
             pub const $($safe)?  fn new_static_with_info(f: G, info: StaticInfo) -> Self {
@@ -431,7 +428,8 @@ macro_rules! impl_mut_lazy {
                GenericMutLazy::try_read_lock(&self.__private)
             }
             #[inline(always)]
-            /// if the lazy is not already write locked: get a read lock if the lazy is initialized or an [AccessError]. Otherwise returns `None`
+            /// if the lazy is not already write locked: get a read lock if the lazy is initialized or an [AccessError].
+            /// Otherwise returns `None`
             pub fn fast_try_read(&$($static)? self) -> Option<Result<ReadGuard<$gd::<'_,$data>>,AccessError>> {
                GenericMutLazy::fast_try_read_lock(&self.__private)
             }
@@ -825,33 +823,22 @@ non_static_mut_debug! {MutLazy,UnInited::<T>}
 non_static_impls! {UnSyncMutLazy,UnInited::<T>}
 non_static_mut_debug! {UnSyncMutLazy,UnInited::<T>}
 
-//impl<T:Send+'static, G:Generator<T>+'static> MutLazy<T,G> {
-//    fn get_mut(&mut self) -> &mut T {
-//        self.__private.only_init_then_get_mut()
-//    }
-//    fn try_get_mut(&mut self) -> Result<&mut T,AccessError> {
-//        self.__private.only_init_then_try_get_mut()
-//    }
-//}
-//impl<T:'static, G:Generator<T>+'static> UnSyncMutLazy<T,G> {
-//    fn get_mut(&mut self) -> &mut T {
-//        self.__private.init_then_get_mut()
-//    }
-//    fn try_get_mut(&mut self) -> Result<&mut T,AccessError> {
-//        self.__private.init_then_try_get_mut()
-//    }
-//}
-
-//impl<T, G: Generator<T>> MutLazy<T, G> {
-//    fn get_mut(&mut self) -> &mut T {
-//        let p = Self::phase(&self);
-//        if p.intersects(Phase::INITIALIZED) {
-//            unsafe{&mut *self.__private.get_raw()}
-//        } else {
-//            
-//        }
-//    }
-//}
+impl<T: Send + 'static, G: Generator<T> + 'static> MutLazy<T, G> {
+    pub fn get_mut(&mut self) -> &mut T {
+        self.__private.only_init_then_get_mut()
+    }
+    pub fn try_get_mut(&mut self) -> Result<&mut T, AccessError> {
+        self.__private.try_get_mut()
+    }
+}
+impl<T: 'static, G: Generator<T> + 'static> UnSyncMutLazy<T, G> {
+    pub fn get_mut(&mut self) -> &mut T {
+        self.__private.only_init_then_get_mut()
+    }
+    pub fn try_get_mut(&mut self) -> Result<&mut T, AccessError> {
+        self.__private.try_get_mut()
+    }
+}
 
 impl<T, G> Drop for MutLazy<T, G> {
     fn drop(&mut self) {

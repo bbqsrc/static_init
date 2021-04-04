@@ -14,9 +14,9 @@ pub use static_impl::{ConstStatic, Static, __set_init_prio};
 mod static_impl {
     use super::{FinalyMode, InitMode, StaticBase, StaticInfo};
     use core::cell::UnsafeCell;
+    use core::cmp::Ordering::*;
     use core::mem::ManuallyDrop;
     use core::ops::{Deref, DerefMut};
-    use core::cmp::Ordering::*;
     /// The actual type of mutable *dynamic statics*.
     ///
     /// It implements `Deref<Target=T>` and `DerefMut`.
@@ -121,37 +121,34 @@ mod static_impl {
                     info,
                     prio = drop_prio
                 ),
-               Greater =>
-                core::panic!(
+                Greater => core::panic!(
                     "Unexpected initialization order while accessing {:#?} from drop priority {}. \
                      This is a bug of `static_init` library, please report \"
              the issue inside `static_init` repository.",
                     info,
                     drop_prio
                 ),
-               Less => (),
+                Less => (),
             }
         }
 
         if let InitMode::ProgramConstructor(prio) = &info.init_mode {
             match init_prio.cmp(&(*prio as i32)) {
-              Equal => 
-                core::panic!(
+                Equal => core::panic!(
                     "This access to variable {:#?} is not sequenced after construction of this \
                      static. Tip increase init priority of this static to a value larger than \
                      {prio} (attribute syntax: `#[dynamic(init=<prio>)]`)",
                     info,
                     prio = init_prio
                 ),
-              Greater => 
-                core::panic!(
+                Greater => core::panic!(
                     "Unexpected initialization order while accessing {:#?} from init priority {}. \
                      This is a bug of `static_init` library, please report \"
              the issue inside `static_init` repository.",
                     info,
                     init_prio,
                 ),
-              Less => ()
+                Less => (),
             }
         }
     }
@@ -176,9 +173,9 @@ mod static_impl {
         #[inline]
         /// Build an uninitialized ConstStatic
         ///
-        /// # Safety 
+        /// # Safety
         ///
-        /// The target object should be a mutable static to 
+        /// The target object should be a mutable static to
         /// ensure that all accesses to the object are unsafe.
         pub const unsafe fn uninit(info: StaticInfo) -> Self {
             Self(UnsafeCell::new(Static::uninit(info)))
@@ -190,7 +187,7 @@ mod static_impl {
         #[inline]
         /// # Safety
         ///
-        /// The reference to self should be unique. 
+        /// The reference to self should be unique.
         pub unsafe fn set_to(this: &Self, v: T) {
             Static::set_to(&mut (*this.0.get()), v)
         }
@@ -267,7 +264,7 @@ mod static_impl {
 
         #[inline]
         /// Drop the inner object
-        /// 
+        ///
         /// # Safety
         ///
         /// The object should have been previously initialized
@@ -307,7 +304,7 @@ mod static_impl {
         }
         #[inline]
         /// # Safety
-        /// 
+        ///
         /// The reference to Self should be unique
         pub unsafe fn set_to(this: &Self, v: T) {
             Static::set_to(&mut (*this.0.get()), v)

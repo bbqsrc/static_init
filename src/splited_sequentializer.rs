@@ -1,7 +1,9 @@
 use crate::mutex::{
     LockNature, LockResult, PhaseGuard, UnSyncPhaseGuard, UnSyncPhaseLocker, UnSyncReadPhaseGuard,
 };
-use crate::{Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer, LazySequentializer};
+use crate::{
+    LazySequentializer, Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer,
+};
 
 use core::hint::unreachable_unchecked;
 
@@ -87,17 +89,16 @@ impl UnSyncSequentializer {
     }
 }
 
-    impl AsRef<UnSyncSequentializer> for UnSyncSequentializer {
-        fn as_ref(&self) -> &Self {
-            self
-        }
+impl AsRef<UnSyncSequentializer> for UnSyncSequentializer {
+    fn as_ref(&self) -> &Self {
+        self
     }
-    impl AsMut<UnSyncSequentializer> for UnSyncSequentializer {
-        fn as_mut(&mut self) -> &mut Self {
-            self
-        }
+}
+impl AsMut<UnSyncSequentializer> for UnSyncSequentializer {
+    fn as_mut(&mut self) -> &mut Self {
+        self
     }
-
+}
 
 // SAFETY: it is safe because it does implement circular initialization panic
 unsafe impl<'a, T: Sequential + 'a> SplitedLazySequentializer<'a, T> for UnSyncSequentializer
@@ -135,8 +136,7 @@ where
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Phase {
-
-        let phase_guard = match <Self as Sequentializer<'a,T>>::lock(s, |p| {
+        let phase_guard = match <Self as Sequentializer<'a, T>>::lock(s, |p| {
             if shall_init(p) {
                 LockNature::Write
             } else {
@@ -158,8 +158,7 @@ where
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Phase {
-
-        let phase_guard = <Self as Sequentializer <'a,T>>::lock_mut(s);
+        let phase_guard = <Self as Sequentializer<'a, T>>::lock_mut(s);
 
         if shall_init(phase_guard.phase()) {
             let ph = lazy_initialization_only(phase_guard, init);
@@ -200,11 +199,11 @@ where
         reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
     ) -> Self::WriteGuard {
-
         match Self::whole_lock(s, |_| LockNature::Write) {
             LockResult::Write(l) => {
                 if shall_init(l.phase()) {
-                    lazy_initialization(l, init, reg, init_on_reg_failure).map(|s| Sequential::data(s))
+                    lazy_initialization(l, init, reg, init_on_reg_failure)
+                        .map(|s| Sequential::data(s))
                 } else {
                     l.map(|s| Sequential::data(s))
                 }
@@ -248,7 +247,8 @@ where
         Self::try_whole_lock(s, |_| LockNature::Write).map(|l| match l {
             LockResult::Write(l) => {
                 if shall_init(l.phase()) {
-                    lazy_initialization(l, init, reg, init_on_reg_failure).map(|s| Sequential::data(s))
+                    lazy_initialization(l, init, reg, init_on_reg_failure)
+                        .map(|s| Sequential::data(s))
                 } else {
                     l.map(|s| Sequential::data(s))
                 }
@@ -285,16 +285,13 @@ where
     T::Sequentializer: AsRef<UnSyncSequentializer>,
     T::Sequentializer: AsMut<UnSyncSequentializer>,
 {
-
     #[inline(always)]
     fn init(
         s: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Phase {
-
-        <Self as SplitedLazySequentializer<'a,T>>::only_init(s,shall_init,init)
-
+        <Self as SplitedLazySequentializer<'a, T>>::only_init(s, shall_init, init)
     }
 
     #[inline(always)]
@@ -303,9 +300,7 @@ where
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Phase {
-
-        <Self as SplitedLazySequentializer<'a,T>>::only_init_unique(s,shall_init,init)
-
+        <Self as SplitedLazySequentializer<'a, T>>::only_init_unique(s, shall_init, init)
     }
 
     #[inline(always)]
@@ -314,8 +309,7 @@ where
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Self::ReadGuard {
-
-        match <Self as Sequentializer<'a,T>>::lock(s, |p| {
+        match <Self as Sequentializer<'a, T>>::lock(s, |p| {
             if shall_init(p) {
                 LockNature::Write
             } else {
@@ -336,8 +330,7 @@ where
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Self::WriteGuard {
-
-        match  <Self as Sequentializer<'a,T>>::lock(s, |_| LockNature::Write) {
+        match <Self as Sequentializer<'a, T>>::lock(s, |_| LockNature::Write) {
             LockResult::Write(l) => {
                 if shall_init(l.phase()) {
                     lazy_initialization_only(l, init)
@@ -355,7 +348,7 @@ where
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Option<Self::ReadGuard> {
-        <Self as Sequentializer<'a,T>>::try_lock(s, |p| {
+        <Self as Sequentializer<'a, T>>::try_lock(s, |p| {
             if shall_init(p) {
                 LockNature::Write
             } else {
@@ -377,7 +370,7 @@ where
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Option<Self::WriteGuard> {
-        <Self as Sequentializer<'a,T>>::try_lock(s, |_| LockNature::Write).map(|l| match l {
+        <Self as Sequentializer<'a, T>>::try_lock(s, |_| LockNature::Write).map(|l| match l {
             LockResult::Write(l) => {
                 if shall_init(l.phase()) {
                     lazy_initialization_only(l, init)
@@ -389,12 +382,13 @@ where
             LockResult::None(_) => unsafe { unreachable_unchecked() },
         })
     }
-
 }
 
 mod global_once {
-    use super::{lazy_finalization, lazy_initialization, lazy_initialization_only };
-    use super::{Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer,LazySequentializer};
+    use super::{lazy_finalization, lazy_initialization, lazy_initialization_only};
+    use super::{
+        LazySequentializer, Phase, Phased, Sequential, Sequentializer, SplitedLazySequentializer,
+    };
     use crate::mutex::{
         LockNature, LockResult, PhaseGuard, SyncPhaseGuard, SyncPhasedLocker as PhasedLocker,
         SyncReadPhaseGuard,
@@ -501,7 +495,6 @@ mod global_once {
             s: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
         ) -> LockResult<SyncReadPhaseGuard<'a, T::Data>, SyncPhaseGuard<'a, T::Data>> {
-
             let this = Sequential::sequentializer(s).as_ref();
 
             let data = Sequential::data(s);
@@ -518,7 +511,6 @@ mod global_once {
             s: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
         ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>> {
-
             let this = Sequential::sequentializer(s).as_ref();
 
             let data = Sequential::data(s);
@@ -528,24 +520,21 @@ mod global_once {
         }
 
         fn lock_mut(s: &'a mut T) -> SyncPhaseGuard<'a, T::Data> {
-
             let (that, data) = Sequential::sequentializer_data_mut(s);
 
             that.as_mut().0.lock_mut(data)
         }
     }
 
-    impl SyncSequentializer
-    {
+    impl SyncSequentializer {
         fn whole_lock<'a, T: Sequential + 'a>(
             s: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
-        ) -> LockResult<SyncReadPhaseGuard<'a, T>, SyncPhaseGuard<'a, T>> 
+        ) -> LockResult<SyncReadPhaseGuard<'a, T>, SyncPhaseGuard<'a, T>>
         where
             T::Sequentializer: AsRef<SyncSequentializer>,
             T::Sequentializer: AsMut<SyncSequentializer>,
         {
-
             let this = Sequential::sequentializer(s).as_ref();
 
             this.0.lock(
@@ -559,12 +548,11 @@ mod global_once {
         fn try_whole_lock<'a, T: Sequential + 'a>(
             s: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
-        ) -> Option<LockResult<SyncReadPhaseGuard<'a, T>, SyncPhaseGuard<'a, T>>> 
+        ) -> Option<LockResult<SyncReadPhaseGuard<'a, T>, SyncPhaseGuard<'a, T>>>
         where
             T::Sequentializer: AsRef<SyncSequentializer>,
             T::Sequentializer: AsMut<SyncSequentializer>,
         {
-
             let this = Sequential::sequentializer(s).as_ref();
 
             this.0
@@ -629,7 +617,6 @@ mod global_once {
             reg: impl FnOnce(&'a T) -> bool,
             init_on_reg_failure: bool,
         ) -> Phase {
-
             let this = Sequential::sequentializer(s).as_ref();
 
             let phase_guard = match this.0.lock(
@@ -662,7 +649,6 @@ mod global_once {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> Phase {
-
             let this = Sequential::sequentializer(s).as_ref();
 
             let phase_guard = match this.0.lock(
@@ -695,8 +681,7 @@ mod global_once {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> Phase {
-
-            let phase_guard = <Self as Sequentializer <'a,T>>::lock_mut(s);
+            let phase_guard = <Self as Sequentializer<'a, T>>::lock_mut(s);
 
             if shall_init(phase_guard.phase()) {
                 let ph = lazy_initialization_only(phase_guard, init);
@@ -748,17 +733,16 @@ mod global_once {
             init_on_reg_failure: bool,
         ) -> Self::WriteGuard {
             match Self::whole_lock(s, |_| LockNature::Write) {
-                LockResult::Write(l) => {
-                    if shall_init(l.phase()) {
-                        debug_test(s);
-                        debug_save_thread(s);
-                        let l = lazy_initialization(l, init, reg, init_on_reg_failure);
-                        debug_thread_zero(s);
-                        l
-                    } else {
-                        l
-                    }.map(|s| Sequential::data(s))
+                LockResult::Write(l) => if shall_init(l.phase()) {
+                    debug_test(s);
+                    debug_save_thread(s);
+                    let l = lazy_initialization(l, init, reg, init_on_reg_failure);
+                    debug_thread_zero(s);
+                    l
+                } else {
+                    l
                 }
+                .map(|s| Sequential::data(s)),
                 LockResult::Read(_) => unsafe { unreachable_unchecked() },
                 LockResult::None(_) => unsafe { unreachable_unchecked() },
             }
@@ -807,17 +791,16 @@ mod global_once {
             init_on_reg_failure: bool,
         ) -> Option<Self::WriteGuard> {
             Self::try_whole_lock(s, |_| LockNature::Write).map(|l| match l {
-                LockResult::Write(l) => {
-                    if shall_init(l.phase()) {
-                        debug_test(s);
-                        debug_save_thread(s);
-                        let l = lazy_initialization(l, init, reg, init_on_reg_failure);
-                        debug_thread_zero(s);
-                        l
-                    } else {
-                        l
-                    }.map(|s| Sequential::data(s))
+                LockResult::Write(l) => if shall_init(l.phase()) {
+                    debug_test(s);
+                    debug_save_thread(s);
+                    let l = lazy_initialization(l, init, reg, init_on_reg_failure);
+                    debug_thread_zero(s);
+                    l
+                } else {
+                    l
                 }
+                .map(|s| Sequential::data(s)),
                 LockResult::Read(_) => unsafe { unreachable_unchecked() },
                 LockResult::None(_) => unsafe { unreachable_unchecked() },
             })
@@ -875,9 +858,7 @@ mod global_once {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> Phase {
-
-            <Self as SplitedLazySequentializer<'a,T>>::only_init(s,shall_init,init)
-
+            <Self as SplitedLazySequentializer<'a, T>>::only_init(s, shall_init, init)
         }
 
         #[inline(always)]
@@ -886,9 +867,7 @@ mod global_once {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> Phase {
-
-            <Self as SplitedLazySequentializer<'a,T>>::only_init_unique(s,shall_init,init)
-
+            <Self as SplitedLazySequentializer<'a, T>>::only_init_unique(s, shall_init, init)
         }
 
         #[inline(always)]
@@ -897,7 +876,6 @@ mod global_once {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> Self::ReadGuard {
-
             let this = Sequential::sequentializer(s).as_ref();
 
             match this.0.lock(
@@ -929,7 +907,7 @@ mod global_once {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> Self::WriteGuard {
-            match <Self as Sequentializer<'a,T>>::lock(s, |_| LockNature::Write) {
+            match <Self as Sequentializer<'a, T>>::lock(s, |_| LockNature::Write) {
                 LockResult::Write(l) => {
                     if shall_init(l.phase()) {
                         debug_test(s);
@@ -984,7 +962,7 @@ mod global_once {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> Option<Self::WriteGuard> {
-            <Self as Sequentializer<'a,T>>::try_lock(s, |_| LockNature::Write).map(|l| match l {
+            <Self as Sequentializer<'a, T>>::try_lock(s, |_| LockNature::Write).map(|l| match l {
                 LockResult::Write(l) => {
                     if shall_init(l.phase()) {
                         debug_test(s);
@@ -1007,24 +985,17 @@ pub use global_once::SyncSequentializer;
 
 #[inline]
 #[cold]
-fn lazy_initialization_only<'a, T:'a, P: PhaseGuard<'a, T>>(
+fn lazy_initialization_only<'a, T: 'a, P: PhaseGuard<'a, T>>(
     mut phase_guard: P,
     init: impl FnOnce(&'a T),
-) -> P
-{
+) -> P {
     let cur = phase_guard.phase();
 
     let initialized = cur | Phase::INITIALIZED;
 
-    let initialization_panic = cur
-        | Phase::INITIALIZATION_PANICKED
-        | Phase::INITIALIZATION_SKIPED;
+    let initialization_panic = cur | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED;
 
-    unsafe {phase_guard.transition(
-        init,
-        initialized,
-        initialization_panic,
-    )};
+    unsafe { phase_guard.transition(init, initialized, initialization_panic) };
 
     phase_guard
 }
@@ -1046,7 +1017,7 @@ where
 
     let registration_failed = cur | Phase::REGISTRATION_PANICKED | Phase::INITIALIZATION_SKIPED;
 
-    let cond = unsafe {phase_guard.transition(reg, registration_finished, registration_failed)};
+    let cond = unsafe { phase_guard.transition(reg, registration_finished, registration_failed) };
 
     if cond {
         let initialized = registration_finished | Phase::REGISTERED | Phase::INITIALIZED;
@@ -1056,11 +1027,13 @@ where
             | Phase::INITIALIZATION_PANICKED
             | Phase::INITIALIZATION_SKIPED;
 
-        unsafe {phase_guard.transition(
-            |s| init(Sequential::data(s)),
-            initialized,
-            initialization_panic,
-        )};
+        unsafe {
+            phase_guard.transition(
+                |s| init(Sequential::data(s)),
+                initialized,
+                initialization_panic,
+            )
+        };
     } else if init_on_reg_failure {
         let initialized = registration_finished | Phase::REGISTRATION_REFUSED | Phase::INITIALIZED;
 
@@ -1069,16 +1042,18 @@ where
             | Phase::INITIALIZATION_PANICKED
             | Phase::INITIALIZATION_SKIPED;
 
-        unsafe {phase_guard.transition(
-            |s| init(Sequential::data(s)),
-            initialized,
-            initialization_panic,
-        )};
+        unsafe {
+            phase_guard.transition(
+                |s| init(Sequential::data(s)),
+                initialized,
+                initialization_panic,
+            )
+        };
     } else {
         let no_init =
             registration_finished | Phase::REGISTRATION_REFUSED | Phase::INITIALIZATION_SKIPED;
 
-        unsafe {phase_guard.set_phase(no_init)};
+        unsafe { phase_guard.set_phase(no_init) };
     }
     phase_guard
 }
@@ -1090,5 +1065,5 @@ fn lazy_finalization<'a, T: 'a, P: PhaseGuard<'a, T>>(mut phase_guard: P, f: imp
 
     let finalizing_failed = cur | Phase::FINALIZATION_PANICKED;
 
-    unsafe{phase_guard.transition(f, finalizing_success, finalizing_failed)};
+    unsafe { phase_guard.transition(f, finalizing_success, finalizing_failed) };
 }

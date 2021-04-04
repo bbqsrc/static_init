@@ -832,16 +832,15 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             }
         }
     } else if stat.mutability.is_none() {
-            parse_quote! {
-                ::static_init::lazy::Lazy::<#stat_typ>
-            }
-        } else {
-            into_immutable!();
-            parse_quote! {
-                ::static_init::lazy::MutLazy::<#stat_typ>
-            }
-   };
-    
+        parse_quote! {
+            ::static_init::lazy::Lazy::<#stat_typ>
+        }
+    } else {
+        into_immutable!();
+        parse_quote! {
+            ::static_init::lazy::MutLazy::<#stat_typ>
+        }
+    };
 
     let sp = stat.expr.span();
 
