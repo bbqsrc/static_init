@@ -18,7 +18,10 @@ pub trait LazyPolicy {
     const INIT_ON_REG_FAILURE: bool;
     /// shall the initialization be performed (tested at each access)
     fn shall_init(_: Phase) -> bool;
-    fn is_accessible(_: Phase) -> bool;
+    /// Is the object accessible in phase `p`
+    fn is_accessible(p: Phase) -> bool;
+    /// If the object is known to already be initialized, is the object accessible in phase `p`
+    fn initialized_is_accessible(p: Phase) -> bool;
 }
 
 /// Generic lazy interior data storage, uninitialized with interior mutability data storage
@@ -92,26 +95,49 @@ impl Display for AccessError {
 #[cfg(feature="parking_lot_core")]
 impl std::error::Error for AccessError {}
 
+pub struct GenericLazySeq<T, M> {
+    value:          T,
+    sequentializer:      M,
+}
+
+pub struct GenericLazyMutSeq <T, M> {
+    value:              T,
+    sequentializer:      M,
+}
+
 /// A type that wrap a Sequentializer and a raw data, and that may
 /// initialize the data, at each access depending on the LazyPolicy
 /// provided as generic argument.
 pub struct GenericLazy<T, F, M, S> {
-    value:          T,
+    seq: GenericLazySeq<T,M>,
     generator:      F,
-    sequentializer: M,
     phantom:        PhantomData<S>,
     #[cfg(debug_mode)]
     _info:          Option<StaticInfo>,
 }
+
 // SAFETY: The synchronization is ensured by the Sequentializer
 //  1. GenericLazy fullfill the requirement that its sequentializer is a field
 //  of itself as is its target data.
 //  2. The sequentializer ensure that the initialization is atomic
-unsafe impl<T: LazyData, F: Sync, M: Sync, S> Sync for GenericLazy<T, F, M, S> where
+unsafe impl<T: LazyData,M: Sync> Sync for GenericLazySeq<T, M> where
     <T as LazyData>::Target: Sync
 {
 }
-unsafe impl<T: LazyData, F: Sync, M: Sync, S> Send for GenericLazy<T, F, M, S> where
+unsafe impl<T: LazyData, M: Sync> Send for GenericLazySeq<T,M> where
+    <T as LazyData>::Target: Send
+{
+}
+
+// SAFETY: The synchronization is ensured by the Sequentializer
+//  1. GenericLazy fullfill the requirement that its sequentializer is a field
+//  of itself as is its target data.
+//  2. The sequentializer ensure that the initialization is atomic
+unsafe impl<T: LazyData,M: Sync> Sync for GenericLazyMutSeq<T, M> where
+    <T as LazyData>::Target: Send
+{
+}
+unsafe impl<T: LazyData, M: Sync> Send for GenericLazyMutSeq<T,M> where
     <T as LazyData>::Target: Send
 {
 }
@@ -126,9 +152,8 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
     ///  2. The finalization is run only if the object was previously initialized
     pub const unsafe fn new(generator: F, sequentializer: M, value: T) -> Self {
         Self {
-            value,
+            seq: GenericLazySeq{value, sequentializer},
             generator,
-            sequentializer,
             phantom: PhantomData,
             #[cfg(debug_mode)]
             _info: None,
@@ -149,9 +174,8 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
         _info: StaticInfo,
     ) -> Self {
         Self {
-            value,
+            seq: GenericLazySeq{value, sequentializer},
             generator,
-            sequentializer,
             phantom: PhantomData,
             #[cfg(debug_mode)]
             _info: Some(_info),
@@ -160,19 +184,19 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
     #[inline(always)]
     ///get access to the sequentializer
     pub fn sequentializer(this: &Self) -> &M {
-        &this.sequentializer
+        &this.seq.sequentializer
     }
     #[inline(always)]
     ///get a pointer to the raw data
     pub fn get_raw_data(this: &Self) -> &T {
-        &this.value
+        &this.seq.value
     }
 }
 impl<'a,T, F, M, S> GenericLazy<T, F, M, S>
     where
         T: 'static + LazyData,
         M: 'static,
-        M: LazySequentializer<'a, Self>,
+        M: LazySequentializer<'a, GenericLazySeq<T,M>>,
         F: 'static + Generator<T::Target>,
         S: 'static + LazyPolicy,
     {
@@ -181,14 +205,16 @@ impl<'a,T, F, M, S> GenericLazy<T, F, M, S>
     /// # Safety
     ///
     /// Undefined behaviour if the referenced value has not been initialized
+    #[inline(always)]
     pub unsafe fn get_unchecked(&'a self) -> &'a T::Target {
-        &*self.value.get()
+        &*self.seq.value.get()
     }
 
     /// Get a reference to the target, returning an error if the
     /// target is not in the correct phase.
+    #[inline(always)]
     pub fn try_get(&'a self) -> Result<&'a T::Target,AccessError> {
-        check_access::<*mut T::Target,S>(self.value.get(),Phased::phase(&self.sequentializer)).map(|ptr| unsafe{&*ptr})
+        check_access::<*mut T::Target,S>(self.seq.value.get(),Phased::phase(&self.seq.sequentializer)).map(|ptr| unsafe{&*ptr})
     }
 
     /// Get a reference to the target
@@ -196,6 +222,7 @@ impl<'a,T, F, M, S> GenericLazy<T, F, M, S>
     /// # Panics
     ///
     /// Panic if the target is not in the correct phase
+    #[inline(always)]
     pub fn get(&'a self) -> &'a T::Target {
         self.try_get().unwrap()
     }
@@ -205,14 +232,16 @@ impl<'a,T, F, M, S> GenericLazy<T, F, M, S>
     /// # Safety
     ///
     /// Undefined behaviour if the referenced value has not been initialized
+    #[inline(always)]
     pub unsafe fn get_mut_unchecked(&'a mut self) -> &'a mut T::Target {
-        &mut *self.value.get()
+        &mut *self.seq.value.get()
     }
 
     /// Get a mutable reference to the target, returning an error if the
     /// target is not in the correct phase.
-    pub fn try_get_mut(&'a self) -> Result<&'a mut T::Target,AccessError> {
-        check_access::<*mut T::Target,S>(self.value.get(),Phased::phase(&self.sequentializer)).map(|ptr| unsafe{&mut *ptr})
+    #[inline(always)]
+    pub fn try_get_mut(&'a mut self) -> Result<&'a mut T::Target,AccessError> {
+        check_access::<*mut T::Target,S>(self.seq.value.get(),Phased::phase(&self.seq.sequentializer)).map(|ptr| unsafe{&mut *ptr})
     }
 
     /// Get a reference to the target
@@ -220,6 +249,7 @@ impl<'a,T, F, M, S> GenericLazy<T, F, M, S>
     /// # Panics
     ///
     /// Panic if the target is not in the correct phase
+    #[inline(always)]
     pub fn get_mut(&'a mut self) -> &'a mut T::Target {
         self.try_get_mut().unwrap()
     }
@@ -229,40 +259,23 @@ impl<'a,T, F, M, S> GenericLazy<T, F, M, S>
     /// # Safety
     ///
     /// Undefined behaviour if the referenced value has not been initialized
+    #[inline(always)]
     pub unsafe fn init_then_get_unchecked(&'a self) -> &'a T::Target {
         self.init();
         self.get_unchecked()
     }
     /// Attempt initialization then get a reference to the target, returning an error if the
     /// target is not in the correct phase.
+    #[inline(always)]
     pub fn init_then_try_get(&'a self) -> Result<&'a T::Target, AccessError> {
         let phase = self.init();
-        check_access::<*mut T::Target,S>(self.value.get(), phase).map(|ptr| unsafe{&*ptr})
+        check_access::<*mut T::Target,S>(self.seq.value.get(), phase).map(|ptr| unsafe{&*ptr})
     }
     /// Attempt initialization then get a reference to the target, returning an error if the
     /// target is not in the correct phase.
+    #[inline(always)]
     pub fn init_then_get(&'a self) -> &'a T::Target {
         Self::init_then_try_get(self).unwrap()
-    }
-    /// Attempt initialization then get a mutable reference to the target
-    ///
-    /// # Safety
-    ///
-    /// Undefined behaviour if the referenced value has not been initialized
-    pub unsafe fn init_then_get_mut_unchecked(&'a mut self) -> &'a mut T::Target {
-        self.init();
-        &mut *self.value.get()
-    }
-    /// Attempt initialization then get a mutable reference to the target, returning an error if the
-    /// target is not in the correct phase.
-    pub fn init_then_try_get_mut(&'a mut self) -> Result<&'a mut T::Target, AccessError> {
-        let phase = self.init();
-        check_access::<* mut T::Target,S>(self.value.get(), phase).map(|ptr| unsafe{&mut *ptr})
-    }
-    /// Attempt initialization then get a mutable reference to the target, returning an error if the
-    /// target is not in the correct phase.
-    pub fn init_then_get_mut(&'a mut self) -> &'a mut T::Target {
-        Self::init_then_try_get_mut(self).unwrap()
     }
     #[inline(always)]
     /// Potentialy initialize the inner data, returning the 
@@ -270,8 +283,8 @@ impl<'a,T, F, M, S> GenericLazy<T, F, M, S>
     pub fn init(&'a self) -> Phase
     {
         may_debug(|| 
-            LazySequentializer::init(
-                self,
+            <M as LazySequentializer<'a,GenericLazySeq<T,M>>>::init(
+                &self.seq,
                 S::shall_init,
                 |data: &T| {
                     // SAFETY
@@ -279,23 +292,114 @@ impl<'a,T, F, M, S> GenericLazy<T, F, M, S>
                     // Only one thread can ever get this mutable access
                     let d = Generator::generate(&self.generator);
                     unsafe { data.get().write(d) };
-                },
-                S::INIT_ON_REG_FAILURE,
+                }
             ),
             #[cfg(debug_mode)] &self._info
             )
     }
+
 }
+
+impl<T, F, M, S> GenericLazy<T, F, M, S>
+    where
+        T: 'static + LazyData,
+        M: 'static,
+        for <'a> M: LazySequentializer<'a, GenericLazySeq<T,M>>,
+        F: 'static + Generator<T::Target>,
+        S: 'static + LazyPolicy,
+    {
+    /// Attempt initialization then get a mutable reference to the target
+    ///
+    /// # Safety
+    ///
+    /// Undefined behaviour if the referenced value has not been initialized
+    pub unsafe fn only_init_then_get_mut_unchecked(&mut self) -> &mut T::Target {
+        self.only_init_unique();
+        &mut *self.seq.value.get()
+    }
+    /// Attempt initialization then get a mutable reference to the target, returning an error if the
+    /// target is not in the correct phase.
+    pub fn only_init_then_try_get_mut(&mut self) -> Result<&mut T::Target, AccessError> {
+        let phase = self.only_init_unique();
+        check_access::<* mut T::Target,S>(self.seq.value.get(), phase).map(|ptr| unsafe{&mut *ptr})
+    }
+    /// Attempt initialization then get a mutable reference to the target, returning an error if the
+    /// target is not in the correct phase.
+    pub fn only_init_then_get_mut(&mut self) -> &mut T::Target {
+        Self::only_init_then_try_get_mut(self).unwrap()
+    }
+    #[inline(always)]
+    /// Potentialy initialize the inner data, returning the 
+    /// phase reached at the end of the initialization attempt
+    pub fn only_init_unique(&mut self) -> Phase
+    {
+        let generator = &self.generator;
+        let seq = &mut self.seq;
+            <M as LazySequentializer<GenericLazySeq<T,M>>>::init_unique(
+                seq,
+                S::shall_init,
+                |data: &T| {
+                    // SAFETY
+                    // This function is called only once within the init function
+                    // Only one thread can ever get this mutable access
+                    let d = Generator::generate(generator);
+                    unsafe { data.get().write(d) };
+                },
+            )
+    }
+}
+
+//SAFETY: data and sequentialize are two fields of Self.
+//unsafe impl<
+//        F: 'static + Generator<T::Target>,
+//        T: 'static + LazyData,
+//        M: 'static,
+//        S: 'static + LazyPolicy,
+//    > Sequential for GenericLazy<T, F, M, S>
+//{
+//    type Data = T;
+//    type Sequentializer = M;
+//    #[inline(always)]
+//    fn sequentializer(this: &Self) -> &Self::Sequentializer {
+//        &this.seq.sequentializer
+//    }
+//    #[inline(always)]
+//    fn data(this: &Self) -> &Self::Data {
+//        &this.seq.value
+//    }
+//}
+//SAFETY: data and sequentialize are two fields of Self.
+unsafe impl<
+        T: 'static + LazyData,
+        M: 'static,
+    > Sequential for GenericLazySeq<T, M>
+{
+    type Data = T;
+    type Sequentializer = M;
+    #[inline(always)]
+    fn sequentializer(this: &Self) -> &Self::Sequentializer {
+        &this.sequentializer
+    }
+    #[inline(always)]
+    fn sequentializer_data_mut(this: &mut Self) -> (&mut Self::Sequentializer, &Self::Data) {
+        (&mut this.sequentializer,&this.value)
+    }
+    #[inline(always)]
+    fn data(this: &Self) -> &Self::Data {
+        &this.value
+    }
+}
+
 
 pub struct WriteGuard<T>(T);
 
 impl<T> Deref for WriteGuard<T>
 where
     T: Deref,
-    <T as Deref>::Target: Deref,
-    <<T as Deref>::Target as Deref>::Target: LazyData,
+    <T as Deref>::Target: LazyData,
 {
-    type Target = <<<T as Deref>::Target as Deref>::Target as LazyData>::Target;
+    type Target = <<T as Deref>::Target as LazyData>::Target;
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         unsafe { &*(*self.0).get() }
     }
@@ -303,15 +407,16 @@ where
 impl<T> DerefMut for WriteGuard<T>
 where
     T: Deref,
-    <T as Deref>::Target: Deref,
-    <<T as Deref>::Target as Deref>::Target: LazyData,
+    <T as Deref>::Target: LazyData,
 {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { &mut *(*self.0).get() }
     }
 }
 
 impl<T> Phased for WriteGuard<T> where T:Phased {
+    #[inline(always)]
     fn phase(this: &Self) -> Phase {
         Phased::phase(&this.0)
     }
@@ -322,23 +427,25 @@ pub struct ReadGuard<T>(T);
 impl<T> Deref for ReadGuard<T>
 where
     T: Deref,
-    <T as Deref>::Target: Deref,
-    <<T as Deref>::Target as Deref>::Target: LazyData,
+    <T as Deref>::Target: LazyData,
 {
-    type Target = <<<T as Deref>::Target as Deref>::Target as LazyData>::Target;
+    type Target = <<T as Deref>::Target as LazyData>::Target;
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         unsafe { &*(*self.0).get() }
     }
 }
 impl<T,U> From<WriteGuard<T>> for ReadGuard<U>
  where U: From<T>
- {
+ {    
+    #[inline(always)]
      fn from(v: WriteGuard<T>) -> Self {
          Self(v.0.into())
      }
  }
 
 impl<T> Phased for ReadGuard<T> where T:Phased {
+    #[inline(always)]
     fn phase(this: &Self) -> Phase {
         Phased::phase(&this.0)
     }
@@ -346,50 +453,15 @@ impl<T> Phased for ReadGuard<T> where T:Phased {
 
 
 
-//SAFETY: data and sequentialize are two fields of Self.
-unsafe impl<
-        F: 'static + Generator<T::Target>,
-        T: 'static + LazyData,
-        M: 'static,
-        S: 'static + LazyPolicy,
-    > Sequential for GenericLazy<T, F, M, S>
-{
-    type Data = T;
-    type Sequentializer = M;
-    #[inline(always)]
-    fn sequentializer(this: &Self) -> &Self::Sequentializer {
-        &this.sequentializer
-    }
-    #[inline(always)]
-    fn data(this: &Self) -> &Self::Data {
-        &this.value
-    }
-}
-
 /// A type that wrap a Sequentializer and a raw data, and that may
 /// initialize the data, at each access depending on the LazyPolicy
 /// provided as generic argument.
 pub struct GenericMutLazy<T, F, M, S> {
-    value:          T,
+    seq: GenericLazyMutSeq<T,M>,
     generator:      F,
-    sequentializer: M,
     phantom:        PhantomData<S>,
     #[cfg(debug_mode)]
     _info:          Option<StaticInfo>,
-}
-
-// SAFETY: The synchronization is ensured by the Sequentializer
-//  1. GenericMutLazy fullfill the requirement that its sequentializer is a field
-//  of itself as is its target data.
-//  2. The sequentializer ensure that the initialization is atomic
-unsafe impl<T: LazyData, F: Sync, M: Sync, S> Sync for GenericMutLazy<T, F, M, S> where
-    <T as LazyData>::Target: Send
-{
-}
-// SAFETY: The synchronization is ensured by the Sequentializer
-unsafe impl<T: LazyData, F: Sync, M: Sync, S> Send for GenericMutLazy<T, F, M, S> where
-    <T as LazyData>::Target: Send
-{
 }
 
 impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
@@ -402,9 +474,8 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     ///  2. The finalization is run only if the object was previously initialized
     pub const unsafe fn new(generator: F, sequentializer: M, value: T) -> Self {
         Self {
-            value,
+            seq: GenericLazyMutSeq{value,sequentializer},
             generator,
-            sequentializer,
             phantom: PhantomData,
             #[cfg(debug_mode)]
             _info: None,
@@ -425,9 +496,8 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         _info: StaticInfo,
     ) -> Self {
         Self {
-            value,
+            seq: GenericLazyMutSeq{value,sequentializer},
             generator,
-            sequentializer,
             phantom: PhantomData,
             #[cfg(debug_mode)]
             _info: Some(_info),
@@ -436,14 +506,14 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     #[inline(always)]
     ///get access to the sequentializer
     pub fn sequentializer(this: &Self) -> &M {
-        &this.sequentializer
+        &this.seq.sequentializer
     }
 }
 impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S> 
     where
         T: 'static + LazyData,
         M: 'static,
-        M: LazySequentializer<'a, Self>,
+        M: LazySequentializer<'a, GenericLazyMutSeq<T,M>>,
         F: 'static + Generator<T::Target>,
         S: 'static + LazyPolicy,
         M::ReadGuard: Phased,
@@ -458,7 +528,7 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
     #[inline(always)]
     pub unsafe fn fast_read_lock_unchecked(this: &'a Self) -> Option<ReadGuard<M::ReadGuard>>
     {
-        <M as Sequentializer<'a, Self>>::try_lock(this, |_| LockNature::Read).map(|l|
+        <M as Sequentializer<'a, GenericLazyMutSeq<T,M>>>::try_lock(&this.seq, |_| LockNature::Read).map(|l|
             if let LockResult::Read(l) = l
             {
                 ReadGuard(l)
@@ -496,7 +566,7 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
     pub unsafe fn read_lock_unchecked(this: &'a Self) -> ReadGuard<M::ReadGuard>
     {
         if let LockResult::Read(l) =
-            <M as Sequentializer<'a, Self>>::lock(this, |_| LockNature::Read)
+            <M as Sequentializer<'a, GenericLazyMutSeq<T,M>>>::lock(&this.seq, |_| LockNature::Read)
         {
             ReadGuard(l)
         } else {
@@ -533,7 +603,7 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
     #[inline(always)]
     pub unsafe fn fast_write_lock_unchecked(this: &'a Self) -> Option<WriteGuard<M::WriteGuard>>
     {
-       <M as Sequentializer<'a, Self>>::try_lock(this, |_| LockNature::Write).map(|l| 
+       <M as Sequentializer<'a, GenericLazyMutSeq<T,M>>>::try_lock(&this.seq, |_| LockNature::Write).map(|l| 
             if let LockResult::Write(l) = l
             {
                 WriteGuard(l)
@@ -571,7 +641,7 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
     #[inline(always)]
     pub unsafe fn write_lock_unchecked(this: &'a Self) -> WriteGuard<M::WriteGuard>
     {
-        if let LockResult::Write(l) = <M as Sequentializer<'a, Self>>::lock(this, |_| LockNature::Write)
+        if let LockResult::Write(l) = <M as Sequentializer<'a, GenericLazyMutSeq<T,M>>>::lock(&this.seq, |_| LockNature::Write)
         {
             WriteGuard(l)
         } else {
@@ -608,8 +678,8 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
     pub unsafe fn init_then_read_lock_unchecked(this: &'a Self) -> ReadGuard<M::ReadGuard>
     {
        ReadGuard(may_debug(||
-            LazySequentializer::init_then_read_guard(
-                this,
+            <M as LazySequentializer<'a,GenericLazyMutSeq<T,M>>>::init_then_read_guard(
+                &this.seq,
                 S::shall_init,
                 |data: &T| {
                     // SAFETY
@@ -618,7 +688,6 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
                     let d = Generator::generate(&this.generator);
                     unsafe { data.get().write(d) };
                 },
-                S::INIT_ON_REG_FAILURE,
             ),
             #[cfg(debug_mode)] &this._info
             ))
@@ -657,8 +726,8 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
     pub unsafe fn fast_init_then_read_lock_unchecked(this: &'a Self) -> Option<ReadGuard<M::ReadGuard>>
     {
         may_debug(||
-            LazySequentializer::try_init_then_read_guard(
-                this,
+            <M as LazySequentializer<'a,GenericLazyMutSeq<T,M>>>::try_init_then_read_guard(
+                &this.seq,
                 S::shall_init,
                 |data: &T| {
                     // SAFETY
@@ -667,7 +736,6 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
                     let d = Generator::generate(&this.generator);
                     unsafe { data.get().write(d) };
                 },
-                S::INIT_ON_REG_FAILURE,
             ),
             #[cfg(debug_mode)] &this._info
             ).map(ReadGuard)
@@ -705,8 +773,8 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
     /// If the target object is not accessible, this will cause undefined behaviour
     pub unsafe fn init_then_write_lock_unchecked(this: &'a Self) -> WriteGuard<M::WriteGuard>
     {
-       WriteGuard(may_debug(|| LazySequentializer::init_then_write_guard(
-                this,
+       WriteGuard(may_debug(|| <M as LazySequentializer<'a,GenericLazyMutSeq<T,M>>>::init_then_write_guard(
+                &this.seq,
                 S::shall_init,
                 |data: &T| {
                     // SAFETY
@@ -715,7 +783,6 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
                     let d = Generator::generate(&this.generator);
                     unsafe { data.get().write(d) };
                 },
-                S::INIT_ON_REG_FAILURE,
             ),
             #[cfg(debug_mode)] &this._info
             ))
@@ -748,8 +815,8 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
     /// Undefined behavior if the target object is not accessible.
     pub unsafe fn fast_init_then_write_lock_unchecked(this: &'a Self) -> Option<WriteGuard<M::WriteGuard>>
     {
-       may_debug(|| LazySequentializer::try_init_then_write_guard(
-                this,
+       may_debug(|| <M as LazySequentializer<'a,GenericLazyMutSeq<T,M>>>::try_init_then_write_guard(
+                &this.seq,
                 S::shall_init,
                 |data: &T| {
                     // SAFETY
@@ -758,7 +825,6 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
                     let d = Generator::generate(&this.generator);
                     unsafe { data.get().write(d) };
                 },
-                S::INIT_ON_REG_FAILURE,
             ),
             #[cfg(debug_mode)] &this._info
             ).map(WriteGuard)
@@ -784,22 +850,80 @@ impl<'a,T, F, M, S> GenericMutLazy<T, F, M, S>
     }
 }
 
-impl<T, F, M, S> Deref for GenericMutLazy<T, F, M, S> {
-    type Target = T;
+impl<T, F, M, S> GenericMutLazy<T, F, M, S>
+    where
+        T: 'static + LazyData,
+        M: 'static,
+        for <'a> M: LazySequentializer<'a, GenericLazyMutSeq<T,M>>,
+        F: 'static + Generator<T::Target>,
+        S: 'static + LazyPolicy,
+    {
+    /// Attempt initialization then get a mutable reference to the target
+    ///
+    /// # Safety
+    ///
+    /// Undefined behaviour if the referenced value has not been initialized
+    pub unsafe fn only_init_then_get_mut_unchecked(&mut self) -> &mut T::Target {
+        self.only_init_unique();
+        &mut *self.seq.value.get()
+    }
+    /// Attempt initialization then get a mutable reference to the target, returning an error if the
+    /// target is not in the correct phase.
+    pub fn only_init_then_try_get_mut(&mut self) -> Result<&mut T::Target, AccessError> {
+        let phase = self.only_init_unique();
+        check_access::<* mut T::Target,S>(self.seq.value.get(), phase).map(|ptr| unsafe{&mut *ptr})
+    }
+    /// Attempt initialization then get a mutable reference to the target, returning an error if the
+    /// target is not in the correct phase.
+    pub fn only_init_then_get_mut(&mut self) -> &mut T::Target {
+        Self::only_init_then_try_get_mut(self).unwrap()
+    }
     #[inline(always)]
-    ///get a pointer to the raw data
-    fn deref(&self) -> &T {
-        &self.value
+    /// Potentialy initialize the inner data, returning the 
+    /// phase reached at the end of the initialization attempt
+    pub fn only_init_unique(&mut self) -> Phase
+    {
+        let generator = &self.generator;
+        let seq = &mut self.seq;
+            <M as LazySequentializer<GenericLazyMutSeq<T,M>>>::init_unique(
+                seq,
+                S::shall_init,
+                |data: &T| {
+                    // SAFETY
+                    // This function is called only once within the init function
+                    // Only one thread can ever get this mutable access
+                    let d = Generator::generate(generator);
+                    unsafe { data.get().write(d) };
+                },
+            )
     }
 }
 
+
+////SAFETY: data and sequentialize are two fields of Self.
+//unsafe impl<
+//        F: 'static + Generator<T::Target>,
+//        T: 'static + LazyData,
+//        M: 'static,
+//        S: 'static + LazyPolicy,
+//    > Sequential for GenericMutLazy<T, F, M, S>
+//{
+//    type Data = T;
+//    type Sequentializer = M;
+//    #[inline(always)]
+//    fn sequentializer(this: &Self) -> &Self::Sequentializer {
+//        &this.seq.sequentializer
+//    }
+//    #[inline(always)]
+//    fn data(this: &Self) -> &Self::Data {
+//        &this.seq.value
+//    }
+//}
 //SAFETY: data and sequentialize are two fields of Self.
 unsafe impl<
-        F: 'static + Generator<T::Target>,
         T: 'static + LazyData,
         M: 'static,
-        S: 'static + LazyPolicy,
-    > Sequential for GenericMutLazy<T, F, M, S>
+    > Sequential for GenericLazyMutSeq<T, M>
 {
     type Data = T;
     type Sequentializer = M;
@@ -808,10 +932,56 @@ unsafe impl<
         &this.sequentializer
     }
     #[inline(always)]
+    fn sequentializer_data_mut(this: &mut Self) -> (&mut Self::Sequentializer, &Self::Data) {
+        (&mut this.sequentializer,&this.value)
+    }
+    #[inline(always)]
     fn data(this: &Self) -> &Self::Data {
         &this.value
     }
 }
+impl<F, T, M, S> Deref for GenericMutLazy<T,F,M,S> {
+    type Target = T;
+    #[inline(always)]
+    ///get a pointer to the raw data
+    fn deref(&self) -> &T {
+        &self.seq.value
+    }
+}
+impl<T, M> Deref for GenericLazyMutSeq<T,M> {
+    type Target = T;
+    #[inline(always)]
+    ///get a pointer to the raw data
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+impl<
+        F,
+        T,
+        M: Phased,
+        S
+    > Phased for GenericMutLazy<T, F, M, S>
+{
+    fn phase(this: &Self) -> Phase {
+        Phased::phase(&this.seq.sequentializer)
+    }
+}
+impl<
+        F,
+        T,
+        M: Phased,
+        S
+    > Phased for GenericLazy<T, F, M, S>
+{
+    fn phase(this: &Self) -> Phase {
+        Phased::phase(&this.seq.sequentializer)
+    }
+}
+
+
+
 
 fn may_debug<R,F:FnOnce()->R>(f:F, #[cfg(debug_mode)] info: &Option<StaticInfo>) -> R{
         #[cfg(not(debug_mode))]
@@ -836,6 +1006,7 @@ fn may_debug<R,F:FnOnce()->R>(f:F, #[cfg(debug_mode)] info: &Option<StaticInfo>)
         }
 }
 
+#[inline(always)]
 fn check_access<T, S: LazyPolicy> (l: T,phase: Phase) -> Result<T,AccessError> {
     if S::is_accessible(phase) {
         Ok(l)
@@ -844,6 +1015,7 @@ fn check_access<T, S: LazyPolicy> (l: T,phase: Phase) -> Result<T,AccessError> {
     }
 }
 
+#[inline(always)]
 fn checked_access<T:Phased, S: LazyPolicy> (l: T) -> Result<T,AccessError> {
     let phase = Phased::phase(&l);
     check_access::<T,S>(l, phase)

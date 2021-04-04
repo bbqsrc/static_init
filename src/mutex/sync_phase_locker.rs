@@ -51,10 +51,15 @@ impl<'a, T: ?Sized> SyncPhaseGuard<'a, T> {
     fn new(r: &'a T, lock: Lock<'a>) -> Self {
         Self(r, lock)
     }
+
+    #[inline(always)]
+    pub fn map<S:?Sized>(self, f: impl Fn(&'a T) -> &'a S) -> SyncPhaseGuard<'a,S> {
+        SyncPhaseGuard(f(self.0),self.1)
+    }
 }
 unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for SyncPhaseGuard<'a, T> {
     #[inline(always)]
-    fn set_phase(&mut self, p: Phase) {
+    unsafe fn set_phase(&mut self, p: Phase) {
         self.1.on_unlock = p;
     }
     #[inline(always)]
@@ -69,7 +74,7 @@ unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for SyncPhaseGuard<'a, T> {
         self.1.on_unlock
     }
     #[inline(always)]
-    fn transition<R>(
+    unsafe fn transition<R>(
         &mut self,
         f: impl FnOnce(&'a T) -> R,
         on_success: Phase,
@@ -107,6 +112,11 @@ impl<'a, T: ?Sized> SyncReadPhaseGuard<'a, T> {
     #[inline(always)]
     pub fn phase(&self) -> Phase {
         self.1.init_phase
+    }
+
+    #[inline(always)]
+    pub fn map<S:?Sized>(self, f: impl Fn(&'a T) -> &'a S) -> SyncReadPhaseGuard<'a,S> {
+        SyncReadPhaseGuard(f(self.0),self.1)
     }
 }
 impl<'a, T> From<SyncPhaseGuard<'a,T>> for SyncReadPhaseGuard<'a, T> {
@@ -480,6 +490,15 @@ impl SyncPhasedLocker {
     /// phase transition that leads to this phase.
     pub fn phase(&self) -> Phase {
         Phase::from_bits_truncate(self.0.load(Ordering::Acquire))
+    }
+    #[inline(always)]
+    /// Returns a mutable phase locker
+    pub fn lock_mut<'a, T: ?Sized>(
+        &'a mut self,
+        v: &'a T,
+    ) -> SyncPhaseGuard<'_, T> {
+        let cur = self.0.fetch_or(LOCKED_BIT,Ordering::Acquire);
+        SyncPhaseGuard::new(v, Lock::new(&self.0,cur))
     }
     #[inline(always)]
     /// lock the phase.

@@ -94,6 +94,7 @@ pub unsafe trait Sequential {
     type Sequentializer;
     fn sequentializer(this: &Self) -> &Self::Sequentializer;
     fn data(this: &Self) -> &Self::Data;
+    fn sequentializer_data_mut(this: &mut Self) -> (&mut Self::Sequentializer,&Self::Data);
 }
 
 /// Trait for objects that know in which [phase](Phase) they are.
@@ -146,6 +147,12 @@ pub unsafe trait Sequentializer<'a, T: Sequential>: 'static + Sized + Phased {
         target: &'a T,
         lock_nature: impl Fn(Phase) -> LockNature,
     ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>>;
+
+    /// Lock the phases of an object in order to ensure atomic phase transition.
+    fn lock_mut(
+        target: &'a mut T,
+    ) -> Self::WriteGuard;
+
 }
 
 /// A [`LazySequentializer`] sequentialize the [phases](Phase) of a target object to ensure
@@ -161,7 +168,7 @@ pub unsafe trait Sequentializer<'a, T: Sequential>: 'static + Sized + Phased {
 ///  - if the implementor is not Sync then the lock should panic if any attempt is made
 ///    to take another lock while a write lock is alive or to take a write lock while there
 ///    is already a read_lock.(the lock should behave as a RefCell).
-pub unsafe trait LazySequentializer<'a, T: Sequential<Sequentializer = Self>>:
+pub unsafe trait LazySequentializer<'a, T: Sequential>:
     Sequentializer<'a, T>
 {
     /// if `shall_init` return true for the target [`Sequential`] object, it initialize
@@ -175,7 +182,11 @@ pub unsafe trait LazySequentializer<'a, T: Sequential<Sequentializer = Self>>:
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-        init_on_reg_failure: bool,
+    ) -> Phase;
+    fn init_unique(
+        target: &'a mut T,
+        shall_init: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Phase;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change (Read Lock). The returned lock may be shared.
@@ -183,7 +194,6 @@ pub unsafe trait LazySequentializer<'a, T: Sequential<Sequentializer = Self>>:
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-        init_on_reg_failure: bool,
     ) -> Self::ReadGuard;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change accepts through the returned lock guard (Write Lock). The lock is exculisive.
@@ -191,7 +201,6 @@ pub unsafe trait LazySequentializer<'a, T: Sequential<Sequentializer = Self>>:
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-        init_on_reg_failure: bool,
     ) -> Self::WriteGuard;
     /// Similar to [init_then_read_guard](Self::init_then_read_guard) but will return None
     /// if any lock is taken on the lazy or if it is beiing initialized
@@ -199,7 +208,6 @@ pub unsafe trait LazySequentializer<'a, T: Sequential<Sequentializer = Self>>:
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-        init_on_reg_failure: bool,
     ) -> Option<Self::ReadGuard>;
     /// Similar to [init_then_write_guard](Self::init_then_write_guard) but will return None
     /// if any lock is taken on the lazy or if it is beiing initialized
@@ -207,7 +215,6 @@ pub unsafe trait LazySequentializer<'a, T: Sequential<Sequentializer = Self>>:
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-        init_on_reg_failure: bool,
     ) -> Option<Self::WriteGuard>;
 }
 
@@ -242,6 +249,16 @@ pub unsafe trait SplitedLazySequentializer<'a, T: Sequential>:
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
+    ) -> Phase;
+    fn only_init(
+        target: &'a T,
+        shall_init: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&'a <T as Sequential>::Data),
+    ) -> Phase;
+    fn only_init_unique(
+        target: &'a mut T,
+        shall_init: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Phase;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change (Read Lock). The returned lock may be shared.
@@ -400,30 +417,6 @@ pub use static_init_macro::destructor;
 #[doc(inline)]
 pub use static_init_macro::dynamic;
 
-/// Provides policy types for implementation of various lazily initialized types.
-pub mod generic_lazy;
-
-/// Provides two lazy sequentializers, one that is Sync, and the other that is not Sync, that are
-/// able to sequentialize the target object initialization but cannot register its finalization
-/// callback.
-pub mod splited_sequentializer;
-
-#[cfg(any(elf, mach_o, coff))]
-/// Provides two lazy sequentializers, one that will finalize the target object at program exit and
-/// the other at thread exit.
-pub mod at_exit;
-
-/// Provides various implementation of lazily initialized types
-pub mod lazy;
-#[doc(inline)]
-pub use lazy::{MutLazy,Lazy};
-#[doc(inline)]
-pub use lazy::{UnSyncMutLazy,UnSyncLazy};
-
-#[cfg(any(elf, mach_o, coff))]
-/// Provides types for statics that are meant to run code before main start or after it exit.
-pub mod raw_static;
-
 /// Provides PhaseLockers, that are phase tagged *adaptative* read-write lock types: during the lock loop the nature of the lock that
 /// is attempted to be taken variates depending on the phase.
 ///
@@ -436,6 +429,31 @@ pub mod raw_static;
 /// of parking_lot RwLock algorithm to those mutex)
 pub mod mutex;
 pub use mutex::{LockNature, LockResult, PhaseGuard};
+
+/// Provides two lazy sequentializers, one that is Sync, and the other that is not Sync, that are
+/// able to sequentialize the target object initialization but cannot register its finalization
+/// callback.
+pub mod splited_sequentializer;
+
+#[cfg(any(elf, mach_o, coff))]
+/// Provides two lazy sequentializers, one that will finalize the target object at program exit and
+/// the other at thread exit.
+pub mod at_exit;
+
+/// Provides policy types for implementation of various lazily initialized types.
+pub mod generic_lazy;
+
+/// Provides various implementation of lazily initialized types
+pub mod lazy;
+#[doc(inline)]
+pub use lazy::{MutLazy,Lazy};
+#[doc(inline)]
+pub use lazy::{UnSyncMutLazy,UnSyncLazy};
+
+#[cfg(any(elf, mach_o, coff))]
+/// Provides types for statics that are meant to run code before main start or after it exit.
+pub mod raw_static;
+
 
 #[derive(Debug)]
 #[doc(hidden)]

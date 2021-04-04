@@ -34,11 +34,18 @@ impl<'a, T: ?Sized> UnSyncPhaseGuard<'a, T> {
     pub(crate) fn new(r: &'a T, p: &'a Cell<u32>) -> Self {
         Self(r, p, Phase::from_bits_truncate(p.get()))
     }
+
+    #[inline(always)]
+    pub fn map<S:?Sized>(self, f: impl Fn(&'a T) -> &'a S) -> UnSyncPhaseGuard<'a,S> {
+        let p = UnSyncPhaseGuard(f(self.0),self.1,self.2);
+        forget(self);
+        p
+    }
 }
 
 unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for UnSyncPhaseGuard<'a, T> {
     #[inline(always)]
-    fn set_phase(&mut self, p: Phase) {
+    unsafe fn set_phase(&mut self, p: Phase) {
         self.2 = p;
     }
     #[inline(always)]
@@ -50,7 +57,7 @@ unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for UnSyncPhaseGuard<'a, T> {
         self.2
     }
     #[inline(always)]
-    fn transition<R>(
+    unsafe fn transition<R>(
         &mut self,
         f: impl FnOnce(&'a T) -> R,
         on_success: Phase,
@@ -101,6 +108,12 @@ impl<'a, T: ?Sized> UnSyncReadPhaseGuard<'a, T> {
     #[inline(always)]
     pub fn phase(&self) -> Phase {
         Phase::from_bits_truncate(self.1.get())
+    }
+    #[inline(always)]
+    pub fn map<S:?Sized>(self, f: impl Fn(&'a T) -> &'a S) -> UnSyncReadPhaseGuard<'a,S> {
+        let p = UnSyncReadPhaseGuard(f(self.0),self.1);
+        forget(self);
+        p
     }
 }
 
@@ -153,6 +166,15 @@ impl UnSyncPhaseLocker {
             }
             LockNature::None => Some(LockResult::None(self.phase())),
         }
+    }
+    #[inline(always)]
+    /// Return a mutable phase lock
+    pub fn lock_mut<'a, T: ?Sized>(
+        &'a mut self,
+        v: &'a T,
+    ) -> UnSyncPhaseGuard<'_, T> {
+        self.0.set(self.0.get() | LOCKED_BIT);
+        UnSyncPhaseGuard::new(v, &self.0)
     }
     #[inline(always)]
     /// Return a lock whose nature depends on 'lock_nature'

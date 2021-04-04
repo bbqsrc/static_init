@@ -23,7 +23,13 @@ use super::Phase;
 pub unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
     /// Set the phase at which will be the traget object
     /// when the phase guard will be dropped
-    fn set_phase(&mut self, p: Phase);
+    ///
+    /// # Safety
+    ///
+    /// This function is unsafe because not providing a correct phase
+    /// may lead to miss interpretation of the state of the target object
+    /// which may result in unsound lazy
+    unsafe fn set_phase(&mut self, p: Phase);
     /// Set the phase of the target object with release semantic if the
     /// PhaseGuard is Sync
     fn commit_phase(&mut self);
@@ -33,7 +39,12 @@ pub unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
     ///   - if execution of f does not panic change, call Self::set_phase(on_success)
     ///   - if execution of f panics: set the phase of the target object to on_panic and
     ///   release the lock.
-    fn transition<R>(
+    ///
+    /// # Safety
+    ///
+    /// The phase provided must be consistant with the transition otherwise
+    /// this will leads to unsoundness
+    unsafe fn transition<R>(
         &mut self,
         f: impl FnOnce(&'a T) -> R,
         on_success: Phase,
