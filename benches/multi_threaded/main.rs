@@ -1,16 +1,15 @@
 #![feature(asm)]
 
 mod synchronised_bench;
-use synchronised_bench::{synchro_bench, synchro_bench_input, Config};
+use synchronised_bench::{synchro_bench_input, Config};
 
 mod tick_counter;
 
 use static_init::{Generator, MutLazy,Lazy};
 
 use parking_lot::{RwLock, RawRwLock, lock_api::{RwLockWriteGuard,MappedRwLockWriteGuard,RwLockReadGuard,MappedRwLockReadGuard}};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId, BatchSize, PlotConfiguration, AxisScale};
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId, BatchSize, PlotConfiguration, AxisScale,BenchmarkGroup,measurement::WallTime};
 
 use lazy_static::lazy::Lazy as STLazy;
 
@@ -67,6 +66,7 @@ impl<T,F> RwMut<T,F>
             *g.0 = StaticStatus::Value((self.1)());
             std::mem::forget(g);
         }
+        drop(l);
         let l = self.0.read();
         RwLockReadGuard::map(l,|v| 
         match v {
@@ -81,329 +81,116 @@ impl<T,F> RwMut<T,F>
     }
     }
 
+fn do_bench<'a,R,T, F: Fn()->T + Copy, A: Fn(&T)->R + Sync>(gp: &mut BenchmarkGroup<'a,WallTime>,name: &str,init: F, access: A) {
+
+    macro_rules! mb {
+        ($t:literal) => { mb!($t - $t) };
+        ($t:literal - $l:literal) => {
+            synchro_bench_input(
+                gp,
+                BenchmarkId::new(name, $t),
+                &$t,
+                |_| init(),
+                |l| access(l),
+                Config::<true,$t,$l>,
+            );
+        }
+    }
+
+    gp.bench_with_input(
+        BenchmarkId::new(name, 1),
+        &1,
+        |b,_| b.iter_batched(
+            init,
+            |l| access(&l),
+            BatchSize::SmallInput
+            )
+        );
+    mb!(2);
+    mb!(4);
+    mb!(8);
+    mb!(16-8);
+    mb!(32-8);
+
+}
             
-fn bench_init_mut_lazy(c: &mut Criterion) {
+fn bench_init(c: &mut Criterion) {
+
     let mut gp = c.benchmark_group("Init Thread Scaling");
+
     gp.measurement_time(Duration::from_secs(15));
-    //BUG
-    //gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    gp.bench_with_input(
-        BenchmarkId::new("LazyMut read", 1),
-        &1,
-        |b,_| b.iter_batched(
-            || MutLazy::new(XX),
-            |l: MutLazy<_,_>| *l.read(),
-            BatchSize::SmallInput
-            )
-        );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut read", 2),
-        &2,
-        |_| MutLazy::new(XX),
-        |l| *l.read(),
-        Config::<true, 2,2>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut read", 4),
-        &8,
-        |_| MutLazy::new(XX),
-        |l| *l.read(),
-        Config::<true, 4,4>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut read", 8),
-        &8,
-        |_| MutLazy::new(XX),
-        |l| *l.read(),
-        Config::<true, 8,8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut read", 16),
-        &8,
-        |_| MutLazy::new(XX),
-        |l| *l.read(),
-        Config::<true, 16,8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut read", 32),
-        &8,
-        |_| MutLazy::new(XX),
-        |l| *l.read(),
-        Config::<true, 32,8>,
-    );
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    gp.bench_with_input(
-        BenchmarkId::new("LazyMut write", 1),
-        &1,
-        |b,_| b.iter_batched(
-            || MutLazy::new(XX),
-            |l: MutLazy<_,_>| *l.write(),
-            BatchSize::SmallInput
-            )
-        );
 
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut write", 2),
-        &2,
-        |_| MutLazy::new(XX),
-        |l| *l.write(),
-        Config::<true, 2,2>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut write", 4),
-        &8,
-        |_| MutLazy::new(XX),
-        |l| *l.write(),
-        Config::<true, 4,4>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut write", 8),
-        &8,
-        |_| MutLazy::new(XX),
-        |l| *l.write(),
-        Config::<true, 8,8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut write", 16),
-        &8,
-        |_| MutLazy::new(XX),
-        |l| *l.write(),
-        Config::<true, 16,8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut write", 32),
-        &8,
-        |_| MutLazy::new(XX),
-        |l| *l.write(),
-        Config::<true, 32,8>,
-    );
-    
-    let init = || RwMut(RwLock::new(StaticStatus::Uninitialized),|| 33);
-    gp.bench_with_input(
-        BenchmarkId::new("LazyMut PkLot read", 1),
-        &1,
-        |b,_| b.iter_batched(
-            init,
-            |l| *l.read(),
-            BatchSize::SmallInput
-            )
-        );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut PkLot read", 2),
-        &2,
-        |_| init(),
-        |l| *l.read(),
-        Config::<true, 2, 2>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut PkLot read", 4),
-        &8,
-        |_| init(),
-        |l| *l.read(),
-        Config::<true, 4, 4>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut PkLot read", 8),
-        &8,
-        |_| init(),
-        |l| *l.read(),
-        Config::<true, 8, 8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut PkLot read", 16),
-        &8,
-        |_| init(),
-        |l| *l.read(),
-        Config::<true, 16, 8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut PkLot read", 32),
-        &8,
-        |_| init(),
-        |l| *l.read(),
-        Config::<true, 32, 8>,
-    );
-    
-    gp.bench_with_input(
-        BenchmarkId::new("LazyMut PkLot read", 1),
-        &1,
-        |b,_| b.iter_batched(
-            init,
-            |l| *l.read(),
-            BatchSize::SmallInput
-            )
-        );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut PkLot write", 2),
-        &2,
-        |_| init(),
-        |l| *l.write(),
-        Config::<true, 2, 2>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut PkLot write", 4),
-        &8,
-        |_| init(),
-        |l| *l.write(),
-        Config::<true, 4, 4>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut PkLot write", 8),
-        &8,
-        |_| init(),
-        |l| *l.write(),
-        Config::<true, 8, 8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut PkLot write", 16),
-        &8,
-        |_| init(),
-        |l| *l.write(),
-        Config::<true, 16, 8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyMut PkLot write", 32),
-        &8,
-        |_| init(),
-        |l| *l.write(),
-        Config::<true, 32, 8>,
-    );
+    //do_bench(&mut gp,"LazyMut read",|| MutLazy::new(XX),  |l| *l.read());
 
-    gp.bench_with_input(
-        BenchmarkId::new("Lazy", 1),
-        &1,
-        |b,_| b.iter_batched(
-            || Lazy::new(XX),
-            |l: Lazy<_,_>| *l,
-            BatchSize::SmallInput
-            )
-        );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("Lazy", 2),
-        &2,
-        |_| Lazy::new(XX),
-        |l| **l,
-        Config::<true, 2,2>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("Lazy", 4),
-        &8,
-        |_| Lazy::new(XX),
-        |l| **l,
-        Config::<true, 4,4>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("Lazy", 8),
-        &8,
-        |_| Lazy::new(XX),
-        |l| **l,
-        Config::<true, 8,8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("Lazy", 16),
-        &8,
-        |_| Lazy::new(XX),
-        |l| **l,
-        Config::<true, 16,8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("Lazy", 32),
-        &8,
-        |_| Lazy::new(XX),
-        |l| **l,
-        Config::<true, 32,8>,
-    );
+    //do_bench(&mut gp,"LazyMut write",|| MutLazy::new(XX),  |l| *l.write());
 
-    let build = || STLazy::<i32>::INIT;
-    let accessv = |l: STLazy<i32>| {   
-                let r: &'static STLazy<i32> = unsafe{&*(&l as *const STLazy<i32>)};
-                *r.get(|| 33)
-            };
+
+    //let init = || RwMut(RwLock::new(StaticStatus::Uninitialized),|| 33);
+
+    //do_bench(&mut gp,"LazyMut PkLot read",init,  |l| *l.read());
+
+    //do_bench(&mut gp,"LazyMut PkLot write",init,  |l| *l.write());
+
+
+    do_bench(&mut gp,"Lazy",|| Lazy::new(XX),  |l| **l);
+
+    let init = || STLazy::<i32>::INIT;
+
     let access = |l: &STLazy<i32>| {   
                 let r: &'static STLazy<i32> = unsafe{&*(l as *const STLazy<i32>)};
                 *r.get(|| 33)
             };
-    gp.bench_with_input(
-        BenchmarkId::new("LazyStatic", 1),
-        &1,
-        |b,_| b.iter_batched(
-            build,
-            accessv,
-            BatchSize::SmallInput
-            )
-        );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyStatic", 2),
-        &2,
-        |_| build(),
-        access,
-        Config::<true, 2,2>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyStatic", 4),
-        &8,
-        |_| build(),
-        access,
-        Config::<true, 4,4>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyStatic", 8),
-        &8,
-        |_| build(),
-        access,
-        Config::<true, 8,8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyStatic", 16),
-        &8,
-        |_| build(),
-        access,
-        Config::<true, 16,8>,
-    );
-    synchro_bench_input(
-        &mut gp,
-        BenchmarkId::new("LazyStatic", 32),
-        &8,
-        |_| build(),
-        access,
-        Config::<true, 32,8>,
-    );
+
+    do_bench(&mut gp,"static_lazy::Lazy",init,  access);
+
+    gp.finish();
+}
+
+fn bench_access(c: &mut Criterion) {
+
+    let mut gp = c.benchmark_group("Access Thread Scaling");
+
+    gp.measurement_time(Duration::from_secs(15));
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+
+    do_bench(&mut gp,"LazyMut read",|| {let l = MutLazy::new(XX); l.read(); l},  |l| *l.read());
+
+    do_bench(&mut gp,"LazyMut write",|| {let l = MutLazy::new(XX); l.read(); l},  |l| *l.write());
+
+
+    let init = || { let l = RwMut(RwLock::new(StaticStatus::Uninitialized),|| 33); let _ = l.read(); l};
+
+    do_bench(&mut gp,"LazyMut PkLot read",init,  |l| *l.read());
+
+    do_bench(&mut gp,"LazyMut PkLot write",init,  |l| *l.write());
+
+
+    do_bench(&mut gp,"Lazy",|| { let l = Lazy::new(XX); let _ = *l; l},  |l| **l);
+
+    let init = || {
+        let l = STLazy::<i32>::INIT; 
+        let r: &'static STLazy<i32> = unsafe{&*(&l as *const STLazy<i32>)};
+        r.get(|| 33); 
+        l};
+
+    let access = |l: &STLazy<i32>| {   
+                let r: &'static STLazy<i32> = unsafe{&*(l as *const STLazy<i32>)};
+                *r.get(|| 33)
+            };
+
+    do_bench(&mut gp,"static_lazy::Lazy",init,  access);
 
     gp.finish();
 }
 
 criterion_group! {name=multi; config=Criterion::default();
-targets=bench_init_mut_lazy,
+targets=bench_init
+//,bench_access
 }
 
 criterion_main! {multi}

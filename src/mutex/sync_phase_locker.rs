@@ -639,67 +639,101 @@ impl SyncPhasedLocker {
         on_parking_how: impl Fn(Phase) -> LockNature,
         hint: Phase,
     ) -> LockResult<ReadLock<'_>, Lock<'_>> {
+        let mut cur = hint.bits();
         match how(hint) {
             LockNature::None => {
-                let real = self.0.load(Ordering::Acquire);
-                let p = Phase::from_bits_truncate(real);
-                if p == hint {
+                cur = self.0.load(Ordering::Acquire);
+                let p = Phase::from_bits_truncate(cur);
+                if p == hint || matches!(how(p), LockNature::None) {
                     return LockResult::None(p);
                 }
             }
             LockNature::Write => {
-                let expect = hint.bits();
-                if self
-                    .0
-                    .compare_exchange(
-                        expect,
-                        expect | LOCKED_BIT,
-                        Ordering::Acquire,
-                        Ordering::Relaxed,
-                    )
-                    .is_ok()
+                match self.0.compare_exchange(
+                    cur,
+                    cur | LOCKED_BIT,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => return LockResult::Write(Lock::new(&self.0, cur)),
+                    Err(x) => {
+                        cur = x;
+                    }
+                }
+            }
+            LockNature::Read => {
+                match self.0.compare_exchange_weak(
+                    cur,
+                    cur + READER_UNITY,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => {
+                        return LockResult::Read(ReadLock::new(&self.0, cur));
+                    }
+                    Err(x) => {
+                        cur = x;
+                    }
+                }
+            }
+        }
+
+        let p = Phase::from_bits_truncate(cur);
+
+        match how(p) {
+            LockNature::Write => {
+                if is_write_lockable(cur)
+                    && has_no_readers(cur)
+                    && self
+                        .0
+                        .compare_exchange(
+                            cur,
+                            cur | LOCKED_BIT,
+                            Ordering::Acquire,
+                            Ordering::Relaxed,
+                        )
+                        .is_ok()
                 {
-                    return LockResult::Write(Lock::new(&self.0, expect));
+                    return LockResult::Write(Lock::new(&self.0, cur));
                 }
             }
             LockNature::Read => {
                 let mut spin_wait = SpinWait::new();
-                let mut expect = hint.bits();
                 loop {
+                    if !is_read_lockable(cur)
+                    {
+                        break;
+                    }
                     match self.0.compare_exchange_weak(
-                        expect,
-                        expect + READER_UNITY,
+                        cur,
+                        cur + READER_UNITY,
                         Ordering::Acquire,
                         Ordering::Relaxed,
                     ) {
                         Ok(_) => {
-                            return LockResult::Read(ReadLock::new(&self.0, expect));
+                            return LockResult::Read(ReadLock::new(&self.0, cur));
                         }
-                        Err(x)
-                            if how(Phase::from_bits_truncate(x)) == LockNature::Read
-                                && is_read_lockable(x) =>
+                        Err(_) =>
                         {
-                            //expect = x;
-                            //continue;
                             if !spin_wait.spin_no_yield() {
-                                //break;
+                                break;
                             }
-                            expect = self.0.load(Ordering::Relaxed);
-                            if !(how(Phase::from_bits_truncate(expect)) == LockNature::Read
-                                && is_read_lockable(expect))
-                            {
+                            cur = self.0.load(Ordering::Relaxed);
+                            if !(how(Phase::from_bits_truncate(cur)) == LockNature::Read) {
                                 break;
                             }
                         }
-                        Err(_) => break,
                     }
                 }
+            }
+            LockNature::None => {
+                fence(Ordering::Acquire);
+                return LockResult::None(p);
             }
         }
         self.raw_lock_slow(how, on_parking_how)
     }
     #[cold]
-    #[inline(never)]
     fn raw_lock_slow(
         &self,
         how: impl Fn(Phase) -> LockNature,
