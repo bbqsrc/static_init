@@ -50,14 +50,14 @@ criterion = "0.3"
 crossbeam = "0.8"
 
 [[bench]]
-name = "init"
+name = "multi_threaded"
 harness = false
 
 [build-dependencies]
 cfg_aliases = "0.1"
 
-[profile.bench]
-lto = true
+#[profile.bench]
+#lto = true
 
 [profile.dev]
 panic="abort"
