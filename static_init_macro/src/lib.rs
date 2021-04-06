@@ -698,6 +698,10 @@ fn has_thread_local(attrs: &[Attribute]) -> bool {
 fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     let stat_name = &stat.ident;
 
+    let stat_generator_name = format!("__StaticInitGeneratorFor_{}", stat_name);
+
+    let stat_generator_name = Ident::new(&stat_generator_name, Span::call_site());
+
     let expr = &*stat.expr;
 
     let stat_typ = &*stat.ty;
@@ -750,56 +754,56 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     } else if is_thread_local && options.drop == DropMode::Finalize {
         if stat.mutability.is_none() {
             parse_quote! {
-                ::static_init::lazy::UnSyncLazyFinalize::<#stat_typ>
+                ::static_init::lazy::UnSyncLazyFinalize::<#stat_typ,#stat_generator_name>
             }
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::UnSyncMutLazyFinalize::<#stat_typ>
+                ::static_init::lazy::UnSyncMutLazyFinalize::<#stat_typ,#stat_generator_name>
             }
         }
     } else if is_thread_local && options.drop == DropMode::Drop {
         if stat.mutability.is_none() {
             parse_quote! {
-                ::static_init::lazy::UnSyncLazyDroped::<#stat_typ>
+                ::static_init::lazy::UnSyncLazyDroped::<#stat_typ,#stat_generator_name>
             }
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::UnSyncMutLazyDroped::<#stat_typ>
+                ::static_init::lazy::UnSyncMutLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
     } else if is_thread_local {
         if stat.mutability.is_none() {
             parse_quote! {
-                ::static_init::lazy::UnSyncLazy::<#stat_typ>
+                ::static_init::lazy::UnSyncLazy::<#stat_typ,#stat_generator_name>
             }
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::UnSyncMutLazy::<#stat_typ>
+                ::static_init::lazy::UnSyncMutLazy::<#stat_typ,#stat_generator_name>
             }
         }
     } else if options.drop == DropMode::Finalize && options.init == InitMode::QuasiLazy {
         if stat.mutability.is_none() {
             parse_quote! {
-                ::static_init::lazy::QuasiLazyFinalize::<#stat_typ>
+                ::static_init::lazy::QuasiLazyFinalize::<#stat_typ,#stat_generator_name>
             }
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::QuasiMutLazyFinalize::<#stat_typ>
+                ::static_init::lazy::QuasiMutLazyFinalize::<#stat_typ,#stat_generator_name>
             }
         }
     } else if options.drop == DropMode::Finalize && options.init == InitMode::Lazy {
         if stat.mutability.is_none() {
             parse_quote! {
-                ::static_init::lazy::LazyFinalize::<#stat_typ>
+                ::static_init::lazy::LazyFinalize::<#stat_typ,#stat_generator_name>
             }
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::MutLazyFinalize::<#stat_typ>
+                ::static_init::lazy::MutLazyFinalize::<#stat_typ,#stat_generator_name>
             }
         }
     } else if options.drop == DropMode::Drop && options.init == InitMode::Lazy {
@@ -808,7 +812,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::MutLazyDroped::<#stat_typ>
+                ::static_init::lazy::MutLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
     } else if options.drop == DropMode::Drop && options.init == InitMode::QuasiLazy {
@@ -817,28 +821,28 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::QuasiMutLazyDroped::<#stat_typ>
+                ::static_init::lazy::QuasiMutLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
     } else if options.init == InitMode::QuasiLazy {
         if stat.mutability.is_none() {
             parse_quote! {
-                ::static_init::lazy::QuasiLazy::<#stat_typ>
+                ::static_init::lazy::QuasiLazy::<#stat_typ,#stat_generator_name>
             }
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::QuasiMutLazy::<#stat_typ>
+                ::static_init::lazy::QuasiMutLazy::<#stat_typ,#stat_generator_name>
             }
         }
     } else if stat.mutability.is_none() {
         parse_quote! {
-            ::static_init::lazy::Lazy::<#stat_typ>
+            ::static_init::lazy::Lazy::<#stat_typ,#stat_generator_name>
         }
     } else {
         into_immutable!();
         parse_quote! {
-            ::static_init::lazy::MutLazy::<#stat_typ>
+            ::static_init::lazy::MutLazy::<#stat_typ,#stat_generator_name>
         }
     };
 
@@ -945,6 +949,20 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         None
     };
 
+    let lazy_generator = if matches!(options.init, InitMode::Lazy | InitMode::QuasiLazy) {
+        Some(quote_spanned! {sp=>
+            struct #stat_generator_name;
+            impl ::static_init::Generator<#stat_typ> for #stat_generator_name {
+                #[inline]
+                fn generate(&self) -> #stat_typ {
+                    #expr
+                }
+            }
+        })
+    } else {
+        None
+    };
+
     let const_init = match options.init {
         InitMode::Dynamic(_) => {
             quote_spanned! {sp=>{
@@ -955,17 +973,13 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             }
         }
         InitMode::Lazy | InitMode::QuasiLazy if cfg!(debug_mode) => {
-            quote_spanned! {sp=>{
+            quote_spanned! {sp=> {
                 #initer
 
-                #[inline]
-                fn initer() -> #stat_typ {
-                    #expr
-                }
+                let _ = ();
 
                 #[allow(unused_unsafe)]
-                unsafe{#typ::new_static_with_info(initer,
-                    #static_info)}
+                unsafe{#typ::new_static_with_info(#stat_generator_name, #static_info)}
             }
             }
         }
@@ -973,12 +987,10 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             quote_spanned! {sp=>{
                 #initer
 
-                #[inline]
-                fn initer() -> #stat_typ {
-                    #expr
-                }
+                let _ = ();
+
                 #[allow(unused_unsafe)]
-                unsafe{#typ::new_static(initer)}
+                unsafe{#typ::new_static(#stat_generator_name)}
             }
             }
         }
@@ -1000,7 +1012,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     *stat.ty = typ;
 
     quote_spanned! {sp=>
-
+    #lazy_generator
     #stat
     }
 }
