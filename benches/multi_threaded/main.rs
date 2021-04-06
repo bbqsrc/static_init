@@ -1,11 +1,12 @@
 #![feature(asm)]
+#![feature(thread_local)]
 
 mod synchronised_bench;
 use synchronised_bench::{synchro_bench_input, Config};
 
 mod tick_counter;
 
-use static_init::{Generator, MutLazy,Lazy};
+use static_init::{Generator, MutLazy,Lazy, dynamic};
 
 use parking_lot::{RwLock, RawRwLock, lock_api::{RwLockWriteGuard,MappedRwLockWriteGuard,RwLockReadGuard,MappedRwLockReadGuard}};
 
@@ -15,6 +16,8 @@ use lazy_static::lazy::Lazy as STLazy;
 
 use std::time::Duration;
 
+use std::sync::atomic::{AtomicUsize,AtomicI32,Ordering};
+
 struct XX;
 impl Generator<i32> for XX {
     #[inline(always)]
@@ -23,63 +26,147 @@ impl Generator<i32> for XX {
     }
 }
 
-enum StaticStatus<T> {
-    Uninitialized,
-    Poisoned,
-    Value(T),
-}
-struct Guard<'a,T>(&'a mut StaticStatus<T>);
-
-impl<'a,T> Drop for Guard<'a,T> {
-    fn drop(&mut self) {
-        *self.0 = StaticStatus::Poisoned;
+fn occupy_for(duration: Duration) {
+    let e = std::time::Instant::now();
+    while e.elapsed() < duration {
+        for _ in 0..1024 {
+            std::hint::spin_loop();
+        }
     }
 }
 
-struct RwMut<T,F> (RwLock<StaticStatus<T>>,F);
+
+struct W(Duration);
+impl Generator<i32> for W {
+    #[inline(always)]
+    fn generate(&self) -> i32 {
+        occupy_for(self.0);
+        10
+    }
+}
+
+
+//enum StaticStatus<T> {
+//    Uninitialized,
+//    Poisoned,
+//    Value(T),
+//}
+//struct Guard<'a,T>(&'a mut StaticStatus<T>);
+//
+//impl<'a,T> Drop for Guard<'a,T> {
+//    fn drop(&mut self) {
+//        *self.0 = StaticStatus::Poisoned;
+//    }
+//}
+//
+//struct RwMut<T,F> (RwLock<StaticStatus<T>>,F);
+//
+//impl<T,F> RwMut<T,F> 
+//    where F: Generator<T> 
+//    {
+//    fn new(f: F) -> Self {
+//        Self(RwLock::new(StaticStatus::Uninitialized), f)
+//    }
+//    fn write(&self) -> MappedRwLockWriteGuard<'_,RawRwLock,T> {
+//        let mut l = self.0.write();
+//        if let StaticStatus::Uninitialized = &mut * l {
+//            let g = Guard(&mut *l);
+//            *g.0 = StaticStatus::Value(self.1.generate());
+//            std::mem::forget(g);
+//        }
+//        RwLockWriteGuard::map(l,|v| 
+//        match v {
+//            StaticStatus::Value(v) => v,
+//            
+//            StaticStatus::Poisoned => {
+//                panic!("Poisoned accceess");
+//            }
+//            StaticStatus::Uninitialized => unreachable!(),
+//        }
+//        )
+//    }
+//    fn read(&self) -> MappedRwLockReadGuard<'_,RawRwLock,T> {
+//        let mut l = self.0.write();
+//        if let StaticStatus::Uninitialized = &mut * l {
+//            let g = Guard(&mut *l);
+//            *g.0 = StaticStatus::Value(self.1.generate());
+//            std::mem::forget(g);
+//        }
+//        drop(l);
+//        let l = self.0.read();
+//        RwLockReadGuard::map(l,|v| 
+//        match v {
+//            StaticStatus::Value(v) => v,
+//            
+//            StaticStatus::Poisoned => {
+//                panic!("Poisoned accceess");
+//            }
+//            StaticStatus::Uninitialized => unreachable!(),
+//        }
+//        )
+//    }
+//    }
+//
+struct RwMut<T,F> (RwLock<Option<T>>,AtomicI32,F);
+
+struct Guard<'a>(&'a AtomicI32);
+
+impl<'a> Drop for Guard<'a> {
+    fn drop(&mut self) {
+        self.0.store(2,Ordering::Release);
+    }
+}
+
 
 impl<T,F> RwMut<T,F> 
-    where F: Fn() -> T
+    where F: Generator<T> 
     {
+    fn new(f: F) -> Self {
+        Self(RwLock::new(None),AtomicI32::new(0), f)
+    }
     fn write(&self) -> MappedRwLockWriteGuard<'_,RawRwLock,T> {
         let mut l = self.0.write();
-        if let StaticStatus::Uninitialized = &mut * l {
-            let g = Guard(&mut *l);
-            *g.0 = StaticStatus::Value((self.1)());
+        
+        let status = self.1.load(Ordering::Acquire);
+
+        if status == 0 {
+            let g = Guard(& self.1);
+            *l = Some(self.2.generate());
             std::mem::forget(g);
-        }
-        RwLockWriteGuard::map(l,|v| 
-        match v {
-            StaticStatus::Value(v) => v,
-            
-            StaticStatus::Poisoned => {
+            self.1.store(1,Ordering::Release)
+        } else if status == 2 { 
                 panic!("Poisoned accceess");
-            }
-            StaticStatus::Uninitialized => unreachable!(),
         }
-        )
+
+        RwLockWriteGuard::map(l,|v| v.as_mut().unwrap()) 
+
     }
     fn read(&self) -> MappedRwLockReadGuard<'_,RawRwLock,T> {
-        let mut l = self.0.write();
-        if let StaticStatus::Uninitialized = &mut * l {
-            let g = Guard(&mut *l);
-            *g.0 = StaticStatus::Value((self.1)());
-            std::mem::forget(g);
-        }
-        drop(l);
-        let l = self.0.read();
-        RwLockReadGuard::map(l,|v| 
-        match v {
-            StaticStatus::Value(v) => v,
-            
-            StaticStatus::Poisoned => {
+
+        let mut status = self.1.load(Ordering::Acquire);
+
+        if status == 0 {
+            let mut l = self.0.write();
+            status = self.1.load(Ordering::Acquire);
+            if status == 0 {
+                let g = Guard(& self.1);
+                *l = Some(self.2.generate());
+                std::mem::forget(g);
+                self.1.store(1,Ordering::Release)
+            } else if status == 2 {
                 panic!("Poisoned accceess");
             }
-            StaticStatus::Uninitialized => unreachable!(),
+            return RwLockReadGuard::map(RwLockWriteGuard::downgrade(l),|v| v.as_ref().unwrap());
+        } else if status == 2 {
+                panic!("Poisoned accceess");
         }
-        )
+
+        let l = self.0.read();
+
+        RwLockReadGuard::map(l,|v| v.as_ref().unwrap()) 
+        
     }
-    }
+}
 
 fn do_bench<'a,R,T, F: Fn()->T + Copy, A: Fn(&T)->R + Sync>(gp: &mut BenchmarkGroup<'a,WallTime>,name: &str,init: F, access: A) {
 
@@ -92,10 +179,12 @@ fn do_bench<'a,R,T, F: Fn()->T + Copy, A: Fn(&T)->R + Sync>(gp: &mut BenchmarkGr
                 &$t,
                 |_| init(),
                 |l| access(l),
-                Config::<true,$t,$l>,
+                Config::<true,$t,$l,true>,
             );
         }
     }
+
+    gp.measurement_time(Duration::from_secs(3));
 
     gp.bench_with_input(
         BenchmarkId::new(name, 1),
@@ -107,33 +196,45 @@ fn do_bench<'a,R,T, F: Fn()->T + Copy, A: Fn(&T)->R + Sync>(gp: &mut BenchmarkGr
             )
         );
     mb!(2);
+
+    gp.measurement_time(Duration::from_secs(5));
+
     mb!(4);
-    mb!(8);
+
+    gp.measurement_time(Duration::from_secs(8));
+
+    mb!(8-8);
+
+    gp.measurement_time(Duration::from_secs(15));
+
     mb!(16-8);
+
     mb!(32-8);
 
 }
             
 fn bench_init(c: &mut Criterion) {
 
-    let mut gp = c.benchmark_group("Init Thread Scaling");
-
-    gp.measurement_time(Duration::from_secs(15));
+    let mut gp = c.benchmark_group("Init Mut Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
+    do_bench(&mut gp,"LazyMut read",|| MutLazy::new(XX),  |l| *l.read());
 
-    //do_bench(&mut gp,"LazyMut read",|| MutLazy::new(XX),  |l| *l.read());
+    do_bench(&mut gp,"LazyMut write",|| MutLazy::new(XX),  |l| *l.write());
 
-    //do_bench(&mut gp,"LazyMut write",|| MutLazy::new(XX),  |l| *l.write());
+    let init = || RwMut::new(|| 33);
+
+    do_bench(&mut gp,"LazyMut PkLot read",init,  |l| *l.read());
+
+    do_bench(&mut gp,"LazyMut PkLot write",init,  |l| *l.write());
+
+    gp.finish();
 
 
-    //let init = || RwMut(RwLock::new(StaticStatus::Uninitialized),|| 33);
+    let mut gp = c.benchmark_group("Init Thread Scaling");
 
-    //do_bench(&mut gp,"LazyMut PkLot read",init,  |l| *l.read());
-
-    //do_bench(&mut gp,"LazyMut PkLot write",init,  |l| *l.write());
-
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
     do_bench(&mut gp,"Lazy",|| Lazy::new(XX),  |l| **l);
 
@@ -147,30 +248,174 @@ fn bench_init(c: &mut Criterion) {
     do_bench(&mut gp,"static_lazy::Lazy",init,  access);
 
     gp.finish();
-}
-
-fn bench_access(c: &mut Criterion) {
-
-    let mut gp = c.benchmark_group("Access Thread Scaling");
-
-    gp.measurement_time(Duration::from_secs(15));
+    
+    
+    let mut gp = c.benchmark_group("Init (1us) Mut Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
+    do_bench(&mut gp,"LazyMut read",|| MutLazy::new(W(Duration::from_micros(1))),  |l| *l.read());
 
-    do_bench(&mut gp,"LazyMut read",|| {let l = MutLazy::new(XX); l.read(); l},  |l| *l.read());
+    do_bench(&mut gp,"LazyMut write",|| MutLazy::new(W(Duration::from_micros(1))),  |l| *l.write());
 
-    do_bench(&mut gp,"LazyMut write",|| {let l = MutLazy::new(XX); l.read(); l},  |l| *l.write());
-
-
-    let init = || { let l = RwMut(RwLock::new(StaticStatus::Uninitialized),|| 33); let _ = l.read(); l};
+    let init = || RwMut::new(|| {occupy_for(Duration::from_micros(1));33});
 
     do_bench(&mut gp,"LazyMut PkLot read",init,  |l| *l.read());
 
     do_bench(&mut gp,"LazyMut PkLot write",init,  |l| *l.write());
 
+    gp.finish();
+
+
+    let mut gp = c.benchmark_group("Init (5us) Mut Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    do_bench(&mut gp,"LazyMut read",|| MutLazy::new(W(Duration::from_micros(5))),  |l| *l.read());
+
+    do_bench(&mut gp,"LazyMut write",|| MutLazy::new(W(Duration::from_micros(5))),  |l| *l.write());
+
+    let init = || RwMut::new(|| {occupy_for(Duration::from_micros(5));33});
+
+    do_bench(&mut gp,"LazyMut PkLot read",init,  |l| *l.read());
+
+    do_bench(&mut gp,"LazyMut PkLot write",init,  |l| *l.write());
+
+    gp.finish();
+    
+    
+    let mut gp = c.benchmark_group("Init (10us) Mut Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    do_bench(&mut gp,"LazyMut read",|| MutLazy::new(W(Duration::from_micros(10))),  |l| *l.read());
+
+    do_bench(&mut gp,"LazyMut write",|| MutLazy::new(W(Duration::from_micros(5))),  |l| *l.write());
+
+    let init = || RwMut::new(|| {occupy_for(Duration::from_micros(5));33});
+
+    do_bench(&mut gp,"LazyMut PkLot read",init,  |l| *l.read());
+
+    do_bench(&mut gp,"LazyMut PkLot write",init,  |l| *l.write());
+
+    gp.finish();
+
+
+    let mut gp = c.benchmark_group("Init (20us) Mut Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    do_bench(&mut gp,"LazyMut read",|| MutLazy::new(W(Duration::from_micros(20))),  |l| *l.read());
+
+    do_bench(&mut gp,"LazyMut write",|| MutLazy::new(W(Duration::from_micros(20))),  |l| *l.write());
+
+    let init = || RwMut::new(|| {occupy_for(Duration::from_micros(20));33});
+
+    do_bench(&mut gp,"LazyMut PkLot read",init,  |l| *l.read());
+
+    do_bench(&mut gp,"LazyMut PkLot write",init,  |l| *l.write());
+
+    gp.finish();
+    
+
+    let mut gp = c.benchmark_group("Init (1us) Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    do_bench(&mut gp,"Lazy",|| Lazy::new(W(Duration::from_micros(1))),  |l| **l);
+
+    let init = || STLazy::<i32>::INIT;
+
+    let access = |l: &STLazy<i32>| {   
+                let r: &'static STLazy<i32> = unsafe{&*(l as *const STLazy<i32>)};
+                *r.get(|| {occupy_for(Duration::from_micros(1));33})
+            };
+
+    do_bench(&mut gp,"static_lazy::Lazy",init,  access);
+
+    gp.finish();
+
+
+    let mut gp = c.benchmark_group("Init (5us) Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    do_bench(&mut gp,"Lazy",|| Lazy::new(W(Duration::from_micros(5))),  |l| **l);
+
+    let init = || STLazy::<i32>::INIT;
+
+    let access = |l: &STLazy<i32>| {   
+                let r: &'static STLazy<i32> = unsafe{&*(l as *const STLazy<i32>)};
+                *r.get(|| {occupy_for(Duration::from_micros(5));33})
+            };
+
+    do_bench(&mut gp,"static_lazy::Lazy",init,  access);
+
+
+    gp.finish();
+
+    let mut gp = c.benchmark_group("Init (20us) Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    do_bench(&mut gp,"Lazy",|| Lazy::new(W(Duration::from_micros(20))),  |l| **l);
+
+    let init = || STLazy::<i32>::INIT;
+
+    let access = |l: &STLazy<i32>| {   
+                let r: &'static STLazy<i32> = unsafe{&*(l as *const STLazy<i32>)};
+                *r.get(|| {occupy_for(Duration::from_micros(20));33})
+            };
+
+    do_bench(&mut gp,"static_lazy::Lazy",init,  access);
+
+    gp.finish();
+}
+
+#[dynamic(quasi_lazy)]
+static QL: i32 = 33;
+
+#[dynamic(quasi_lazy)]
+static mut QLM: i32 = 33;
+
+#[dynamic(quasi_lazy, drop)]
+static mut QLMD: i32 = 33;
+
+fn bench_access(c: &mut Criterion) {
+
+    let mut gp = c.benchmark_group("Access Mut Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    do_bench(&mut gp,"LazyMut read",|| {let l = MutLazy::new(XX); l.read(); l},  |l| *l.read());
+
+    do_bench(&mut gp,"LazyMut write",|| {let l = MutLazy::new(XX); l.read(); l},  |l| *l.write());
+
+    do_bench(&mut gp,"QuasiLazyMut read",|| (),  |_| *QLM.read());
+
+    do_bench(&mut gp,"QuasiLazyMut write",|| (),  |_| *QLM.write());
+
+    do_bench(&mut gp,"QuasiLazyMutDrop read",|| (),  |_| *QLMD.read());
+
+    do_bench(&mut gp,"QuasiLazyMutDrop write",|| (),  |_| *QLMD.write());
+
+
+    let init = || { let l = RwMut::new(|| 33); let _ = l.read(); l};
+
+    do_bench(&mut gp,"LazyMut PkLot read",init,  |l| *l.read());
+
+    do_bench(&mut gp,"LazyMut PkLot write",init,  |l| *l.write());
+
+    gp.finish();
+
+
+    let mut gp = c.benchmark_group("Access Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
     do_bench(&mut gp,"Lazy",|| { let l = Lazy::new(XX); let _ = *l; l},  |l| **l);
+
+    do_bench(&mut gp,"QuasiLazy",|| (),  |_| *QL);
 
     let init = || {
         let l = STLazy::<i32>::INIT; 
@@ -189,8 +434,332 @@ fn bench_access(c: &mut Criterion) {
 }
 
 criterion_group! {name=multi; config=Criterion::default();
-targets=bench_init
-//,bench_access
+targets=
+bench_init,
+bench_access,
+bench_heavy
 }
 
 criterion_main! {multi}
+
+struct YY(usize);
+
+impl Generator<Vec<usize>> for YY {
+    fn generate(&self) -> Vec<usize> {
+        let mut v = Vec::new();
+        for i in 0..self.0 {
+            v.push(i)
+        }
+        v
+    }
+}
+
+macro_rules! heavy_bench {
+    ($name: ident, $type: ident) => {
+fn $name<'a, const INIT_THEN_READ:bool>(gp: &mut BenchmarkGroup<'a,WallTime>, name: &str, size: usize
+) { 
+
+    const ITER: usize = 100;
+
+    static ID: [AtomicUsize; 128] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
+
+    static THREAD_IDS: AtomicUsize = AtomicUsize::new(0);
+
+    #[dynamic]
+    #[thread_local]
+    static THREAD_ID: usize = THREAD_IDS.fetch_add(1, Ordering::Relaxed);
+
+    let init =  || {
+            let v = $type::new(YY(size));
+            let _ = v.read();
+            v
+        };
+
+    let access = 
+        |l: &$type<Vec<usize>,YY>| {
+            let c0 = ID[*THREAD_ID].fetch_add(1, Ordering::Relaxed);
+            for k in 0..ITER {
+                if (INIT_THEN_READ && k > 2) || (!INIT_THEN_READ && (k + c0) % 8 > 2) {
+                    let l = l.read();
+                    let o0 = l[0];
+                    for (i, v) in l.iter().enumerate() {
+                        let x = *v;
+                        if x != o0 + i {
+                            eprintln!(
+                                "at read thread {} tryal id {}, loop id {}, elem {}, {} ne {}",
+                                *THREAD_ID,
+                                c0,
+                                k,
+                                i,
+                                x,
+                                o0 + i
+                            );
+                            std::thread::yield_now();
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            std::thread::yield_now();
+                            let o0 = l[0];
+                            for (i, v) in l.iter().enumerate() {
+                                let x = *v;
+                                if x != o0 + i {
+                                    eprintln!(
+                                        "later read error thread {} tryal id {}, loop id {}, elem \
+                                         {}, {} ne {}",
+                                        *THREAD_ID,
+                                        c0,
+                                        k,
+                                        i,
+                                        x,
+                                        o0 + i
+                                    );
+                                    eprintln!("this was a write error?");
+                                    std::process::exit(1);
+                                }
+                            }
+                            eprintln!("this was a read error?");
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    let mut l = l.write();
+                    let o0 = l[0];
+                    for (i, v) in l.iter_mut().enumerate().rev() {
+                        let x = *v;
+                        if x != o0 + i {
+                            eprintln!(
+                                "at write thread {} tryial id {}, loop id {}, elem {}, {} ne {}",
+                                *THREAD_ID,
+                                c0,
+                                k,
+                                i,
+                                x,
+                                o0 + i
+                            );
+                            std::process::exit(1);
+                        }
+                        *v = i + k * 1000 + 1000000 * c0 + *THREAD_ID * 1_000_000_000;
+                    }
+                }
+            }
+        };
+
+    synchro_bench_input(
+        gp,
+        BenchmarkId::new(name, size),
+        &size,
+        |_| init(),
+        access,
+        Config::<false,8,8,true>,
+    );
+
+}
+};
+}
+
+heavy_bench!{heavy_mutlazy,MutLazy}
+heavy_bench!{heavy_rwmut,RwMut}
+
+fn bench_heavy(c: &mut Criterion) {
+
+    let mut gp = c.benchmark_group("Heavy access reads / writes");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    heavy_mutlazy::<false>(&mut gp,"LazyMut",1024);
+
+    heavy_mutlazy::<false>(&mut gp,"LazyMut",2048);
+
+    gp.measurement_time(Duration::from_secs(5));
+
+    heavy_mutlazy::<false>(&mut gp,"LazyMut",4096);
+
+    heavy_mutlazy::<false>(&mut gp,"LazyMut",8192);
+
+    gp.measurement_time(Duration::from_secs(10));
+
+    heavy_mutlazy::<false>(&mut gp,"LazyMut",16384);
+
+    gp.measurement_time(Duration::from_secs(3));
+
+    heavy_rwmut::<false>(&mut gp,"RwLock",1024);
+
+    heavy_rwmut::<false>(&mut gp,"RwLock",2048);
+
+    gp.measurement_time(Duration::from_secs(5));
+
+    heavy_rwmut::<false>(&mut gp,"RwLock",4096);
+
+    heavy_rwmut::<false>(&mut gp,"RwLock",8192);
+
+    gp.measurement_time(Duration::from_secs(10));
+
+    heavy_rwmut::<false>(&mut gp,"RwLock",16384);
+
+    gp.finish();
+
+
+    let mut gp = c.benchmark_group("Heavy access writes then read");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    heavy_mutlazy::<true>(&mut gp,"LazyMut",1024);
+
+    heavy_mutlazy::<true>(&mut gp,"LazyMut",2048);
+
+    gp.measurement_time(Duration::from_secs(5));
+
+    heavy_mutlazy::<true>(&mut gp,"LazyMut",4096);
+
+    heavy_mutlazy::<true>(&mut gp,"LazyMut",8192);
+
+    gp.measurement_time(Duration::from_secs(10));
+
+    heavy_mutlazy::<true>(&mut gp,"LazyMut",16384);
+
+    gp.measurement_time(Duration::from_secs(3));
+
+    heavy_rwmut::<true>(&mut gp,"RwLock",1024);
+
+    heavy_rwmut::<true>(&mut gp,"RwLock",2048);
+
+    gp.measurement_time(Duration::from_secs(5));
+
+    heavy_rwmut::<true>(&mut gp,"RwLock",4096);
+
+    heavy_rwmut::<true>(&mut gp,"RwLock",8192);
+
+    gp.measurement_time(Duration::from_secs(10));
+
+    heavy_rwmut::<true>(&mut gp,"RwLock",16384);
+
+    gp.finish();
+
+}

@@ -216,8 +216,8 @@ mod lazy {
         static mut B2: B = B;
 
         std::thread::spawn(|| {
-            &*B1;
-            &*B2.read();
+            let _ = &*B1;
+            let _ = &*B2.read();
         })
         .join()
         .unwrap();

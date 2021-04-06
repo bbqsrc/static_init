@@ -5,6 +5,16 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// TODO:    
+//          - bencher les thread locals
+//          - rendre plus lisible le mutex et le renomer en phase locker
+//          - ajouter aux macros les lazy const initializé et la tolérance à la non registration
+//            du destructeur
+//          - voir si splited_sequentializer sync/unsync ne peuvent pas être regroupés
+//          - refaire la safety analysis
+//          - voir si specializer le phase locker pour les cas non mut / mut lazy
+//          - revoir la doc
+
 #![cfg_attr(not(any(feature = "parking_lot_core", debug_mode)), no_std)]
 #![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]
 #![cfg_attr(

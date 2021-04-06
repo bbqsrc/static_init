@@ -464,7 +464,10 @@ fn wake_readers(futex: &Futex, to_unactivate: u32, converting: bool) -> ReadLock
         Ordering::Relaxed,
     );
     assert_eq!(v & to_unactivate, to_unactivate);
-    assert_ne!(v & READER_UNITY, rb);
+    if !converting {
+        //otherwise threads may be already taking read lock
+        assert_ne!(v & READER_UNITY, rb);//BUG: fired
+    }
     assert_eq!((v ^ to_unactivate) & LOCKED_BIT, 0);
     let c = futex.wake_readers();
     //TODO: on peut se contanter de réveiller MAX_WAKED_READERS, ce qui évite l'assertion

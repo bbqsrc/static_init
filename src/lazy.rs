@@ -60,6 +60,24 @@ impl LazyPolicy for InitializedAndNonFinalizedChecker {
 //    }
 //}
 
+/// Helper to access static lazy associated functions
+pub trait LazyAccess: Sized {
+    type Target;
+     /// Initialize if necessary the return a reference to the lazy
+     ///
+     /// # Panics
+     ///
+     /// Panic if previous attempt to initialize has panicked or if initialization
+     /// panic.
+     fn get(this: Self) -> Self::Target;
+     /// Return a reference to the target if initialized otherwise return an error. 
+     fn try_get(this: Self) -> Result<Self::Target,AccessError>;
+     /// The current phase of the static
+     fn phase(this: Self) -> Phase;
+     /// Initialize the static if there were no previous attempt to initialize it. 
+     fn init(this: Self) -> Phase;
+}
+
 macro_rules! impl_lazy {
     ($tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
         impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?}
@@ -121,6 +139,32 @@ macro_rules! impl_lazy {
                 Self::get_mut(self)
             }
         }
+
+        impl<'a,T,G> LazyAccess for &'a $tp<T,G> 
+            where $data: 'static + LazyData<Target=T>,
+            G: 'static + Generator<T>,
+            $(G:$trg, T:Sync,)?
+            $(T:$tr,)?
+            {
+            type Target = &'a T;
+             #[inline(always)]
+             fn get(this: Self) -> &'a T {
+                 $tp::get(this)
+             }
+             #[inline(always)]
+             fn try_get(this: Self) -> Result<&'a T,AccessError>{
+                 $tp::try_get(this)
+             }
+             #[inline(always)]
+             fn phase(this: Self) -> Phase{
+                 $tp::phase(this)
+             }
+             #[inline(always)]
+             fn init(this: Self) -> Phase {
+                 $tp::init(this)
+             }
+        }
+
     };
     (@deref_static $tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
         impl<T, G> $tp<T, G>
@@ -152,6 +196,31 @@ macro_rules! impl_lazy {
                  // SAFETY The object is required to have 'static lifetime by construction
                  Self::get(unsafe{as_static(self)})
             }
+        }
+
+        impl<T,G> LazyAccess for &'static $tp<T,G> 
+            where $data: 'static + LazyData<Target=T>,
+            G: 'static + Generator<T>,
+            $(G:$trg, T:Sync,)?
+            $(T:$tr,)?
+            {
+            type Target = &'static T;
+             #[inline(always)]
+             fn get(this: Self) -> &'static T {
+                 $tp::get(this)
+             }
+             #[inline(always)]
+             fn try_get(this: Self) -> Result<&'static T,AccessError>{
+                 $tp::try_get(this)
+             }
+             #[inline(always)]
+             fn phase(this: Self) -> Phase{
+                 $tp::phase(this)
+             }
+             #[inline(always)]
+             fn init(this: Self) -> Phase {
+                 $tp::init(this)
+             }
         }
 
     };
@@ -208,6 +277,30 @@ macro_rules! impl_lazy {
                 // set all QuasiLazy are guaranteed to be initialized
                 Self::get(unsafe{as_static(self)})
             }
+        }
+        impl<T,G> LazyAccess for &'static $tp<T,G> 
+            where $data: 'static + LazyData<Target=T>,
+            G: 'static + Generator<T>,
+            $(G:$trg, T:Sync,)?
+            $(T:$tr,)?
+            {
+            type Target = &'static T;
+             #[inline(always)]
+             fn get(this: Self) -> &'static T {
+                 $tp::get(this)
+             }
+             #[inline(always)]
+             fn try_get(this: Self) -> Result<&'static T,AccessError>{
+                 $tp::try_get(this)
+             }
+             #[inline(always)]
+             fn phase(this: Self) -> Phase{
+                 $tp::phase(this)
+             }
+             #[inline(always)]
+             fn init(this: Self) -> Phase{
+                 $tp::init(this)
+             }
         }
 
     };
@@ -271,6 +364,7 @@ macro_rules! impl_lazy {
                 GenericLazy::init(&this.__private)
             }
         }
+
     };
 }
 
