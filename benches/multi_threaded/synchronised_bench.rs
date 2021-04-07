@@ -1,14 +1,16 @@
-use std::time::Duration;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{sync_channel, SyncSender};
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{sync_channel, SyncSender};
+use std::time::Duration;
 
-use libc::{rusage,getrusage,RUSAGE_THREAD};
+use static_init::dynamic;
+
+use libc::{getrusage, rusage, RUSAGE_THREAD};
 
 use crossbeam::thread;
 
-use criterion::{black_box,BenchmarkGroup,measurement::WallTime,BenchmarkId};
+use criterion::{black_box, measurement::WallTime, BenchmarkGroup, BenchmarkId};
 
 use crate::tick_counter::TickCounter;
 
@@ -16,7 +18,12 @@ struct MutSynchronized<T>(UnsafeCell<T>);
 
 unsafe impl<T> Sync for MutSynchronized<T> {}
 
-pub struct Config<const MICRO_BENCH: bool, const NTHREAD: usize, const NT_SART: usize, const TOLERATE_CONTEXT_SWITCH: bool>;
+pub struct Config<
+    const MICRO_BENCH: bool,
+    const NTHREAD: usize,
+    const NT_SART: usize,
+    const TOLERATE_CONTEXT_SWITCH: bool,
+>;
 
 //pub fn synchro_bench<T, R, const MICRO_BENCH: bool, const NT: usize, const NT_START: usize>(
 //    c: &mut BenchmarkGroup<WallTime>,
@@ -140,12 +147,23 @@ pub struct Config<const MICRO_BENCH: bool, const NTHREAD: usize, const NT_SART: 
 fn get_context_switch() -> i64 {
     unsafe {
         let mut usage = MaybeUninit::<rusage>::zeroed().assume_init();
-        assert_eq!(getrusage(RUSAGE_THREAD, &mut usage),0);
+        assert_eq!(getrusage(RUSAGE_THREAD, &mut usage), 0);
         usage.ru_nvcsw + usage.ru_nivcsw
     }
 }
 
-pub fn synchro_bench_input<I,T, R, const MICRO_BENCH: bool, const NT: usize, const NT_START: usize, const TOL_SWITCH: bool>(
+#[dynamic(0)]
+static TK: TickCounter = TickCounter::new();
+
+pub fn synchro_bench_input<
+    I,
+    T,
+    R,
+    const MICRO_BENCH: bool,
+    const NT: usize,
+    const NT_START: usize,
+    const TOL_SWITCH: bool,
+>(
     c: &mut BenchmarkGroup<WallTime>,
     id: BenchmarkId,
     input: &I,
@@ -153,12 +171,9 @@ pub fn synchro_bench_input<I,T, R, const MICRO_BENCH: bool, const NT: usize, con
     access: impl Fn(&T) -> R + Sync,
     _: Config<MICRO_BENCH, NT, NT_START, TOL_SWITCH>,
 ) {
-
     let started: AtomicUsize = AtomicUsize::new(NT_START);
 
     let vm: MutSynchronized<T> = MutSynchronized(UnsafeCell::new(build(input)));
-
-    let tk = TickCounter::new();
 
     let (sender, receiver) = sync_channel(0);
 
@@ -168,7 +183,7 @@ pub fn synchro_bench_input<I,T, R, const MICRO_BENCH: bool, const NT: usize, con
         let test_init = {
             |sender: SyncSender<Option<Duration>>| loop {
                 let mut expect = 0;
-                let deb_prempted_count = if TOL_SWITCH { 0 } else {get_context_switch()};
+                let deb_prempted_count = if TOL_SWITCH { 0 } else { get_context_switch() };
                 loop {
                     match started.compare_exchange_weak(
                         expect,
@@ -193,13 +208,13 @@ pub fn synchro_bench_input<I,T, R, const MICRO_BENCH: bool, const NT: usize, con
                     }
                 }
                 let duration = if MICRO_BENCH {
-                    tk.time(|| unsafe { access(&*vm.0.get()) })
+                    unsafe { TK.time(|| access(&*vm.0.get())) }
                 } else {
                     let s = std::time::Instant::now();
                     black_box(unsafe { access(&*vm.0.get()) });
                     s.elapsed()
                 };
-                let end_prempted_count = if TOL_SWITCH { 0 } else {get_context_switch()};
+                let end_prempted_count = if TOL_SWITCH { 0 } else { get_context_switch() };
                 if end_prempted_count == deb_prempted_count {
                     sender.send(Some(duration)).unwrap();
                 } else {
@@ -216,7 +231,9 @@ pub fn synchro_bench_input<I,T, R, const MICRO_BENCH: bool, const NT: usize, con
                     if x >= 2 * NT + 10 {
                         expect = x;
                     }
-                    for _ in 1..32 {core::hint::spin_loop()};
+                    for _ in 1..32 {
+                        core::hint::spin_loop()
+                    }
                 }
             }
         };
@@ -225,8 +242,6 @@ pub fn synchro_bench_input<I,T, R, const MICRO_BENCH: bool, const NT: usize, con
 
         c.bench_with_input(id, input, |b, input| {
             b.iter_custom(|iter| {
-                //lazyly spawn the thread because criterion run all benches with
-                //iter=0 when filtering benches
                 if iter > 0 && spawned.is_empty() {
                     for _ in 0..NT {
                         let sender = sender.clone();
@@ -240,23 +255,32 @@ pub fn synchro_bench_input<I,T, R, const MICRO_BENCH: bool, const NT: usize, con
                     unsafe { *vm.0.get() = build(input) };
                     //VMX.store(0, Ordering::Relaxed);
                     while started
-                        .compare_exchange_weak(NT_START, NT_START + 1, Ordering::AcqRel, Ordering::Relaxed)
+                        .compare_exchange_weak(
+                            NT_START,
+                            NT_START + 1,
+                            Ordering::AcqRel,
+                            Ordering::Relaxed,
+                        )
                         .is_err()
                     {
-                        for _ in 1..8 {core::hint::spin_loop()};
+                        for _ in 1..8 {
+                            core::hint::spin_loop()
+                        }
                     }
                     let mut iter_total = Duration::from_secs(0);
                     let mut had_failure = false;
                     for _ in 0..NT {
-                        iter_total += 
-                            match receiver.recv_timeout(Duration::from_secs(10)) {
-                                Err(_) => {
-                                    eprintln!("Timed out");
-                                    std::process::exit(1);
-                                }
-                                Ok(Some(v)) => v,
-                                Ok(None) => {had_failure = true; Duration::from_secs(0)},
+                        iter_total += match receiver.recv_timeout(Duration::from_secs(10)) {
+                            Err(_) => {
+                                eprintln!("Timed out");
+                                std::process::exit(1);
                             }
+                            Ok(Some(v)) => v,
+                            Ok(None) => {
+                                had_failure = true;
+                                Duration::from_secs(0)
+                            }
+                        }
                     }
                     if !had_failure {
                         index += 1;
@@ -264,18 +288,25 @@ pub fn synchro_bench_input<I,T, R, const MICRO_BENCH: bool, const NT: usize, con
                     } else {
                         iter_failure += 1;
                         if iter_failure > 4 * iter && (index == 0 || iter_failure / index > 10) {
-                                    eprintln!("To many iteration failure due to context switches");
-                                    std::process::exit(1);
+                            eprintln!("To many iteration failure due to context switches");
+                            std::process::exit(1);
                         }
                     }
                     started
-                        .compare_exchange(NT_START + 1, 2 * NT + 10, Ordering::AcqRel, Ordering::Relaxed)
+                        .compare_exchange(
+                            NT_START + 1,
+                            2 * NT + 10,
+                            Ordering::AcqRel,
+                            Ordering::Relaxed,
+                        )
                         .unwrap();
                     while started
                         .compare_exchange_weak(3 * NT + 10, 0, Ordering::AcqRel, Ordering::Relaxed)
                         .is_err()
                     {
-                        for _ in 1..32 {core::hint::spin_loop()};
+                        for _ in 1..32 {
+                            core::hint::spin_loop()
+                        }
                     }
                 }
                 total
@@ -289,4 +320,3 @@ pub fn synchro_bench_input<I,T, R, const MICRO_BENCH: bool, const NT: usize, con
     })
     .unwrap();
 }
-

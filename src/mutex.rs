@@ -10,7 +10,7 @@ mod unsync_phase_locker;
 pub use unsync_phase_locker::UnSyncPhaseLocker;
 pub use unsync_phase_locker::{UnSyncPhaseGuard, UnSyncReadPhaseGuard};
 
-use super::Phase;
+use super::{Phase, Phased};
 
 /// A phase guard ensure that the target object will
 /// performed atomic phase transition
@@ -49,6 +49,35 @@ pub unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
         on_success: Phase,
         on_panic: Phase,
     ) -> R;
+}
+
+pub trait PhaseLockerEmptyStart {
+    const INIT: Self;
+}
+
+pub trait Mappable<T, V, U> {
+    fn map<F: FnOnce(&T) -> &V>(self, f: F) -> U;
+}
+
+pub unsafe trait PhaseLocker<'a, T: 'a> {
+    type ReadGuard: Phased;
+    type WriteGuard: Phased + PhaseGuard<'a, T>;
+
+    fn lock<FL: Fn(Phase) -> LockNature, FW: Fn(Phase) -> LockNature>(
+        &'a self,
+        value: &'a T,
+        lock_nature: FL,
+        on_wake_nature: FW,
+        hint: Phase,
+    ) -> LockResult<Self::ReadGuard, Self::WriteGuard>;
+    fn lock_mut(&'a mut self, value: &'a T) -> Self::WriteGuard;
+    fn try_lock<F: Fn(Phase) -> LockNature>(
+        &'a self,
+        value: &'a T,
+        lock_nature: F,
+        hint: Phase,
+    ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>>;
+    fn phase(&self) -> Phase;
 }
 
 /// Nature of the lock requested

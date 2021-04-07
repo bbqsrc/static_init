@@ -5,15 +5,16 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-// TODO:    
+// TODO:
+//          - renomer split_sequentializer en lazy_sequentializer
+//          - sortir le finalization callback pour faciliter usage externe to at_exit
 //          - bencher les thread locals
 //          - rendre plus lisible le mutex et le renomer en phase locker
+//          - refaire la safety analysis
+//          - revoir la doc
+//          - voir si specializer le phase locker pour les cas non mut / mut lazy
 //          - ajouter aux macros les lazy const initializé et la tolérance à la non registration
 //            du destructeur
-//          - voir si splited_sequentializer sync/unsync ne peuvent pas être regroupés
-//          - refaire la safety analysis
-//          - voir si specializer le phase locker pour les cas non mut / mut lazy
-//          - revoir la doc
 
 #![cfg_attr(not(any(feature = "parking_lot_core", debug_mode)), no_std)]
 #![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]
@@ -302,7 +303,7 @@ pub unsafe trait SplitedLazySequentializer<'a, T: Sequential>:
         init_on_reg_failure: bool,
     ) -> Option<Self::WriteGuard>;
     /// A callback that is intened to be stored by the `reg` argument of `init` method.
-    fn finalize_callback(s: &T, f: impl FnOnce(&T::Data));
+    fn finalize_callback(s: &'a T, f: impl FnOnce(&'a T::Data));
 }
 
 /// Generates a value of type `T`

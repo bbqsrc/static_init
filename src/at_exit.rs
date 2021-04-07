@@ -1,8 +1,8 @@
 #![cfg(any(elf, mach_o, coff))]
 
 mod exit_manager {
-    use crate::mutex::Mutex;
     use crate::mutex::{LockNature, LockResult, SyncPhaseGuard, SyncReadPhaseGuard};
+    use crate::mutex::{Mutex, SyncPhasedLocker};
     use crate::splited_sequentializer::SyncSequentializer as SubSequentializer;
     use crate::Finaly;
     use crate::{
@@ -86,18 +86,19 @@ mod exit_manager {
     pub use reg::finalize_at_exit;
 
     #[allow(clippy::declare_interior_mutable_const)]
-    /// This object is only used to be copied
-    const GLOBAL_INIT: ExitSequentializerBase = ExitSequentializerBase {
-        sub:  SubSequentializer::new(),
-        next: Mutex::new(None),
-    };
+    /// This object is only used to for const initialization
+    const MUTEX_INIT: Mutex<Option<&'static Node>> = Mutex::new(None);
 
     impl<const IRF: bool> ExitSequentializer<IRF> {
         /// Create a new ExitSequentializer
         ///
         /// Useless if the target object is not 'static
-        pub const fn new() -> Self {
-            Self(GLOBAL_INIT)
+        pub const fn new(l: SyncPhasedLocker) -> Self {
+            //Self(GLOBAL_INIT)
+            Self(ExitSequentializerBase {
+                sub:  SubSequentializer::new(l),
+                next: MUTEX_INIT,
+            })
         }
     }
 
@@ -261,7 +262,9 @@ mod local_manager {
 
     use core::cell::Cell;
 
-    use crate::mutex::{LockNature, LockResult, UnSyncPhaseGuard, UnSyncReadPhaseGuard};
+    use crate::mutex::{
+        LockNature, LockResult, UnSyncPhaseGuard, UnSyncPhaseLocker, UnSyncReadPhaseGuard,
+    };
 
     trait OnExit {
         fn take_next(&self) -> Option<&'static Node>;
@@ -286,15 +289,16 @@ mod local_manager {
 
     #[allow(clippy::declare_interior_mutable_const)]
     /// This object is only used to be copied
-    const LOCAL_INIT: ThreadExitSequentializerBase = ThreadExitSequentializerBase {
-        sub:  SubSequentializer::new(),
-        next: Cell::new(None),
-    };
+    const CELL_INIT: Cell<Option<&'static Node>> = Cell::new(None);
 
     impl<const IRF: bool> ThreadExitSequentializer<IRF> {
         /// Useless if the target object is not a static thread_local
-        pub const fn new() -> Self {
-            Self(LOCAL_INIT)
+        pub const fn new(l: UnSyncPhaseLocker) -> Self {
+            //Self(GLOBAL_INIT)
+            Self(ThreadExitSequentializerBase {
+                sub:  SubSequentializer::new(l),
+                next: CELL_INIT,
+            })
         }
     }
 

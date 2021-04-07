@@ -1,4 +1,4 @@
-use super::{LockNature, LockResult, PhaseGuard};
+use super::{LockNature, LockResult, Mappable, PhaseGuard, PhaseLocker};
 use crate::phase::*;
 use crate::{Phase, Phased};
 use core::cell::Cell;
@@ -35,10 +35,16 @@ impl<'a, T: ?Sized> UnSyncPhaseGuard<'a, T> {
     }
 
     #[inline(always)]
-    pub fn map<S: ?Sized>(self, f: impl Fn(&'a T) -> &'a S) -> UnSyncPhaseGuard<'a, S> {
+    pub fn map<S: ?Sized>(self, f: impl FnOnce(&'a T) -> &'a S) -> UnSyncPhaseGuard<'a, S> {
         let p = UnSyncPhaseGuard(f(self.0), self.1, self.2);
         forget(self);
         p
+    }
+}
+impl<'a, T: 'a, U: 'a> Mappable<T, U, UnSyncPhaseGuard<'a, U>> for UnSyncPhaseGuard<'a, T> {
+    #[inline(always)]
+    fn map<F: FnOnce(&'a T) -> &'a U>(self, f: F) -> UnSyncPhaseGuard<'a, U> {
+        Self::map(self, f)
     }
 }
 
@@ -109,10 +115,16 @@ impl<'a, T: ?Sized> UnSyncReadPhaseGuard<'a, T> {
         Phase::from_bits_truncate(self.1.get())
     }
     #[inline(always)]
-    pub fn map<S: ?Sized>(self, f: impl Fn(&'a T) -> &'a S) -> UnSyncReadPhaseGuard<'a, S> {
+    pub fn map<S: ?Sized>(self, f: impl FnOnce(&'a T) -> &'a S) -> UnSyncReadPhaseGuard<'a, S> {
         let p = UnSyncReadPhaseGuard(f(self.0), self.1);
         forget(self);
         p
+    }
+}
+impl<'a, T: 'a, U: 'a> Mappable<T, U, UnSyncReadPhaseGuard<'a, U>> for UnSyncReadPhaseGuard<'a, T> {
+    #[inline(always)]
+    fn map<F: FnOnce(&'a T) -> &'a U>(self, f: F) -> UnSyncReadPhaseGuard<'a, U> {
+        Self::map(self, f)
     }
 }
 
@@ -120,6 +132,48 @@ impl<'a, T: ?Sized> Drop for UnSyncReadPhaseGuard<'a, T> {
     #[inline(always)]
     fn drop(&mut self) {
         self.1.set(self.1.get() - READER_UNITY);
+    }
+}
+
+// UnSyncPhasedLocker
+// ---------------
+//
+unsafe impl<'a, T: 'a> PhaseLocker<'a, T> for UnSyncPhaseLocker {
+    type ReadGuard = UnSyncReadPhaseGuard<'a, T>;
+    type WriteGuard = UnSyncPhaseGuard<'a, T>;
+
+    #[inline(always)]
+    fn lock<FL: Fn(Phase) -> LockNature, FW: Fn(Phase) -> LockNature>(
+        &'a self,
+        value: &'a T,
+        lock_nature: FL,
+        _on_wake_nature: FW,
+        _hint: Phase,
+    ) -> LockResult<Self::ReadGuard, Self::WriteGuard> {
+        Self::lock(self, value, lock_nature)
+    }
+    #[inline(always)]
+    fn lock_mut(&'a mut self, value: &'a T) -> Self::WriteGuard {
+        Self::lock_mut(self, value)
+    }
+    #[inline(always)]
+    fn try_lock<F: Fn(Phase) -> LockNature>(
+        &'a self,
+        value: &'a T,
+        lock_nature: F,
+        _hint: Phase,
+    ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>> {
+        Self::try_lock(self, value, lock_nature)
+    }
+    #[inline(always)]
+    fn phase(&self) -> Phase {
+        Self::phase(self)
+    }
+}
+
+impl Phased for UnSyncPhaseLocker {
+    fn phase(this: &Self) -> Phase {
+        this.phase()
     }
 }
 

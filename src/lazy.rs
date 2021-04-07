@@ -1,4 +1,7 @@
-use crate::mutex::{SyncPhaseGuard, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncReadPhaseGuard};
+use crate::mutex::{
+    SyncPhaseGuard, SyncPhasedLocker, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncPhaseLocker,
+    UnSyncReadPhaseGuard,
+};
 use crate::{
     generic_lazy::{
         AccessError, DropedUnInited, GenericLazy, GenericMutLazy, LazyData, LazyPolicy, ReadGuard,
@@ -63,32 +66,32 @@ impl LazyPolicy for InitializedAndNonFinalizedChecker {
 /// Helper to access static lazy associated functions
 pub trait LazyAccess: Sized {
     type Target;
-     /// Initialize if necessary the return a reference to the lazy
-     ///
-     /// # Panics
-     ///
-     /// Panic if previous attempt to initialize has panicked or if initialization
-     /// panic.
-     fn get(this: Self) -> Self::Target;
-     /// Return a reference to the target if initialized otherwise return an error. 
-     fn try_get(this: Self) -> Result<Self::Target,AccessError>;
-     /// The current phase of the static
-     fn phase(this: Self) -> Phase;
-     /// Initialize the static if there were no previous attempt to initialize it. 
-     fn init(this: Self) -> Phase;
+    /// Initialize if necessary the return a reference to the lazy
+    ///
+    /// # Panics
+    ///
+    /// Panic if previous attempt to initialize has panicked or if initialization
+    /// panic.
+    fn get(this: Self) -> Self::Target;
+    /// Return a reference to the target if initialized otherwise return an error.
+    fn try_get(this: Self) -> Result<Self::Target, AccessError>;
+    /// The current phase of the static
+    fn phase(this: Self) -> Phase;
+    /// Initialize the static if there were no previous attempt to initialize it.
+    fn init(this: Self) -> Phase;
 }
 
 macro_rules! impl_lazy {
-    ($tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?}
+    ($tp:ident, $man:ty, $checker:ty, $data:ty, $locker:ty $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
+        impl_lazy! {@proc $tp,$man,$checker,$data,$locker,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?}
         impl_lazy! {@deref $tp,$man,$checker,$data$(,T:$tr)?$(,G:$trg)?}
     };
-    (global $tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?,$doc:literal $(cfg($attr:meta))?) => {
-        impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe,'static}
+    (global $tp:ident, $man:ty, $checker:ty, $data:ty, $locker:ty $(,T: $tr: ident)?$(,G: $trg:ident)?,$doc:literal $(cfg($attr:meta))?) => {
+        impl_lazy! {@proc $tp,$man,$checker,$data,$locker,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe,'static}
         impl_lazy! {@deref_global $tp,$man,$checker,$data$(,T:$tr)?$(,G:$trg)?}
     };
-    (static $tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?,$doc:literal $(cfg($attr:meta))?) => {
-        impl_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe,'static}
+    (static $tp:ident, $man:ty, $checker:ty, $data:ty, $locker:ty $(,T: $tr: ident)?$(,G: $trg:ident)?,$doc:literal $(cfg($attr:meta))?) => {
+        impl_lazy! {@proc $tp,$man,$checker,$data,$locker,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe,'static}
         impl_lazy! {@deref_static $tp,$man,$checker,$data$(,T:$tr)?$(,G:$trg)?}
     };
     (@deref $tp:ident, $man:ty, $checker:ty, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
@@ -140,7 +143,7 @@ macro_rules! impl_lazy {
             }
         }
 
-        impl<'a,T,G> LazyAccess for &'a $tp<T,G> 
+        impl<'a,T,G> LazyAccess for &'a $tp<T,G>
             where $data: 'static + LazyData<Target=T>,
             G: 'static + Generator<T>,
             $(G:$trg, T:Sync,)?
@@ -198,7 +201,7 @@ macro_rules! impl_lazy {
             }
         }
 
-        impl<T,G> LazyAccess for &'static $tp<T,G> 
+        impl<T,G> LazyAccess for &'static $tp<T,G>
             where $data: 'static + LazyData<Target=T>,
             G: 'static + Generator<T>,
             $(G:$trg, T:Sync,)?
@@ -278,7 +281,7 @@ macro_rules! impl_lazy {
                 Self::get(unsafe{as_static(self)})
             }
         }
-        impl<T,G> LazyAccess for &'static $tp<T,G> 
+        impl<T,G> LazyAccess for &'static $tp<T,G>
             where $data: 'static + LazyData<Target=T>,
             G: 'static + Generator<T>,
             $(G:$trg, T:Sync,)?
@@ -304,7 +307,7 @@ macro_rules! impl_lazy {
         }
 
     };
-    (@proc $tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr $(,T: $tr: ident)?$(,G: $trg:ident)?,$doc:literal $(cfg($attr:meta))? $(,$safe:ident)?$(,$static:lifetime)?) => {
+    (@proc $tp:ident, $man:ty, $checker:ty, $data:ty,$locker:ty, $init:expr $(,T: $tr: ident)?$(,G: $trg:ident)?,$doc:literal $(cfg($attr:meta))? $(,$safe:ident)?$(,$static:lifetime)?) => {
         #[doc=$doc]
         $(#[cfg_attr(docsrs,doc(cfg($attr)))])?
         pub struct $tp<T, G = fn() -> T> {
@@ -332,7 +335,7 @@ macro_rules! impl_lazy {
                 #[allow(unused_unsafe)]
                 Self {
 
-                    __private: unsafe{GenericLazy::new(f, <$man>::new(),<$data>::INIT)},
+                    __private: unsafe{GenericLazy::new(f, <$man>::new(<$locker>::new(Phase::empty())),<$data>::INIT)},
                 }
             }
             /// Build a new static object with debug information
@@ -344,7 +347,7 @@ macro_rules! impl_lazy {
             pub const $($safe)?  fn new_static_with_info(f: G, info: StaticInfo) -> Self {
                 #[allow(unused_unsafe)]
                 Self {
-                    __private: unsafe{GenericLazy::new_with_info(f, <$man>::new(), <$data>::INIT,info)},
+                    __private: unsafe{GenericLazy::new_with_info(f, <$man>::new(<$locker>::new(Phase::empty())), <$data>::INIT,info)},
                 }
             }
         }
@@ -368,41 +371,41 @@ macro_rules! impl_lazy {
     };
 }
 
-impl_lazy! {Lazy,SyncSequentializer,InitializedChecker,UnInited::<T>,
+impl_lazy! {Lazy,SyncSequentializer,InitializedChecker,UnInited::<T>,SyncPhasedLocker,
 "A type that initialize it self only once on the first access"}
 
-impl_lazy! {global QuasiLazy,SyncSequentializer,InitializedChecker,UnInited::<T>,
+impl_lazy! {global QuasiLazy,SyncSequentializer,InitializedChecker,UnInited::<T>,SyncPhasedLocker,
 "The actual type of statics attributed with #[dynamic(quasi_lazy)]. \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
-impl_lazy! {static LazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,T:Finaly,G:Sync,
+impl_lazy! {static LazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhasedLocker,T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable static."
 }
 
-impl_lazy! {global QuasiLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,T:Finaly,G:Sync,
+impl_lazy! {global QuasiLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhasedLocker,T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_lazy,finalize)]. \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
-impl_lazy! {UnSyncLazy,UnSyncSequentializer,InitializedChecker,UnInited::<T>,
+impl_lazy! {UnSyncLazy,UnSyncSequentializer,InitializedChecker,UnInited::<T>,UnSyncPhaseLocker,
 "A version of [Lazy] whose reference can not be passed to other thread"
 }
 
 #[cfg(feature = "thread_local")]
-impl_lazy! {static UnSyncLazyFinalize,ThreadExitSequentializer<false>,InitializedChecker,UnInited::<T>,T:Finaly,
+impl_lazy! {static UnSyncLazyFinalize,ThreadExitSequentializer<false>,InitializedChecker,UnInited::<T>,UnSyncPhaseLocker,T:Finaly,
 "The actual type of thread_local statics attributed with #[dynamic(lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
 }
 #[cfg(feature = "thread_local")]
-impl_lazy! {static UnSyncLazyDroped,ThreadExitSequentializer<false>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>,
+impl_lazy! {static UnSyncLazyDroped,ThreadExitSequentializer<false>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>,UnSyncPhaseLocker,
 "The actual type of thread_local statics attributed with #[dynamic(lazy,drop)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
@@ -474,20 +477,20 @@ impl<T, G> Drop for UnSyncLazy<T, G> {
 }
 
 macro_rules! impl_mut_lazy {
-    ($tp:ident, $man:ty, $checker:ty, $data:ty, $gdw: ident, $gd: ident $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        impl_mut_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?}
+    ($tp:ident, $man:ty, $checker:ty, $data:ty, $locker:ty, $gdw: ident, $gd: ident $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
+        impl_mut_lazy! {@proc $tp,$man,$checker,$data,$locker, <$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?}
         impl_mut_lazy! {@lock $tp,$man,$checker,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
     };
-    (static $tp:ident, $man:ty, $checker:ty, $data:ty, $gdw: ident,$gd:ident  $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        impl_mut_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, 'static}
+    (static $tp:ident, $man:ty, $checker:ty, $data:ty, $locker: ty, $gdw: ident,$gd:ident  $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
+        impl_mut_lazy! {@proc $tp,$man,$checker,$data,$locker, <$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, 'static}
         impl_mut_lazy! {@lock $tp,$man,$checker,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)? , 'static}
     };
-    (thread_local $tp:ident, $man:ty, $checker:ty, $data:ty, $gdw: ident,$gd:ident  $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        impl_mut_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe}
+    (thread_local $tp:ident, $man:ty, $checker:ty, $data:ty,$locker: ty,  $gdw: ident,$gd:ident  $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
+        impl_mut_lazy! {@proc $tp,$man,$checker,$data,$locker, <$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe}
         impl_mut_lazy! {@lock_thread_local $tp,$man,$checker,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
     };
-    (global $tp:ident, $man:ty, $checker:ty, $data:ty, $gdw: ident,$gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        impl_mut_lazy! {@proc $tp,$man,$checker,$data,<$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe, 'static}
+    (global $tp:ident, $man:ty, $checker:ty, $data:ty,$locker: ty,  $gdw: ident,$gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
+        impl_mut_lazy! {@proc $tp,$man,$checker,$data,$locker, <$man>::new()$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe, 'static}
         impl_mut_lazy! {@lock_global $tp,$man,$checker,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
     };
     (@lock $tp:ident, $man:ty, $checker:ty, $data:ty, $gdw: ident, $gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)? $(,$static:lifetime)?) => {
@@ -786,7 +789,7 @@ macro_rules! impl_mut_lazy {
         }
 
     };
-    (@proc $tp:ident, $man:ty, $checker:ty, $data:ty, $init:expr$(,T: $tr: ident)?$(,G: $trg:ident)?
+    (@proc $tp:ident, $man:ty, $checker:ty, $data:ty, $locker: ty, $init:expr$(,T: $tr: ident)?$(,G: $trg:ident)?
     ,$doc:literal $(cfg($attr:meta))? $(,$safe:ident)? $(,$static:lifetime)?) => {
         #[doc=$doc]
         $(#[cfg_attr(docsrs,doc(cfg($attr)))])?
@@ -813,7 +816,7 @@ macro_rules! impl_mut_lazy {
                 #[allow(unused_unsafe)]
                 Self {
 
-                    __private: unsafe{GenericMutLazy::new(f, <$man>::new(),<$data>::INIT)},
+                    __private: unsafe{GenericMutLazy::new(f, <$man>::new(<$locker>::new(Phase::empty())),<$data>::INIT)},
                 }
             }
             /// Build a new static object with debug informations.
@@ -825,7 +828,7 @@ macro_rules! impl_mut_lazy {
             pub const $($safe)?  fn new_static_with_info(f: G, info: StaticInfo) -> Self {
                 #[allow(unused_unsafe)]
                 Self {
-                    __private: unsafe{GenericMutLazy::new_with_info(f, <$man>::new(), <$data>::INIT,info)},
+                    __private: unsafe{GenericMutLazy::new_with_info(f, <$man>::new(<$locker>::new(Phase::empty())), <$data>::INIT,info)},
                 }
             }
         }
@@ -846,49 +849,49 @@ macro_rules! impl_mut_lazy {
     };
 }
 
-impl_mut_lazy! {MutLazy,SyncSequentializer,InitializedChecker,UnInited::<T>, SyncPhaseGuard, SyncReadPhaseGuard,
+impl_mut_lazy! {MutLazy,SyncSequentializer,InitializedChecker,UnInited::<T>, SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard,
 "A mutex that initialize its content only once on the first lock"}
 
-impl_mut_lazy! {global QuasiMutLazy,SyncSequentializer,InitializedChecker,UnInited::<T>, SyncPhaseGuard, SyncReadPhaseGuard,
+impl_mut_lazy! {global QuasiMutLazy,SyncSequentializer,InitializedChecker,UnInited::<T>, SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
-impl_mut_lazy! {static MutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly,G:Sync,
+impl_mut_lazy! {static MutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard, T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(mut_lazy,finalize)]"
 }
 
-impl_mut_lazy! {global QuasiMutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
+impl_mut_lazy! {global QuasiMutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
-impl_mut_lazy! {static MutLazyDroped,ExitSequentializer<false>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+impl_mut_lazy! {static MutLazyDroped,ExitSequentializer<false>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>, SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
 "The actual type of statics attributed with #[dynamic(mut_lazy,finalize)]"
 }
 
-impl_mut_lazy! {global QuasiMutLazyDroped,ExitSequentializer<false>,InitializedChecker,DropedUnInited::<T>, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+impl_mut_lazy! {global QuasiMutLazyDroped,ExitSequentializer<false>,InitializedChecker,DropedUnInited::<T>, SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
-impl_mut_lazy! {UnSyncMutLazy,UnSyncSequentializer,InitializedChecker,UnInited::<T>, UnSyncPhaseGuard,UnSyncReadPhaseGuard,
+impl_mut_lazy! {UnSyncMutLazy,UnSyncSequentializer,InitializedChecker,UnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,
 "A RefCell that initialize its content on the first access"
 }
 
 #[cfg(feature = "thread_local")]
-impl_mut_lazy! {thread_local UnSyncMutLazyFinalize,ThreadExitSequentializer<false>,InitializedChecker,UnInited::<T>, UnSyncPhaseGuard,UnSyncReadPhaseGuard,T:Finaly,
+impl_mut_lazy! {thread_local UnSyncMutLazyFinalize,ThreadExitSequentializer<false>,InitializedChecker,UnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,T:Finaly,
 "The actual type of thread_local statics attributed with #[dynamic(mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
 }
 #[cfg(feature = "thread_local")]
-impl_mut_lazy! {thread_local UnSyncMutLazyDroped,ThreadExitSequentializer<false>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>, UnSyncPhaseGuard,UnSyncReadPhaseGuard,
+impl_mut_lazy! {thread_local UnSyncMutLazyDroped,ThreadExitSequentializer<false>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,
 "The actual type of thread_local statics attributed with #[dynamic(mut_lazy,drop)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
