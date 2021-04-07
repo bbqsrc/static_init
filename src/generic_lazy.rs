@@ -1,6 +1,6 @@
 use crate::{
     Finaly, Generator, LazySequentializer, LockNature, LockResult, Phase, Phased, Sequential,
-    Sequentializer, StaticInfo,
+    Sequentializer, StaticInfo, InitResult
 };
 use core::cell::UnsafeCell;
 use core::fmt::{self, Display, Formatter};
@@ -220,7 +220,7 @@ where
     pub fn try_get(&'a self) -> Result<&'a T::Target, AccessError> {
         check_access::<*mut T::Target, S>(
             self.seq.value.get(),
-            Phased::phase(&self.seq.sequentializer),
+            InitResult{initer:false,result:Phased::phase(&self.seq.sequentializer)},
         )
         .map(|ptr| unsafe { &*ptr })
     }
@@ -251,7 +251,7 @@ where
     pub fn try_get_mut(&'a mut self) -> Result<&'a mut T::Target, AccessError> {
         check_access::<*mut T::Target, S>(
             self.seq.value.get(),
-            Phased::phase(&self.seq.sequentializer),
+            InitResult{initer:false, result:Phased::phase(&self.seq.sequentializer)},
         )
         .map(|ptr| unsafe { &mut *ptr })
     }
@@ -292,7 +292,7 @@ where
     #[inline(always)]
     /// Potentialy initialize the inner data, returning the
     /// phase reached at the end of the initialization attempt
-    pub fn init(&'a self) -> Phase {
+    pub fn init(&'a self) -> InitResult<Phase> {
         may_debug(
             || {
                 <M as LazySequentializer<'a, GenericLazySeq<T, M>>>::init(
@@ -348,7 +348,7 @@ where
     #[inline(always)]
     /// Potentialy initialize the inner data, returning the
     /// phase reached at the end of the initialization attempt
-    pub fn only_init_unique(&mut self) -> Phase {
+    pub fn only_init_unique(&mut self) -> InitResult<Phase> {
         let generator = &self.generator;
         let seq = &mut self.seq;
         <M as LazySequentializer<GenericLazySeq<T, M>>>::init_unique(
@@ -559,7 +559,7 @@ where
     pub fn try_get_mut(&'a mut self) -> Result<&'a mut T::Target, AccessError> {
         check_access::<*mut T::Target, S>(
             self.seq.value.get(),
-            Phased::phase(&self.seq.sequentializer),
+            InitResult{initer:false, result: Phased::phase(&self.seq.sequentializer)},
         )
         .map(|ptr| unsafe { &mut *ptr })
     }
@@ -601,7 +601,7 @@ where
         this: &'a Self,
     ) -> Option<Result<ReadGuard<M::ReadGuard>, AccessError>> {
         unsafe { Self::fast_read_lock_unchecked(this) }
-            .map(checked_access::<ReadGuard<M::ReadGuard>, S>)
+            .map(|l| checked_access::<ReadGuard<M::ReadGuard>, S>(InitResult{initer: false,result:l}))
     }
 
     /// Attempt to get a read lock the LazyData object (not the target), returning None
@@ -638,7 +638,7 @@ where
     /// If the object is not in an accessible phase, some error is returned
     #[inline(always)]
     pub fn try_read_lock(this: &'a Self) -> Result<ReadGuard<M::ReadGuard>, AccessError> {
-        checked_access::<ReadGuard<M::ReadGuard>, S>(unsafe { Self::read_lock_unchecked(this) })
+        checked_access::<ReadGuard<M::ReadGuard>, S>(InitResult{initer:false, result: unsafe { Self::read_lock_unchecked(this) }})
     }
 
     /// Get a read lock the LazyData object (not the target).
@@ -680,7 +680,7 @@ where
         this: &'a Self,
     ) -> Option<Result<WriteGuard<M::WriteGuard>, AccessError>> {
         unsafe { Self::fast_write_lock_unchecked(this) }
-            .map(checked_access::<WriteGuard<M::WriteGuard>, S>)
+            .map(|l| checked_access::<WriteGuard<M::WriteGuard>, S>(InitResult{initer: false, result:l}))
     }
 
     /// Attempt to get a write lock the LazyData object (not the target), returning None
@@ -717,7 +717,7 @@ where
     /// If the object is not in an accessible phase, an error is returned
     #[inline(always)]
     pub fn try_write_lock(this: &'a Self) -> Result<WriteGuard<M::WriteGuard>, AccessError> {
-        checked_access::<WriteGuard<M::WriteGuard>, S>(unsafe { Self::write_lock_unchecked(this) })
+        checked_access::<WriteGuard<M::WriteGuard>, S>(InitResult{initer:false,result:unsafe { Self::write_lock_unchecked(this) }})
     }
 
     /// Get a write lock the LazyData object (not the target).
@@ -737,8 +737,8 @@ where
     ///
     /// Undefined behaviour if after initialization the return object is not in an accessible
     /// state.
-    pub unsafe fn init_then_read_lock_unchecked(this: &'a Self) -> ReadGuard<M::ReadGuard> {
-        ReadGuard(may_debug(
+    pub unsafe fn init_then_read_lock_unchecked(this: &'a Self) -> InitResult<ReadGuard<M::ReadGuard>> {
+        let r = may_debug(
             || {
                 <M as LazySequentializer<'a, GenericLazyMutSeq<T, M>>>::init_then_read_guard(
                     &this.seq,
@@ -754,7 +754,8 @@ where
             },
             #[cfg(debug_mode)]
             &this._info,
-        ))
+        );
+        InitResult{initer: r.initer, result:ReadGuard(r.result)}
     }
 
     /// Initialize if necessary then return a read lock
@@ -789,7 +790,7 @@ where
     #[inline(always)]
     pub unsafe fn fast_init_then_read_lock_unchecked(
         this: &'a Self,
-    ) -> Option<ReadGuard<M::ReadGuard>> {
+    ) -> Option<InitResult<ReadGuard<M::ReadGuard>>> {
         may_debug(
             || {
                 <M as LazySequentializer<'a, GenericLazyMutSeq<T, M>>>::try_init_then_read_guard(
@@ -807,7 +808,7 @@ where
             #[cfg(debug_mode)]
             &this._info,
         )
-        .map(ReadGuard)
+        .map(|r| InitResult{initer: r.initer, result: ReadGuard(r.result)})
     }
 
     #[inline(always)]
@@ -841,8 +842,8 @@ where
     /// # Safety
     ///
     /// If the target object is not accessible, this will cause undefined behaviour
-    pub unsafe fn init_then_write_lock_unchecked(this: &'a Self) -> WriteGuard<M::WriteGuard> {
-        WriteGuard(may_debug(
+    pub unsafe fn init_then_write_lock_unchecked(this: &'a Self) -> InitResult<WriteGuard<M::WriteGuard>> {
+        let r = may_debug(
             || {
                 <M as LazySequentializer<'a, GenericLazyMutSeq<T, M>>>::init_then_write_guard(
                     &this.seq,
@@ -858,7 +859,8 @@ where
             },
             #[cfg(debug_mode)]
             &this._info,
-        ))
+        );
+        InitResult{initer: r.initer, result: WriteGuard(r.result)}
     }
 
     #[inline(always)]
@@ -890,7 +892,7 @@ where
     /// Undefined behavior if the target object is not accessible.
     pub unsafe fn fast_init_then_write_lock_unchecked(
         this: &'a Self,
-    ) -> Option<WriteGuard<M::WriteGuard>> {
+    ) -> Option<InitResult<WriteGuard<M::WriteGuard>>> {
         may_debug(
             || {
                 <M as LazySequentializer<'a, GenericLazyMutSeq<T, M>>>::try_init_then_write_guard(
@@ -908,7 +910,7 @@ where
             #[cfg(debug_mode)]
             &this._info,
         )
-        .map(WriteGuard)
+        .map(|r| InitResult{initer: r.initer, result:WriteGuard(r.result)})
     }
     /// Attempt to get a write locks then initialize the target if necessary and returns the
     /// writelock.
@@ -968,7 +970,7 @@ where
     #[inline(always)]
     /// Potentialy initialize the inner data, returning the
     /// phase reached at the end of the initialization attempt
-    pub fn only_init_unique(&mut self) -> Phase {
+    pub fn only_init_unique(&mut self) -> InitResult<Phase> {
         let generator = &self.generator;
         let seq = &mut self.seq;
         <M as LazySequentializer<GenericLazyMutSeq<T, M>>>::init_unique(
@@ -1076,16 +1078,24 @@ fn may_debug<R, F: FnOnce() -> R>(f: F, #[cfg(debug_mode)] info: &Option<StaticI
 }
 
 #[inline(always)]
-fn check_access<T, S: LazyPolicy>(l: T, phase: Phase) -> Result<T, AccessError> {
-    if S::is_accessible(phase) {
-        Ok(l)
-    } else {
-        Err(AccessError { phase })
+fn check_access<T, S: LazyPolicy>(l: T, res_p: InitResult<Phase>) -> Result<T, AccessError> {
+    let phase = res_p.result;
+    if !res_p.initer {
+        if S::is_accessible(phase) {
+            Ok(l)
+        } else {
+            Err(AccessError { phase })
+        }
+    }
+    else if S::initialized_is_accessible(phase) {
+            Ok(l)
+    }else {
+            Err(AccessError { phase })
     }
 }
 
 #[inline(always)]
-fn checked_access<T: Phased, S: LazyPolicy>(l: T) -> Result<T, AccessError> {
-    let phase = Phased::phase(&l);
-    check_access::<T, S>(l, phase)
+fn checked_access<T: Phased, S: LazyPolicy>(l: InitResult<T>) -> Result<T, AccessError> {
+    let phase = Phased::phase(&l.result);
+    check_access::<T, S>(l.result, InitResult{initer:l.initer, result:phase})
 }

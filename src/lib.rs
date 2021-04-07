@@ -126,6 +126,11 @@ where
     }
 }
 
+pub struct InitResult<T>{
+    pub initer: bool,
+    pub result: T,
+}
+
 /// A type that implement Sequentializer aims at [phase](Phase) sequencement.
 ///
 /// The method [`Sequential::sequentializer`] should return an object that implement
@@ -190,40 +195,40 @@ pub unsafe trait LazySequentializer<'a, T: Sequential>: Sequentializer<'a, T> {
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-    ) -> Phase;
+    ) -> InitResult<Phase>;
     fn init_unique(
         target: &'a mut T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-    ) -> Phase;
+    ) -> InitResult<Phase>;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change (Read Lock). The returned lock may be shared.
     fn init_then_read_guard(
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-    ) -> Self::ReadGuard;
+    ) -> InitResult<Self::ReadGuard>;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change accepts through the returned lock guard (Write Lock). The lock is exculisive.
     fn init_then_write_guard(
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-    ) -> Self::WriteGuard;
+    ) -> InitResult<Self::WriteGuard>;
     /// Similar to [init_then_read_guard](Self::init_then_read_guard) but will return None
     /// if any lock is taken on the lazy or if it is beiing initialized
     fn try_init_then_read_guard(
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-    ) -> Option<Self::ReadGuard>;
+    ) -> Option<InitResult<Self::ReadGuard>>;
     /// Similar to [init_then_write_guard](Self::init_then_write_guard) but will return None
     /// if any lock is taken on the lazy or if it is beiing initialized
     fn try_init_then_write_guard(
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-    ) -> Option<Self::WriteGuard>;
+    ) -> Option<InitResult<Self::WriteGuard>>;
 }
 
 //TODO: doc here
@@ -257,17 +262,17 @@ pub unsafe trait SplitedLazySequentializer<'a, T: Sequential>:
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
-    ) -> Phase;
+    ) -> InitResult<Phase>;
     fn only_init(
         target: &'a T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-    ) -> Phase;
+    ) -> InitResult<Phase>;
     fn only_init_unique(
         target: &'a mut T,
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
-    ) -> Phase;
+    ) -> InitResult<Phase>;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change (Read Lock). The returned lock may be shared.
     fn init_then_read_guard(
@@ -276,7 +281,7 @@ pub unsafe trait SplitedLazySequentializer<'a, T: Sequential>:
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
-    ) -> Self::ReadGuard;
+    ) -> InitResult<Self::ReadGuard>;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change accepts through the returned lock guard (Write Lock). The lock is exculisive.
     fn init_then_write_guard(
@@ -285,7 +290,7 @@ pub unsafe trait SplitedLazySequentializer<'a, T: Sequential>:
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
-    ) -> Self::WriteGuard;
+    ) -> InitResult<Self::WriteGuard>;
     /// Similar to [init_then_read_guard](Self::init_then_read_guard) but will return None
     /// if any lock is taken on the lazy or if it is beiing initialized
     fn try_init_then_read_guard(
@@ -294,7 +299,7 @@ pub unsafe trait SplitedLazySequentializer<'a, T: Sequential>:
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
-    ) -> Option<Self::ReadGuard>;
+    ) -> Option<InitResult<Self::ReadGuard>>;
     /// Similar to [init_then_write_guard](Self::init_then_write_guard) but will return None
     /// if any lock is taken on the lazy or if it is beiing initialized
     fn try_init_then_write_guard(
@@ -303,7 +308,7 @@ pub unsafe trait SplitedLazySequentializer<'a, T: Sequential>:
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
         init_on_reg_failure: bool,
-    ) -> Option<Self::WriteGuard>;
+    ) -> Option<InitResult<Self::WriteGuard>>;
     /// A callback that is intened to be stored by the `reg` argument of `init` method.
     fn finalize_callback(s: &'a T, f: impl FnOnce(&'a T::Data));
 }
@@ -446,7 +451,7 @@ pub mod splited_sequentializer;
 /// Provides two lazy sequentializers, one that will finalize the target object at program exit and
 /// the other at thread exit.
 pub mod at_exit;
-
+//
 /// Provides policy types for implementation of various lazily initialized types.
 pub mod generic_lazy;
 

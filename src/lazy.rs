@@ -30,7 +30,7 @@ impl LazyPolicy for InitializedChecker {
         core::intrinsics::likely(p.intersects(Phase::INITIALIZED))
     }
     #[inline(always)]
-    fn initialized_is_accessible(_: Phase) -> bool {
+    fn initialized_is_accessible(p: Phase) -> bool {
         true
     }
 }
@@ -366,7 +366,7 @@ macro_rules! impl_lazy {
             }
             #[inline(always)]
             pub fn init(this: &$($static)? Self) -> Phase {
-                GenericLazy::init(&this.__private)
+                GenericLazy::init(&this.__private).result
             }
         }
 
@@ -985,7 +985,7 @@ mod inited {
 
     #[inline(always)]
     pub(super) fn global_inited_hint() -> bool {
-        LAZY_INIT_ENSURED.load(Ordering::Acquire)
+        core::intrinsics::likely(LAZY_INIT_ENSURED.load(Ordering::Acquire))
     }
 }
 #[cfg(not(all(support_priority, not(feature = "test_no_global_lazy_hint"))))]
