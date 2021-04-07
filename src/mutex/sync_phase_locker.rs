@@ -92,6 +92,7 @@ unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for SyncPhaseGuard<'a, T> {
 }
 
 impl<'a, T> Phased for SyncPhaseGuard<'a, T> {
+    #[inline(always)]
     fn phase(this: &Self) -> Phase {
         this.1.on_unlock
     }
@@ -247,7 +248,7 @@ impl<'a> Lock<'a> {
 }
 impl<'a> Lock<'a> {
     #[cold]
-    #[inline(never)]
+    #[inline]
     fn drop_slow(&mut self, mut cur: u32) {
         // try to reaquire the lock
         //state: phase | 0:PARKED_BIT<|>0:WPARKED_BIT
@@ -319,21 +320,27 @@ impl<'a> Drop for Lock<'a> {
     #[inline(always)]
     fn drop(&mut self) {
         //state: old_phase | LOCKED_BIT | <0:PARKED_BIT|0:WPARKED_BIT>
-        let p = self.init_phase;
-        let p = match self.futex.compare_exchange(
-            p.bits() | LOCKED_BIT,
+        let p = self.init_phase.bits();
+
+        match self.futex.compare_exchange(
+            p | LOCKED_BIT,
             self.on_unlock.bits(),
             Ordering::Release,
             Ordering::Relaxed,
         ) {
             Ok(_) => return,
-            Err(x) => Phase::from_bits_truncate(x),
+            Err(x) => x,
         };
-        //let p = self.phase();
-        let xor = (p ^ self.on_unlock).bits() | LOCKED_BIT;
+
+        //while let Err(x) = self.futex.compare_exchange_weak(
+        //    cur, cur & (PARKED_BIT|WPARKED_BIT|READER_BITS|READER_OVERF) | p,Ordering::Release,Ordering::Relaxed) {
+        //    cur = x;
+        //}
+        let xor = (self.init_phase ^ self.on_unlock).bits() | LOCKED_BIT;
         let prev = self.futex.fetch_xor(xor, Ordering::Release);
         //state: phase | <1:PARKED_BIT|1:WPARKED_BIT>
         if has_waiters(prev) {
+            //let cur = cur & (PARKED_BIT|WPARKED_BIT|READER_BITS|READER_OVERF) | p;
             //state: phase | 1:PARKED_BIT<|>1:WPARKED_BIT
             self.drop_slow(prev ^ xor);
         }
@@ -359,7 +366,7 @@ impl<'a> ReadLock<'a> {
             init_phase: p,
         }
     }
-    #[inline(never)]
+    #[inline]
     #[cold]
     fn drop_slow(&mut self, mut cur: u32) {
         //state: phase | PARKED_BIT <|> WPARKED_BIT
@@ -525,6 +532,7 @@ unsafe impl<'a, T: 'a> PhaseLocker<'a, T> for SyncPhasedLocker {
     }
 }
 impl Phased for SyncPhasedLocker {
+    #[inline(always)]
     fn phase(this: &Self) -> Phase {
         this.phase()
     }

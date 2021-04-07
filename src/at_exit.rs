@@ -90,6 +90,7 @@ mod exit_manager {
     const MUTEX_INIT: Mutex<Option<&'static Node>> = Mutex::new(None);
 
     impl<const IRF: bool> ExitSequentializer<IRF> {
+        #[inline(always)]
         /// Create a new ExitSequentializer
         ///
         /// Useless if the target object is not 'static
@@ -103,17 +104,20 @@ mod exit_manager {
     }
 
     impl<const IRF: bool> AsRef<SubSequentializer> for ExitSequentializer<IRF> {
+        #[inline(always)]
         fn as_ref(&self) -> &SubSequentializer {
             &self.0.sub
         }
     }
     impl<const IRF: bool> AsMut<SubSequentializer> for ExitSequentializer<IRF> {
+        #[inline(always)]
         fn as_mut(&mut self) -> &mut SubSequentializer {
             &mut self.0.sub
         }
     }
 
     impl<const IRF: bool> Phased for ExitSequentializer<IRF> {
+        #[inline(always)]
         fn phase(this: &Self) -> Phase {
             Phased::phase(&this.0.sub)
         }
@@ -127,18 +131,21 @@ mod exit_manager {
     {
         type ReadGuard = SyncReadPhaseGuard<'a, T::Data>;
         type WriteGuard = SyncPhaseGuard<'a, T::Data>;
+        #[inline(always)]
         fn lock(
             st: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
         ) -> LockResult<SyncReadPhaseGuard<'a, T::Data>, SyncPhaseGuard<'a, T::Data>> {
             <SubSequentializer as Sequentializer<T>>::lock(st, lock_nature)
         }
+        #[inline(always)]
         fn try_lock(
             st: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
         ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>> {
             <SubSequentializer as Sequentializer<T>>::try_lock(st, lock_nature)
         }
+        #[inline(always)]
         fn lock_mut(st: &'a mut T) -> SyncPhaseGuard<'a, T::Data> {
             <SubSequentializer as Sequentializer<T>>::lock_mut(st)
         }
@@ -292,6 +299,7 @@ mod local_manager {
     const CELL_INIT: Cell<Option<&'static Node>> = Cell::new(None);
 
     impl<const IRF: bool> ThreadExitSequentializer<IRF> {
+        #[inline(always)]
         /// Useless if the target object is not a static thread_local
         pub const fn new(l: UnSyncPhaseLocker) -> Self {
             //Self(GLOBAL_INIT)
@@ -303,17 +311,20 @@ mod local_manager {
     }
 
     impl<const IRF: bool> AsRef<SubSequentializer> for ThreadExitSequentializer<IRF> {
+        #[inline(always)]
         fn as_ref(&self) -> &SubSequentializer {
             &self.0.sub
         }
     }
     impl<const IRF: bool> AsMut<SubSequentializer> for ThreadExitSequentializer<IRF> {
+        #[inline(always)]
         fn as_mut(&mut self) -> &mut SubSequentializer {
             &mut self.0.sub
         }
     }
 
     impl<const IRF: bool> Phased for ThreadExitSequentializer<IRF> {
+        #[inline(always)]
         fn phase(this: &Self) -> Phase {
             Phased::phase(&this.0.sub)
         }

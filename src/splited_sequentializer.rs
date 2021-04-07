@@ -202,6 +202,7 @@ mod generic {
         type ReadGuard = L::ReadGuard;
         type WriteGuard = L::WriteGuard;
 
+        #[inline(always)]
         fn lock(
             s: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
@@ -218,6 +219,7 @@ mod generic {
             )
         }
 
+        #[inline(always)]
         fn try_lock(
             s: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
@@ -230,6 +232,7 @@ mod generic {
                 .try_lock(data, &lock_nature, Phase::INITIALIZED | Phase::REGISTERED)
         }
 
+        #[inline(always)]
         fn lock_mut(s: &'a mut T) -> Self::WriteGuard {
             let (that, data) = Sequential::sequentializer_data_mut(s);
 
@@ -559,11 +562,13 @@ mod generic {
     }
 
     impl<L> AsRef<LazySequentializer<L>> for LazySequentializer<L> {
+        #[inline(always)]
         fn as_ref(&self) -> &Self {
             self
         }
     }
     impl<L> AsMut<LazySequentializer<L>> for LazySequentializer<L> {
+        #[inline(always)]
         fn as_mut(&mut self) -> &mut Self {
             self
         }

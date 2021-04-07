@@ -58,17 +58,21 @@ impl TickCounter {
         let s = arr.iter().fold(0f64, |cur, v| cur + *v);
         TickCounter(zero, s / 10000f64)
     }
-    pub fn time<R, F: FnOnce() -> R>(&self, f: F) -> std::time::Duration {
+    #[inline(always)]
+    pub fn time<R, F: FnOnce() -> R>(&self, f: F) -> Option<std::time::Duration> {
         let s = Self::raw_start();
         black_box(f());
         let e = Self::raw_end();
+        if e < s {
+            return None;
+        }
         let v = (e - s) as f64;
         let v = (v - self.0 as f64) * self.1;
         let v = v.round();
-        if v > 0f64 {
-            std::time::Duration::from_nanos(v as u64)
+        if v >= 0f64 {
+            Some(std::time::Duration::from_nanos(v as u64))
         } else {
-            std::time::Duration::from_nanos(0)
+            Some(std::time::Duration::from_nanos(0))
         }
     }
     #[inline(always)]

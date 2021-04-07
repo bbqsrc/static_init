@@ -67,6 +67,7 @@ pub trait LazyData {
 impl<T> LazyData for UnInited<T> {
     type Target = T;
     const INIT: Self = Self(UnsafeCell::new(MaybeUninit::uninit()));
+    #[inline(always)]
     fn get(&self) -> *mut T {
         self.0.get() as *mut T
     }
@@ -75,6 +76,7 @@ impl<T> LazyData for UnInited<T> {
 impl<T> LazyData for DropedUnInited<T> {
     type Target = T;
     const INIT: Self = Self(UnsafeCell::new(MaybeUninit::uninit()));
+    #[inline(always)]
     fn get(&self) -> *mut T {
         self.0.get() as *mut T
     }
@@ -137,6 +139,7 @@ unsafe impl<T: LazyData, M: Sync> Send for GenericLazyMutSeq<T, M> where
 }
 
 impl<T, F, M, S> GenericLazy<T, F, M, S> {
+    #[inline(always)]
     /// const initialize the lazy, the inner data may be in an uninitialized state
     ///
     /// # Safety
@@ -156,6 +159,7 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
             _info: None,
         }
     }
+    #[inline(always)]
     /// const initialize the lazy, the inner data may be in an uninitialized state, and store
     /// debug information in debug_mode
     ///
@@ -317,6 +321,7 @@ where
     F: 'static + Generator<T::Target>,
     S: 'static + LazyPolicy,
 {
+    #[inline(always)]
     /// Attempt initialization then get a mutable reference to the target
     ///
     /// # Safety
@@ -326,6 +331,7 @@ where
         self.only_init_unique();
         &mut *self.seq.value.get()
     }
+    #[inline(always)]
     /// Attempt initialization then get a mutable reference to the target, returning an error if the
     /// target is not in the correct phase.
     pub fn only_init_then_try_get_mut(&mut self) -> Result<&mut T::Target, AccessError> {
@@ -333,6 +339,7 @@ where
         check_access::<*mut T::Target, S>(self.seq.value.get(), phase)
             .map(|ptr| unsafe { &mut *ptr })
     }
+    #[inline(always)]
     /// Attempt initialization then get a mutable reference to the target, returning an error if the
     /// target is not in the correct phase.
     pub fn only_init_then_get_mut(&mut self) -> &mut T::Target {
@@ -474,6 +481,7 @@ pub struct GenericMutLazy<T, F, M, S> {
 }
 
 impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
+    #[inline(always)]
     /// const initialize the lazy, the inner data may be in an uninitialized state
     ///
     /// # Safety
@@ -493,6 +501,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
             _info: None,
         }
     }
+    #[inline(always)]
     /// const initialize the lazy, the inner data may be in an uninitialized state and
     /// store some debuging informations
     ///
@@ -932,6 +941,7 @@ where
     F: 'static + Generator<T::Target>,
     S: 'static + LazyPolicy,
 {
+    #[inline(always)]
     /// Attempt initialization then get a mutable reference to the target
     ///
     /// # Safety
@@ -941,13 +951,15 @@ where
         self.only_init_unique();
         &mut *self.seq.value.get()
     }
+    #[inline(always)]
     /// Attempt initialization then get a mutable reference to the target, returning an error if the
     /// target is not in the correct phase.
     pub fn only_init_then_try_get_mut(&mut self) -> Result<&mut T::Target, AccessError> {
         let phase = self.only_init_unique();
         check_access::<*mut T::Target, S>(self.seq.value.get(), phase)
             .map(|ptr| unsafe { &mut *ptr })
-    }
+    }    
+    #[inline(always)]
     /// Attempt initialization then get a mutable reference to the target, returning an error if the
     /// target is not in the correct phase.
     pub fn only_init_then_get_mut(&mut self) -> &mut T::Target {
@@ -1027,16 +1039,19 @@ impl<T, M> Deref for GenericLazyMutSeq<T, M> {
 }
 
 impl<F, T, M: Phased, S> Phased for GenericMutLazy<T, F, M, S> {
+    #[inline(always)]
     fn phase(this: &Self) -> Phase {
         Phased::phase(&this.seq.sequentializer)
     }
 }
 impl<F, T, M: Phased, S> Phased for GenericLazy<T, F, M, S> {
+    #[inline(always)]
     fn phase(this: &Self) -> Phase {
         Phased::phase(&this.seq.sequentializer)
     }
 }
 
+#[inline(always)]
 fn may_debug<R, F: FnOnce() -> R>(f: F, #[cfg(debug_mode)] info: &Option<StaticInfo>) -> R {
     #[cfg(not(debug_mode))]
     {

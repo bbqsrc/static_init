@@ -25,6 +25,8 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#![feature(core_intrinsics)]
+
 #[doc(hidden)]
 /// # Details and implementation documentation.
 ///

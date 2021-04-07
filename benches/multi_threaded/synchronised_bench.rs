@@ -25,125 +25,6 @@ pub struct Config<
     const TOLERATE_CONTEXT_SWITCH: bool,
 >;
 
-//pub fn synchro_bench<T, R, const MICRO_BENCH: bool, const NT: usize, const NT_START: usize>(
-//    c: &mut BenchmarkGroup<WallTime>,
-//    name: &str,
-//    build: impl Fn() -> T,
-//    access: impl Fn(&T) -> R + Sync,
-//    _: Config<MICRO_BENCH, NT, NT_START>,
-//) {
-//
-//    let started: AtomicUsize = AtomicUsize::new(NT_START);
-//
-//    let vm: MutSynchronized<T> = MutSynchronized(UnsafeCell::new(build()));
-//
-//    let tk = TickCounter::new();
-//
-//    assert!(NT_START <= NT);
-//
-//    let (sender, receiver) = sync_channel(0);
-//
-//    thread::scope(|s| {
-//        let test_init = {
-//            |sender: SyncSender<Duration>| loop {
-//                let mut expect = 0;
-//                loop {
-//                    match started.compare_exchange_weak(
-//                        expect,
-//                        expect + 1,
-//                        Ordering::AcqRel,
-//                        Ordering::Relaxed,
-//                    ) {
-//                        Err(x) => {
-//                            if x == NT_START + 1 {
-//                                break;
-//                            }
-//                            if x == NT + 2 {
-//                                return;
-//                            }
-//                            if x < NT_START {
-//                                expect = x;
-//                                core::hint::spin_loop();
-//                                continue;
-//                            }
-//                        }
-//                        Ok(_) => continue,
-//                    }
-//                }
-//                let duration = if MICRO_BENCH {
-//                    tk.time(|| unsafe { access(&*vm.0.get()) })
-//                } else {
-//                    let s = std::time::Instant::now();
-//                    black_box(unsafe { access(&*vm.0.get()) });
-//                    s.elapsed()
-//                };
-//                sender.send(duration).unwrap();
-//                expect = 2 * NT + 10;
-//
-//                while let Err(x) = started.compare_exchange_weak(
-//                    expect,
-//                    expect + 1,
-//                    Ordering::AcqRel,
-//                    Ordering::Relaxed,
-//                ) {
-//                    if x >= 2 * NT + 10 {
-//                        expect = x;
-//                    }
-//                    core::hint::spin_loop();
-//                }
-//            }
-//        };
-//
-//        let mut spawned = vec![];
-//        for _ in 0..NT {
-//            let sender = sender.clone();
-//            spawned.push(s.spawn(move |_| test_init(sender)));
-//        }
-//
-//        c.bench_function(name, |b| {
-//            b.iter_custom(|iter| {
-//                let mut total = Duration::from_nanos(0);
-//                for _ in 0..iter {
-//                    unsafe { *vm.0.get() = build() };
-//                    //VMX.store(0, Ordering::Relaxed);
-//                    while started
-//                        .compare_exchange_weak(NT_START, NT_START + 1, Ordering::AcqRel, Ordering::Relaxed)
-//                        .is_err()
-//                    {
-//                        core::hint::spin_loop()
-//                    }
-//
-//                    for _ in 0..NT {
-//                        total += match receiver.recv_timeout(Duration::from_secs(10)) {
-//                                Err(_) => {
-//                                    eprintln!("Timed out");
-//                                    std::process::exit(1);
-//                                }
-//                                Ok(v) => break v,
-//                        }
-//                    }
-//                    started
-//                        .compare_exchange(NT_START + 1, 2 * NT + 10, Ordering::AcqRel, Ordering::Relaxed)
-//                        .unwrap();
-//                    while started
-//                        .compare_exchange_weak(3 * NT + 10, 0, Ordering::AcqRel, Ordering::Relaxed)
-//                        .is_err()
-//                    {
-//                        core::hint::spin_loop()
-//                    }
-//                }
-//                total
-//            })
-//        });
-//
-//        started
-//            .compare_exchange(NT, NT + 2, Ordering::AcqRel, Ordering::Relaxed)
-//            .unwrap();
-//        spawned.into_iter().for_each(|t| t.join().unwrap());
-//    })
-//    .unwrap();
-//}
-
 fn get_context_switch() -> i64 {
     unsafe {
         let mut usage = MaybeUninit::<rusage>::zeroed().assume_init();
@@ -212,11 +93,11 @@ pub fn synchro_bench_input<
                 } else {
                     let s = std::time::Instant::now();
                     black_box(unsafe { access(&*vm.0.get()) });
-                    s.elapsed()
+                    Some(s.elapsed())
                 };
                 let end_prempted_count = if TOL_SWITCH { 0 } else { get_context_switch() };
                 if end_prempted_count == deb_prempted_count {
-                    sender.send(Some(duration)).unwrap();
+                    sender.send(duration).unwrap();
                 } else {
                     sender.send(None).unwrap();
                 }

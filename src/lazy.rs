@@ -23,11 +23,11 @@ pub struct InitializedChecker;
 impl LazyPolicy for InitializedChecker {
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
-        p.is_empty()
+        core::intrinsics::unlikely(p.is_empty())
     }
     #[inline(always)]
     fn is_accessible(p: Phase) -> bool {
-        p.intersects(Phase::INITIALIZED)
+        core::intrinsics::likely(p.intersects(Phase::INITIALIZED))
     }
     #[inline(always)]
     fn initialized_is_accessible(_: Phase) -> bool {
@@ -39,15 +39,15 @@ pub struct InitializedAndNonFinalizedChecker;
 impl LazyPolicy for InitializedAndNonFinalizedChecker {
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
-        p.is_empty()
+        core::intrinsics::unlikely(p.is_empty())
     }
     #[inline(always)]
     fn is_accessible(p: Phase) -> bool {
-        !p.intersects(Phase::FINALIZED) && p.intersects(Phase::INITIALIZED)
+        core::intrinsics::likely(!p.intersects(Phase::FINALIZED) && p.intersects(Phase::INITIALIZED))
     }
     #[inline(always)]
     fn initialized_is_accessible(p: Phase) -> bool {
-        p.intersects(Phase::INITIALIZED)
+        core::intrinsics::likely(p.intersects(Phase::INITIALIZED))
     }
 }
 //pub struct InitializedRearmingChecker;
@@ -325,6 +325,7 @@ macro_rules! impl_lazy {
         }
 
         impl<T, G> $tp<T, G> {
+            #[inline(always)]
             /// Build a new static object
             ///
             /// # Safety
@@ -338,6 +339,7 @@ macro_rules! impl_lazy {
                     __private: unsafe{GenericLazy::new(f, <$man>::new(<$locker>::new(Phase::empty())),<$data>::INIT)},
                 }
             }
+            #[inline(always)]
             /// Build a new static object with debug information
             ///
             /// # Safety
@@ -433,11 +435,13 @@ macro_rules! non_static_debug {
 macro_rules! non_static_impls {
     ($tp:ident, $data:ty $(,T: $tr:ident)? $(,G: $trg:ident)?) => {
         impl<T, G> $tp<T, G> {
+            #[inline(always)]
             pub const fn new(g: G) -> Self {
                 Self::new_static(g)
             }
         }
         impl<T: Default> Default for $tp<T, fn() -> T> {
+            #[inline(always)]
             fn default() -> Self {
                 Self::new(T::default)
             }
@@ -450,6 +454,7 @@ non_static_impls! {UnSyncLazy,UnInited::<T>}
 non_static_debug! {UnSyncLazy,UnInited::<T>}
 
 impl<T, G> Drop for Lazy<T, G> {
+    #[inline(always)]
     fn drop(&mut self) {
         if Phased::phase(GenericLazy::sequentializer(&self.__private))
             .intersects(Phase::INITIALIZED)
@@ -463,6 +468,7 @@ impl<T, G> Drop for Lazy<T, G> {
     }
 }
 impl<T, G> Drop for UnSyncLazy<T, G> {
+    #[inline(always)]
     fn drop(&mut self) {
         if Phased::phase(GenericLazy::sequentializer(&self.__private))
             .intersects(Phase::INITIALIZED)
@@ -800,12 +806,14 @@ macro_rules! impl_mut_lazy {
         where T: 'static + LazyData,
         G: 'static + Generator<T>
         {
+            #[inline(always)]
             fn phase(this: &Self) -> Phase {
                 Phased::phase(&this.__private)
             }
         }
 
         impl<T, G> $tp<T, G> {
+            #[inline(always)]
             /// Build a new static object.
             ///
             /// # Safety
@@ -819,6 +827,7 @@ macro_rules! impl_mut_lazy {
                     __private: unsafe{GenericMutLazy::new(f, <$man>::new(<$locker>::new(Phase::empty())),<$data>::INIT)},
                 }
             }
+            #[inline(always)]
             /// Build a new static object with debug informations.
             ///
             /// # Safety
@@ -921,23 +930,28 @@ non_static_impls! {UnSyncMutLazy,UnInited::<T>}
 non_static_mut_debug! {UnSyncMutLazy,UnInited::<T>}
 
 impl<T: Send + 'static, G: Generator<T> + 'static> MutLazy<T, G> {
+    #[inline(always)]
     pub fn get_mut(&mut self) -> &mut T {
         self.__private.only_init_then_get_mut()
     }
+    #[inline(always)]
     pub fn try_get_mut(&mut self) -> Result<&mut T, AccessError> {
         self.__private.try_get_mut()
     }
 }
 impl<T: 'static, G: Generator<T> + 'static> UnSyncMutLazy<T, G> {
+    #[inline(always)]
     pub fn get_mut(&mut self) -> &mut T {
         self.__private.only_init_then_get_mut()
     }
+    #[inline(always)]
     pub fn try_get_mut(&mut self) -> Result<&mut T, AccessError> {
         self.__private.try_get_mut()
     }
 }
 
 impl<T, G> Drop for MutLazy<T, G> {
+    #[inline(always)]
     fn drop(&mut self) {
         if Phased::phase(GenericMutLazy::sequentializer(&self.__private))
             .intersects(Phase::INITIALIZED)
@@ -947,6 +961,7 @@ impl<T, G> Drop for MutLazy<T, G> {
     }
 }
 impl<T, G> Drop for UnSyncMutLazy<T, G> {
+    #[inline(always)]
     fn drop(&mut self) {
         if Phased::phase(GenericMutLazy::sequentializer(&self.__private))
             .intersects(Phase::INITIALIZED)
