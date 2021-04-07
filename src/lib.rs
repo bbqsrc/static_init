@@ -25,8 +25,6 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-#![feature(core_intrinsics)]
-
 #[doc(hidden)]
 /// # Details and implementation documentation.
 ///
@@ -126,6 +124,13 @@ where
     }
 }
 
+/// A type that tag the result with a the boolean
+/// `initer` field.
+/// 
+/// This boolean sepecifies weither the method call
+/// returning an object of this type has just performed
+/// the ininitialization or not. It was introduced to help
+/// optimizer constant propagation.
 pub struct InitResult<T>{
     pub initer: bool,
     pub result: T,
@@ -233,7 +238,7 @@ pub unsafe trait LazySequentializer<'a, T: Sequential>: Sequentializer<'a, T> {
 
 //TODO: doc here
 
-/// A [SplitedLazySequentializer] sequentialize the [phase](Phase) of an object to
+/// A [FinalizableLazySequentializer] sequentialize the [phase](Phase) of an object to
 /// ensure atomic initialization and finalization.
 ///
 /// A sequentializer that implement this trait is not able to register the finalization
@@ -246,7 +251,7 @@ pub unsafe trait LazySequentializer<'a, T: Sequential>: Sequentializer<'a, T> {
 ///  - either the implementor is Sync and the initialization is performed atomically
 ///  - or the implementor is not Sync and any attempt to perform an initialization while
 ///    an initialization is running will cause a panic.
-pub unsafe trait SplitedLazySequentializer<'a, T: Sequential>:
+pub unsafe trait FinalizableLazySequentializer<'a, T: Sequential>:
     Sequentializer<'a, T>
 {
     /// if `shall_init` return true for the target [`Sequential`] object, it initialize
@@ -429,28 +434,24 @@ pub use static_init_macro::destructor;
 #[doc(inline)]
 pub use static_init_macro::dynamic;
 
-/// Provides PhaseLockers, that are phase tagged *adaptative* read-write lock types: during the lock loop the nature of the lock that
+/// Provides PhaseLockers, that are phase tagged *adaptative* read-write lock types: during the lock loop, the nature of the lock that
 /// is attempted to be taken variates depending on the phase.
 ///
-/// The major difference with a RwLock is that decision to read lock, write lock are to not lock
-/// is taken within the lock loop: on each attempt to take the lock (when unparking for exemple)
-/// the mutex may change its locking strategy or abandon any further attempt to take the lock.
-///
-/// The algorithm is as efficient as parking_lot `RwLock` because it
-/// is an adaptation of the algorithm provided by parking_lot::RwLock. (TODO: bring more parts
-/// of parking_lot RwLock algorithm to those mutex)
-pub mod mutex;
-pub use mutex::{LockNature, LockResult, PhaseGuard};
+/// The major difference with a RwLock is that decision to read lock, to write lock or not to lock
+/// is taken within the lock loop: on each attempt to take the lock, 
+/// the PhaseLocker may change its locking strategy or abandon any further attempt to take the lock.
+pub mod phase_locker;
+pub use phase_locker::{LockNature, LockResult, PhaseGuard};
 
 /// Provides two lazy sequentializers, one that is Sync, and the other that is not Sync, that are
 /// able to sequentialize the target object initialization but cannot register its finalization
 /// callback.
-pub mod splited_sequentializer;
+pub mod lazy_sequentializer;
 
 #[cfg(any(elf, mach_o, coff))]
 /// Provides two lazy sequentializers, one that will finalize the target object at program exit and
 /// the other at thread exit.
-pub mod at_exit;
+pub mod exit_sequentializer;
 //
 /// Provides policy types for implementation of various lazily initialized types.
 pub mod generic_lazy;

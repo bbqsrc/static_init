@@ -29,7 +29,7 @@ thread_local = []
 test_no_global_lazy_hint = []
 
 
-default = ["likely_stable","thread_local"]
+default = ["likely_stable"]
 
 [dependencies]
 likely_stable = {version = "0.1", optional=true}

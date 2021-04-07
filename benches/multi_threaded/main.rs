@@ -1,5 +1,4 @@
-#![feature(asm)]
-#![feature(thread_local)]
+#![cfg_attr(feature = "thread_local", feature(thread_local))]
 
 mod synchronised_bench;
 use synchronised_bench::{synchro_bench_input, Config};
@@ -421,13 +420,13 @@ fn bench_init(c: &mut Criterion) {
     do_bench(
         &mut gp,
         "LazyMut write",
-        || MutLazy::new(W(Duration::from_micros(5))),
+        || MutLazy::new(W(Duration::from_micros(10))),
         |l| *l.write(),
     );
 
     let init = || {
         RwMut::new(|| {
-            occupy_for(Duration::from_micros(5));
+            occupy_for(Duration::from_micros(10));
             33
         })
     };
@@ -677,9 +676,9 @@ macro_rules! heavy_bench {
 
             static THREAD_IDS: AtomicUsize = AtomicUsize::new(0);
 
-            #[dynamic]
-            #[thread_local]
+            thread_local!{
             static THREAD_ID: usize = THREAD_IDS.fetch_add(1, Ordering::Relaxed);
+            }
 
             let init = || {
                 let v = $type::new(YY(size));
@@ -688,7 +687,7 @@ macro_rules! heavy_bench {
             };
 
             let access = |l: &$type<Vec<usize>, YY>| {
-                let c0 = unsafe { ID[*THREAD_ID].fetch_add(1, Ordering::Relaxed) };
+                let c0 = unsafe { ID[THREAD_ID.with(|f| *f)].fetch_add(1, Ordering::Relaxed) };
                 let mut k = 0;
                 while k < ITER {
                     if (INIT_THEN_READ && k > 2) || (!INIT_THEN_READ && (k + c0) % 8 > 2) {
@@ -699,7 +698,7 @@ macro_rules! heavy_bench {
                             if x != o0 + i {
                                 eprintln!(
                                     "at read thread {} tryal id {}, loop id {}, elem {}, {} ne {}",
-                                    *THREAD_ID,
+                                    THREAD_ID.with(|f| *f),
                                     c0,
                                     k,
                                     i,
@@ -716,7 +715,7 @@ macro_rules! heavy_bench {
                                         eprintln!(
                                             "later read error thread {} tryal id {}, loop id {}, \
                                      elem {}, {} ne {}",
-                                            *THREAD_ID,
+                                            THREAD_ID.with(|f| *f),
                                             c0,
                                             k,
                                             i,
@@ -740,7 +739,7 @@ macro_rules! heavy_bench {
                                 eprintln!(
                                     "at write thread {} tryial id {}, loop id {}, elem {}, {} ne \
                              {}",
-                                    *THREAD_ID,
+                                    THREAD_ID.with(|f| *f),
                                     c0,
                                     k,
                                     i,
@@ -749,7 +748,7 @@ macro_rules! heavy_bench {
                                 );
                                 std::process::exit(1);
                             }
-                            *v = i + k * 1000 + 1000000 * c0 + *THREAD_ID * 1_000_000_000;
+                            *v = i + k * 1000 + 1000000 * c0 + THREAD_ID.with(|f| *f) * 1_000_000_000;
                         }
                     }
                     k += 1;

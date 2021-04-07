@@ -2,13 +2,13 @@ mod futex;
 
 mod spin_wait;
 
-mod sync_phase_locker;
-pub(crate) use sync_phase_locker::Mutex;
-pub use sync_phase_locker::{SyncPhaseGuard, SyncPhasedLocker, SyncReadPhaseGuard};
+mod sync;
+pub(crate) use sync::Mutex;
+pub use sync::{SyncPhaseGuard, SyncPhaseLocker, SyncReadPhaseGuard};
 
-mod unsync_phase_locker;
-pub use unsync_phase_locker::UnSyncPhaseLocker;
-pub use unsync_phase_locker::{UnSyncPhaseGuard, UnSyncReadPhaseGuard};
+mod unsync;
+pub use unsync::UnSyncPhaseLocker;
+pub use unsync::{UnSyncPhaseGuard, UnSyncReadPhaseGuard};
 
 use super::{Phase, Phased};
 
@@ -49,10 +49,6 @@ pub unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
         on_success: Phase,
         on_panic: Phase,
     ) -> R;
-}
-
-pub trait PhaseLockerEmptyStart {
-    const INIT: Self;
 }
 
 pub trait Mappable<T, V, U> {

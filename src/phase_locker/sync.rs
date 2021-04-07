@@ -9,7 +9,7 @@ use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{fence, Ordering};
 
 /// A synchronised phase locker.
-pub struct SyncPhasedLocker(Futex);
+pub struct SyncPhaseLocker(Futex);
 
 pub(crate) struct Lock<'a> {
     futex:      &'a Futex,
@@ -29,7 +29,7 @@ pub(crate) struct ReadLock<'a> {
 /// A kind of read lock.
 pub struct SyncReadPhaseGuard<'a, T: ?Sized>(&'a T, ReadLock<'a>);
 
-pub(crate) struct Mutex<T>(UnsafeCell<T>, SyncPhasedLocker);
+pub(crate) struct Mutex<T>(UnsafeCell<T>, SyncPhaseLocker);
 
 pub(crate) struct MutexGuard<'a, T>(&'a mut T, Lock<'a>);
 
@@ -156,7 +156,7 @@ impl<T> Mutex<T> {
     pub(crate) const fn new(value: T) -> Self {
         Self(
             UnsafeCell::new(value),
-            SyncPhasedLocker::new(Phase::empty()),
+            SyncPhaseLocker::new(Phase::empty()),
         )
     }
     #[inline(always)]
@@ -496,10 +496,10 @@ fn wake_readers(futex: &Futex, to_unactivate: u32, converting: bool) -> ReadLock
     ReadLock::new(futex, cur)
 }
 
-// SyncPhasedLocker
+// SyncPhaseLocker
 // ---------------
 //
-unsafe impl<'a, T: 'a> PhaseLocker<'a, T> for SyncPhasedLocker {
+unsafe impl<'a, T: 'a> PhaseLocker<'a, T> for SyncPhaseLocker {
     type ReadGuard = SyncReadPhaseGuard<'a, T>;
     type WriteGuard = SyncPhaseGuard<'a, T>;
 
@@ -531,17 +531,17 @@ unsafe impl<'a, T: 'a> PhaseLocker<'a, T> for SyncPhasedLocker {
         Self::phase(self)
     }
 }
-impl Phased for SyncPhasedLocker {
+impl Phased for SyncPhaseLocker {
     #[inline(always)]
     fn phase(this: &Self) -> Phase {
         this.phase()
     }
 }
 
-impl SyncPhasedLocker {
+impl SyncPhaseLocker {
     #[inline(always)]
     pub const fn new(p: Phase) -> Self {
-        SyncPhasedLocker(Futex::new(p.bits()))
+        SyncPhaseLocker(Futex::new(p.bits()))
     }
     #[inline(always)]
     /// Return the current phase and synchronize with the end of the

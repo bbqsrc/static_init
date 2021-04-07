@@ -1,5 +1,5 @@
-use crate::mutex::{
-    SyncPhaseGuard, SyncPhasedLocker, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncPhaseLocker,
+use crate::phase_locker::{
+    SyncPhaseGuard, SyncPhaseLocker, SyncReadPhaseGuard, UnSyncPhaseGuard, UnSyncPhaseLocker,
     UnSyncReadPhaseGuard,
 };
 use crate::{
@@ -7,14 +7,14 @@ use crate::{
         AccessError, DropedUnInited, GenericLazy, GenericMutLazy, LazyData, LazyPolicy, ReadGuard,
         UnInited, WriteGuard,
     },
-    splited_sequentializer::UnSyncSequentializer,
+    lazy_sequentializer::UnSyncSequentializer,
     Finaly, Generator, Phase, Phased, StaticInfo,
 };
 
 #[cfg(feature = "thread_local")]
-use crate::at_exit::ThreadExitSequentializer;
+use crate::exit_sequentializer::ThreadExitSequentializer;
 
-use crate::{at_exit::ExitSequentializer, splited_sequentializer::SyncSequentializer};
+use crate::{exit_sequentializer::ExitSequentializer, lazy_sequentializer::SyncSequentializer};
 
 use core::ops::{Deref, DerefMut};
 
@@ -23,14 +23,14 @@ pub struct InitializedChecker;
 impl LazyPolicy for InitializedChecker {
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
-        core::intrinsics::unlikely(p.is_empty())
+        p.is_empty()
     }
     #[inline(always)]
     fn is_accessible(p: Phase) -> bool {
-        core::intrinsics::likely(p.intersects(Phase::INITIALIZED))
+        p.intersects(Phase::INITIALIZED)
     }
     #[inline(always)]
-    fn initialized_is_accessible(p: Phase) -> bool {
+    fn initialized_is_accessible(_: Phase) -> bool {
         true
     }
 }
@@ -39,15 +39,15 @@ pub struct InitializedAndNonFinalizedChecker;
 impl LazyPolicy for InitializedAndNonFinalizedChecker {
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
-        core::intrinsics::unlikely(p.is_empty())
+        p.is_empty()
     }
     #[inline(always)]
     fn is_accessible(p: Phase) -> bool {
-        core::intrinsics::likely(!p.intersects(Phase::FINALIZED) && p.intersects(Phase::INITIALIZED))
+        !p.intersects(Phase::FINALIZED) && p.intersects(Phase::INITIALIZED)
     }
     #[inline(always)]
     fn initialized_is_accessible(p: Phase) -> bool {
-        core::intrinsics::likely(p.intersects(Phase::INITIALIZED))
+        p.intersects(Phase::INITIALIZED)
     }
 }
 //pub struct InitializedRearmingChecker;
@@ -373,23 +373,23 @@ macro_rules! impl_lazy {
     };
 }
 
-impl_lazy! {Lazy,SyncSequentializer,InitializedChecker,UnInited::<T>,SyncPhasedLocker,
+impl_lazy! {Lazy,SyncSequentializer,InitializedChecker,UnInited::<T>,SyncPhaseLocker,
 "A type that initialize it self only once on the first access"}
 
-impl_lazy! {global QuasiLazy,SyncSequentializer,InitializedChecker,UnInited::<T>,SyncPhasedLocker,
+impl_lazy! {global QuasiLazy,SyncSequentializer,InitializedChecker,UnInited::<T>,SyncPhaseLocker,
 "The actual type of statics attributed with #[dynamic(quasi_lazy)]. \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
-impl_lazy! {static LazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhasedLocker,T:Finaly,G:Sync,
+impl_lazy! {static LazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable static."
 }
 
-impl_lazy! {global QuasiLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhasedLocker,T:Finaly,G:Sync,
+impl_lazy! {global QuasiLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_lazy,finalize)]. \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -858,31 +858,31 @@ macro_rules! impl_mut_lazy {
     };
 }
 
-impl_mut_lazy! {MutLazy,SyncSequentializer,InitializedChecker,UnInited::<T>, SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard,
+impl_mut_lazy! {MutLazy,SyncSequentializer,InitializedChecker,UnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
 "A mutex that initialize its content only once on the first lock"}
 
-impl_mut_lazy! {global QuasiMutLazy,SyncSequentializer,InitializedChecker,UnInited::<T>, SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard,
+impl_mut_lazy! {global QuasiMutLazy,SyncSequentializer,InitializedChecker,UnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
-impl_mut_lazy! {static MutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard, T:Finaly,G:Sync,
+impl_mut_lazy! {static MutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard, T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(mut_lazy,finalize)]"
 }
 
-impl_mut_lazy! {global QuasiMutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
+impl_mut_lazy! {global QuasiMutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
-impl_mut_lazy! {static MutLazyDroped,ExitSequentializer<false>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>, SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+impl_mut_lazy! {static MutLazyDroped,ExitSequentializer<false>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
 "The actual type of statics attributed with #[dynamic(mut_lazy,finalize)]"
 }
 
-impl_mut_lazy! {global QuasiMutLazyDroped,ExitSequentializer<false>,InitializedChecker,DropedUnInited::<T>, SyncPhasedLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+impl_mut_lazy! {global QuasiMutLazyDroped,ExitSequentializer<false>,InitializedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -985,7 +985,7 @@ mod inited {
 
     #[inline(always)]
     pub(super) fn global_inited_hint() -> bool {
-        core::intrinsics::likely(LAZY_INIT_ENSURED.load(Ordering::Acquire))
+        LAZY_INIT_ENSURED.load(Ordering::Acquire)
     }
 }
 #[cfg(not(all(support_priority, not(feature = "test_no_global_lazy_hint"))))]

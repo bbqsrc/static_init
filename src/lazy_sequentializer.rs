@@ -1,8 +1,8 @@
-use crate::mutex::SyncPhasedLocker;
-use crate::mutex::{PhaseGuard, UnSyncPhaseLocker};
+use crate::phase_locker::SyncPhaseLocker;
+use crate::phase_locker::{PhaseGuard, UnSyncPhaseLocker};
 use crate::{Phase, Sequential};
 
-pub type SyncSequentializer = generic::LazySequentializer<SyncPhasedLocker>;
+pub type SyncSequentializer = generic::LazySequentializer<SyncPhaseLocker>;
 pub type UnSyncSequentializer = generic::LazySequentializer<UnSyncPhaseLocker>;
 
 #[inline]
@@ -94,9 +94,9 @@ mod generic {
     use super::{lazy_finalization, lazy_initialization, lazy_initialization_only};
     use crate::{
         LazySequentializer as LazySequentializerTrait, Phase, Phased, Sequential, Sequentializer,
-        SplitedLazySequentializer, InitResult
+        FinalizableLazySequentializer, InitResult
     };
-    use crate::mutex::{LockNature, LockResult, Mappable, PhaseGuard, PhaseLocker};
+    use crate::phase_locker::{LockNature, LockResult, Mappable, PhaseGuard, PhaseLocker};
 
     #[cfg(debug_mode)]
     use crate::{CyclicPanic};
@@ -318,7 +318,7 @@ mod generic {
         }
     }
     // SAFETY: it is safe because it does implement synchronized locks
-    unsafe impl<'a, T: Sequential + 'a, L: 'static> SplitedLazySequentializer<'a, T>
+    unsafe impl<'a, T: Sequential + 'a, L: 'static> FinalizableLazySequentializer<'a, T>
         for LazySequentializer<L>
     where
         T::Sequentializer: AsRef<LazySequentializer<L>>,
@@ -594,7 +594,7 @@ mod generic {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> InitResult<Phase> {
-            <Self as SplitedLazySequentializer<'a, T>>::only_init(s, shall_init, init)
+            <Self as FinalizableLazySequentializer<'a, T>>::only_init(s, shall_init, init)
         }
 
         #[inline(always)]
@@ -603,7 +603,7 @@ mod generic {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> InitResult<Phase> {
-            <Self as SplitedLazySequentializer<'a, T>>::only_init_unique(s, shall_init, init)
+            <Self as FinalizableLazySequentializer<'a, T>>::only_init_unique(s, shall_init, init)
         }
 
         #[inline(always)]
