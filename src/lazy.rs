@@ -20,28 +20,14 @@ use core::ops::{Deref, DerefMut};
 
 pub struct InitializedChecker;
 
-#[cfg(feature = "likely_stable")]
-use likely_stable::{likely,unlikely};
-
-#[cfg(not(feature = "likely_stable"))]
-#[inline(always)]
-fn likely(b: bool) -> bool {
-    b
-}
-#[cfg(not(feature = "likely_stable"))]
-#[inline(always)]
-fn unlikely(b: bool) -> bool {
-    b
-}
-
 impl LazyPolicy for InitializedChecker {
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
-        unlikely(p.is_empty())
+        p.is_empty()
     }
     #[inline(always)]
     fn is_accessible(p: Phase) -> bool {
-        likely(p.intersects(Phase::INITIALIZED))
+        p.intersects(Phase::INITIALIZED)
     }
     #[inline(always)]
     fn initialized_is_accessible(_: Phase) -> bool {
@@ -53,15 +39,15 @@ pub struct InitializedAndNonFinalizedChecker;
 impl LazyPolicy for InitializedAndNonFinalizedChecker {
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
-        unlikely(p.is_empty())
+        p.is_empty()
     }
     #[inline(always)]
     fn is_accessible(p: Phase) -> bool {
-        likely(!p.intersects(Phase::FINALIZED) && p.intersects(Phase::INITIALIZED))
+        !p.intersects(Phase::FINALIZED) && p.intersects(Phase::INITIALIZED)
     }
     #[inline(always)]
     fn initialized_is_accessible(p: Phase) -> bool {
-        likely(p.intersects(Phase::INITIALIZED))
+        p.intersects(Phase::INITIALIZED)
     }
 }
 //pub struct InitializedRearmingChecker;
@@ -987,7 +973,6 @@ impl<T, G> Drop for UnSyncMutLazy<T, G> {
 
 #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
 mod inited {
-    use super::likely;
 
     use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -1000,7 +985,7 @@ mod inited {
 
     #[inline(always)]
     pub(super) fn global_inited_hint() -> bool {
-        likely(LAZY_INIT_ENSURED.load(Ordering::Acquire))
+        LAZY_INIT_ENSURED.load(Ordering::Acquire)
     }
 }
 #[cfg(not(all(support_priority, not(feature = "test_no_global_lazy_hint"))))]
@@ -1015,6 +1000,7 @@ mod inited {
 mod test_lazy {
     use super::Lazy;
     static _X: Lazy<u32, fn() -> u32> = Lazy::new(|| 22);
+
     #[test]
     fn test() {
         assert_eq!(*_X, 22);

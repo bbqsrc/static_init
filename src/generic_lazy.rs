@@ -12,6 +12,9 @@ use core::ops::{Deref, DerefMut};
 #[cfg(debug_mode)]
 use crate::CyclicPanic;
 
+#[cfg(any(feature = "parking_lot_core", debug_mode))]
+use std::panic::RefUnwindSafe;
+
 /// Policy for lazy initialization
 pub trait LazyPolicy {
     /// shall the initialization be performed (tested at each access)
@@ -125,6 +128,10 @@ pub struct GenericLazy<T, F, M, S> {
 unsafe impl<T: LazyData, M: Sync> Sync for GenericLazySeq<T, M> where <T as LazyData>::Target: Sync {}
 unsafe impl<T: LazyData, M: Sync> Send for GenericLazySeq<T, M> where <T as LazyData>::Target: Send {}
 
+
+#[cfg(any(feature = "parking_lot_core", debug_mode))]
+impl<T: LazyData, M: RefUnwindSafe> RefUnwindSafe for GenericLazySeq<T, M> where <T as LazyData>::Target: RefUnwindSafe {}
+
 // SAFETY: The synchronization is ensured by the Sequentializer
 //  1. GenericLazy fullfill the requirement that its sequentializer is a field
 //  of itself as is its target data.
@@ -137,6 +144,9 @@ unsafe impl<T: LazyData, M: Sync> Send for GenericLazyMutSeq<T, M> where
     <T as LazyData>::Target: Send
 {
 }
+
+#[cfg(any(feature = "parking_lot_core", debug_mode))]
+impl<T: LazyData, M: RefUnwindSafe> RefUnwindSafe for GenericLazyMutSeq<T, M> where <T as LazyData>::Target: RefUnwindSafe {}
 
 impl<T, F, M, S> GenericLazy<T, F, M, S> {
     #[inline(always)]
@@ -468,6 +478,12 @@ where
         Phased::phase(&this.0)
     }
 }
+
+#[cfg(any(feature = "parking_lot_core", debug_mode))]
+impl<T: LazyData> RefUnwindSafe for ReadGuard<T> where <T as LazyData>::Target: RefUnwindSafe {}
+
+#[cfg(any(feature = "parking_lot_core", debug_mode))]
+impl<T: LazyData> RefUnwindSafe for WriteGuard<T> where <T as LazyData>::Target: RefUnwindSafe {}
 
 /// A type that wrap a Sequentializer and a raw data, and that may
 /// initialize the data, at each access depending on the LazyPolicy

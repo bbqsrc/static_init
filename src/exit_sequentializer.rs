@@ -8,6 +8,8 @@ mod exit_manager {
     use crate::{
         LazySequentializer, Phase, Phased, Sequential, Sequentializer, FinalizableLazySequentializer, InitResult
     };
+    #[cfg(any(feature = "parking_lot_core", debug_mode))]
+    use std::panic::{RefUnwindSafe,UnwindSafe};
 
     trait OnExit {
         fn take_next(&self) -> Option<&'static Node>;
@@ -20,6 +22,16 @@ mod exit_manager {
         sub:  SubSequentializer,
         next: Mutex<Option<&'static Node>>,
     }
+
+
+    // if a panic is launched during a finalization
+    // static that have not yet been finalized will not
+    // be finalized 
+    #[cfg(any(feature = "parking_lot_core", debug_mode))]
+    impl RefUnwindSafe for ExitSequentializerBase {}
+    #[cfg(any(feature = "parking_lot_core", debug_mode))]
+    impl UnwindSafe for ExitSequentializerBase {}
+
 
     /// A sequentializer that store finalize_callback  
     /// for execution at program exit
@@ -273,6 +285,9 @@ mod local_manager {
         LockNature, LockResult, UnSyncPhaseGuard, UnSyncPhaseLocker, UnSyncReadPhaseGuard,
     };
 
+    #[cfg(any(feature = "parking_lot_core", debug_mode))]
+    use std::panic::{RefUnwindSafe, UnwindSafe};
+
     trait OnExit {
         fn take_next(&self) -> Option<&'static Node>;
         fn execute(&self);
@@ -286,6 +301,14 @@ mod local_manager {
         sub:  SubSequentializer,
         next: Cell<Option<&'static Node>>,
     }
+
+    // if a panic is launched during a finalization
+    // static that have not yet been finalized will not
+    // be finalized 
+    #[cfg(any(feature = "parking_lot_core", debug_mode))]
+    impl RefUnwindSafe for ThreadExitSequentializerBase {}
+    #[cfg(any(feature = "parking_lot_core", debug_mode))]
+    impl UnwindSafe for ThreadExitSequentializerBase {}
 
     #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
     /// A sequentializer that store finalize_callback  

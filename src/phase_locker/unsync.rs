@@ -5,6 +5,9 @@ use core::cell::Cell;
 use core::mem::forget;
 use core::ops::Deref;
 
+#[cfg(any(feature = "parking_lot_core", debug_mode))]
+use std::panic::RefUnwindSafe;
+
 /// A kind of RefCell that is also phase locker.
 pub struct UnSyncPhaseLocker(Cell<u32>);
 
@@ -74,6 +77,10 @@ unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for UnSyncPhaseGuard<'a, T> {
         res
     }
 }
+
+#[cfg(any(feature = "parking_lot_core", debug_mode))]
+impl<'a,T: RefUnwindSafe> RefUnwindSafe for UnSyncPhaseGuard<'a,T> {}
+
 impl<'a, T: ?Sized> From<UnSyncPhaseGuard<'a, T>> for UnSyncReadPhaseGuard<'a, T> {
     #[inline(always)]
     fn from(l: UnSyncPhaseGuard<'a, T>) -> UnSyncReadPhaseGuard<'a, T> {
@@ -127,6 +134,9 @@ impl<'a, T: 'a, U: 'a> Mappable<T, U, UnSyncReadPhaseGuard<'a, U>> for UnSyncRea
         Self::map(self, f)
     }
 }
+
+#[cfg(any(feature = "parking_lot_core", debug_mode))]
+impl<'a,T> RefUnwindSafe for UnSyncReadPhaseGuard<'a,T> {}
 
 impl<'a, T: ?Sized> Drop for UnSyncReadPhaseGuard<'a, T> {
     #[inline(always)]
@@ -267,3 +277,7 @@ impl UnSyncPhaseLocker {
         }
     }
 }
+
+#[cfg(any(feature = "parking_lot_core", debug_mode))]
+impl RefUnwindSafe for UnSyncPhaseLocker {}
+

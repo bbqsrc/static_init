@@ -17,8 +17,6 @@ members = [
 
 [features]
 
-likely = ["likely_stable"]
-
 # for detection of lazy static cyclic initialization 
 # and detection of dynamic statics access while not initialized
 debug_order = ["static_init_macro/debug_order","parking_lot"]
@@ -29,10 +27,9 @@ thread_local = []
 test_no_global_lazy_hint = []
 
 
-default = ["likely_stable"]
+default = []
 
 [dependencies]
-likely_stable = {version = "0.1", optional=true}
 bitflags = "1"
 parking_lot = {version = "0.11", optional=true}
 parking_lot_core = {version = "0.8", optional=true}
