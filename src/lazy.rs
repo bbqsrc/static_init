@@ -21,6 +21,27 @@ use core::ops::{Deref, DerefMut};
 pub struct InitializedChecker;
 
 impl LazyPolicy for InitializedChecker {
+    const INITIALIZED: Phase = Phase::INITIALIZED;
+    #[inline(always)]
+    fn shall_init(p: Phase) -> bool {
+        p.is_empty()
+    }
+    #[inline(always)]
+    fn is_accessible(p: Phase) -> bool {
+        p.intersects(Phase::INITIALIZED)
+    }
+    #[inline(always)]
+    fn initialized_is_accessible(_: Phase) -> bool {
+        true
+    }
+}
+
+const INIT_REG:Phase = unsafe{Phase::from_bits_unchecked(Phase::INITIALIZED.bits() | Phase::REGISTERED.bits())};
+
+pub struct InitializedRegisteredChecker;
+
+impl LazyPolicy for InitializedRegisteredChecker {
+    const INITIALIZED: Phase = INIT_REG;
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
         p.is_empty()
@@ -37,6 +58,7 @@ impl LazyPolicy for InitializedChecker {
 
 pub struct InitializedAndNonFinalizedChecker;
 impl LazyPolicy for InitializedAndNonFinalizedChecker {
+    const INITIALIZED: Phase = INIT_REG;
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
         p.is_empty()
@@ -383,13 +405,13 @@ The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
-impl_lazy! {static LazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
+impl_lazy! {static LazyFinalize,ExitSequentializer<false>,InitializedRegisteredChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable static."
 }
 
-impl_lazy! {global LesserLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
+impl_lazy! {global LesserLazyFinalize,ExitSequentializer<false>,InitializedRegisteredChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_lazy,finalize)]. \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -401,7 +423,7 @@ impl_lazy! {UnSyncLazy,UnSyncSequentializer,InitializedChecker,UnInited::<T>,UnS
 }
 
 #[cfg(feature = "thread_local")]
-impl_lazy! {static UnSyncLazyFinalize,ThreadExitSequentializer<false>,InitializedChecker,UnInited::<T>,UnSyncPhaseLocker,T:Finaly,
+impl_lazy! {static UnSyncLazyFinalize,ThreadExitSequentializer<false>,InitializedRegisteredChecker,UnInited::<T>,UnSyncPhaseLocker,T:Finaly,
 "The actual type of thread_local statics attributed with #[dynamic(lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
@@ -868,11 +890,11 @@ The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
-impl_mut_lazy! {static MutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard, T:Finaly,G:Sync,
+impl_mut_lazy! {static MutLazyFinalize,ExitSequentializer<false>,InitializedRegisteredChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard, T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(mut_lazy,finalize)]"
 }
 
-impl_mut_lazy! {global LesserMutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
+impl_mut_lazy! {global LesserMutLazyFinalize,ExitSequentializer<false>,InitializedRegisteredChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -882,7 +904,7 @@ impl_mut_lazy! {static MutLazyDroped,ExitSequentializer<false>,InitializedAndNon
 "The actual type of statics attributed with #[dynamic(mut_lazy,finalize)]"
 }
 
-impl_mut_lazy! {global LesserMutLazyDroped,ExitSequentializer<false>,InitializedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+impl_mut_lazy! {global LesserMutLazyDroped,ExitSequentializer<false>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -894,7 +916,7 @@ impl_mut_lazy! {UnSyncMutLazy,UnSyncSequentializer,InitializedChecker,UnInited::
 }
 
 #[cfg(feature = "thread_local")]
-impl_mut_lazy! {thread_local UnSyncMutLazyFinalize,ThreadExitSequentializer<false>,InitializedChecker,UnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,T:Finaly,
+impl_mut_lazy! {thread_local UnSyncMutLazyFinalize,ThreadExitSequentializer<false>,InitializedRegisteredChecker,UnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,T:Finaly,
 "The actual type of thread_local statics attributed with #[dynamic(mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")

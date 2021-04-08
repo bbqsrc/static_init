@@ -204,6 +204,7 @@ mod generic {
         fn lock(
             s: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
+            hint: Phase,
         ) -> LockResult<Self::ReadGuard, Self::WriteGuard> {
             let this = Sequential::sequentializer(s).as_ref();
 
@@ -213,7 +214,7 @@ mod generic {
                 data,
                 &lock_nature,
                 &lock_nature,
-                Phase::INITIALIZED | Phase::REGISTERED,
+                hint,
             )
         }
 
@@ -221,13 +222,14 @@ mod generic {
         fn try_lock(
             s: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
+            hint: Phase,
         ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>> {
             let this = Sequential::sequentializer(s).as_ref();
 
             let data = Sequential::data(s);
 
             this.0
-                .try_lock(data, &lock_nature, Phase::INITIALIZED | Phase::REGISTERED)
+                .try_lock(data, &lock_nature, hint)
         }
 
         #[inline(always)]
@@ -242,6 +244,7 @@ mod generic {
     fn whole_lock<'a, T: Sequential + 'a, L: 'static>(
         s: &'a T,
         lock_nature: impl Fn(Phase) -> LockNature,
+        hint: Phase,
     ) -> LockResult<L::ReadGuard, L::WriteGuard>
     where
         T::Sequentializer: AsRef<LazySequentializer<L>>,
@@ -254,7 +257,7 @@ mod generic {
             s,
             &lock_nature,
             &lock_nature,
-            Phase::INITIALIZED | Phase::REGISTERED,
+            hint,
         )
     }
 
@@ -262,6 +265,7 @@ mod generic {
     fn try_whole_lock<'a, T: Sequential + 'a, L: 'static>(
         s: &'a T,
         lock_nature: impl Fn(Phase) -> LockNature,
+        hint: Phase,
     ) -> Option<LockResult<L::ReadGuard, L::WriteGuard>>
     where
         T::Sequentializer: AsRef<LazySequentializer<L>>,
@@ -271,7 +275,7 @@ mod generic {
         let this = Sequential::sequentializer(s).as_ref();
 
         this.0
-            .try_lock(s, &lock_nature, Phase::INITIALIZED | Phase::REGISTERED)
+            .try_lock(s, &lock_nature, hint)
     }
 
     #[inline(always)]
@@ -386,7 +390,7 @@ mod generic {
                     }
                 },
                 |_| LockNature::Read,
-                Phase::INITIALIZED | Phase::REGISTERED,
+                Phase::INITIALIZED,
             ) {
                 LockResult::None(p) => return InitResult{initer:false, result:p},
                 LockResult::Write(l) => l,
@@ -456,7 +460,7 @@ mod generic {
             reg: impl FnOnce(&'a T) -> bool,
             init_on_reg_failure: bool,
         ) -> InitResult<Self::WriteGuard> {
-            match whole_lock(s, |_| LockNature::Write) {
+            match whole_lock(s, |_| LockNature::Write, Phase::INITIALIZED) {
                 LockResult::Write(l) => if shall_init(l.phase()) {
                     debug_test(s);
                     debug_save_thread(s);
@@ -514,7 +518,7 @@ mod generic {
             reg: impl FnOnce(&'a T) -> bool,
             init_on_reg_failure: bool,
         ) -> Option<InitResult<Self::WriteGuard>> {
-            try_whole_lock(s, |_| LockNature::Write).map(|l| match l {
+            try_whole_lock(s, |_| LockNature::Write, Phase::INITIALIZED|Phase::REGISTERED).map(|l| match l {
                 LockResult::Write(l) => if shall_init(l.phase()) {
                     debug_test(s);
                     debug_save_thread(s);
@@ -625,7 +629,7 @@ mod generic {
                     }
                 },
                 |_| LockNature::Read,
-                Phase::INITIALIZED | Phase::REGISTERED,
+                Phase::INITIALIZED,
             ) {
                 LockResult::Read(l) => InitResult{initer:false, result:l},
                 LockResult::Write(l) => {
@@ -643,7 +647,7 @@ mod generic {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> InitResult<Self::WriteGuard> {
-            match <Self as Sequentializer<'a, T>>::lock(s, |_| LockNature::Write) {
+            match <Self as Sequentializer<'a, T>>::lock(s, |_| LockNature::Write, Phase::INITIALIZED) {
                 LockResult::Write(l) => {
                     if shall_init(l.phase()) {
                         debug_test(s);
@@ -679,7 +683,7 @@ mod generic {
                             LockNature::Read
                         }
                     },
-                    Phase::INITIALIZED | Phase::REGISTERED,
+                    Phase::INITIALIZED,
                 )
                 .map(|l| match l {
                     LockResult::Read(l) => InitResult{initer:false, result:l},
@@ -698,7 +702,7 @@ mod generic {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> Option<InitResult<Self::WriteGuard>> {
-            <Self as Sequentializer<'a, T>>::try_lock(s, |_| LockNature::Write).map(|l| match l {
+            <Self as Sequentializer<'a, T>>::try_lock(s, |_| LockNature::Write,Phase::INITIALIZED).map(|l| match l {
                 LockResult::Write(l) => {
                     if shall_init(l.phase()) {
                         debug_test(s);

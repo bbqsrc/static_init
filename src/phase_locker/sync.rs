@@ -420,10 +420,6 @@ fn has_readers_max(v: u32) -> bool {
 fn is_not_write_locked(v: u32) -> bool {
     v & LOCKED_BIT == 0
 }
-#[inline(always)]
-fn is_write_locked(v: u32) -> bool {
-    v & LOCKED_BIT != 0
-}
 //#[inline(always)]
 //fn is_write_locked(v:u32) -> bool {
 //    v & LOCKED_BIT != 0
@@ -588,7 +584,7 @@ impl SyncPhaseLocker {
         how: impl Fn(Phase) -> LockNature,
         hint: Phase,
     ) -> Option<LockResult<ReadLock<'_>, Lock<'_>>> {
-        let cur;
+        let mut cur = hint.bits();
         match how(hint) {
             LockNature::None => {
                 cur = self.0.load(Ordering::Acquire);
@@ -598,66 +594,174 @@ impl SyncPhaseLocker {
                 }
             }
             LockNature::Write => {
-                match self.0.compare_exchange(
-                    hint.bits(),
-                    hint.bits() | LOCKED_BIT,
+                match self.0.compare_exchange_weak(
+                    cur,
+                    cur | LOCKED_BIT,
                     Ordering::Acquire,
                     Ordering::Relaxed,
                 ) {
-                    Ok(x) => return Some(LockResult::Write(Lock::new(&self.0, x))),
-                    Err(x) => cur = x,
+                    Ok(_) => return Some(LockResult::Write(Lock::new(&self.0, cur))),
+                    Err(x) => {
+                        cur = x;
+                    }
                 }
             }
             LockNature::Read => {
-                match self.0.compare_exchange(
-                    hint.bits(),
-                    hint.bits() + READER_UNITY,
+                match self.0.compare_exchange_weak(
+                    cur,
+                    cur + READER_UNITY,
                     Ordering::Acquire,
                     Ordering::Relaxed,
                 ) {
-                    Ok(x) => return Some(LockResult::Read(ReadLock::new(&self.0, x))),
-                    Err(x) => cur = x,
+                    Ok(_) => {
+                        return Some(LockResult::Read(ReadLock::new(&self.0, cur)));
+                    }
+                    Err(x) => {
+                        cur = x;
+                    }
                 }
             }
         }
-        match how(Phase::from_bits_truncate(cur)) {
+
+        let p = Phase::from_bits_truncate(cur);
+
+        match how(p) {
             LockNature::Write => {
-                if !is_write_locked(cur) && !has_readers(cur) && !has_waiters(cur) {
-                    match self.0.compare_exchange_weak(
-                        cur,
-                        cur | LOCKED_BIT,
-                        Ordering::Acquire,
-                        Ordering::Relaxed,
-                    ) {
-                        Ok(x) => Some(LockResult::Write(Lock::new(&self.0, x))),
-                        Err(_) => None,
-                    }
-                } else {
-                    None
-                }
+                if is_write_lockable(cur)
+                    && has_no_readers(cur)
+                    && self
+                        .0
+                        .compare_exchange(
+                            cur,
+                            cur | LOCKED_BIT,
+                            Ordering::Acquire,
+                            Ordering::Relaxed,
+                        )
+                        .is_ok()
+                {
+                    return Some(LockResult::Write(Lock::new(&self.0, cur)))
+                } 
             }
-            LockNature::Read => {
-                if is_read_lockable(cur) {
+            LockNature::Read => 
+                loop {
+                    if !is_read_lockable(cur) {
+                        break;
+                    }
                     match self.0.compare_exchange_weak(
                         cur,
                         cur + READER_UNITY,
                         Ordering::Acquire,
                         Ordering::Relaxed,
                     ) {
-                        Ok(x) => Some(LockResult::Read(ReadLock::new(&self.0, x))),
-                        Err(_) => None,
+                        Ok(_) => return Some(LockResult::Read(ReadLock::new(&self.0, cur))),
+                        Err(x) => {
+                            cur = x;
+                            if !(how(Phase::from_bits_truncate(cur)) == LockNature::Read) {
+                                break;
+                            }
+                        }
                     }
-                } else {
-                    None
                 }
-            }
             LockNature::None => {
                 fence(Ordering::Acquire);
-                let p = Phase::from_bits_truncate(cur);
-                Some(LockResult::None(p))
+                return Some(LockResult::None(p));
             }
         }
+
+        None
     }
+
+        //let mut cur = self.0.load(Ordering::Relaxed);
+        //let mut cur;
+        //match how(hint) {
+        //    LockNature::None => {
+        //        cur = self.0.load(Ordering::Acquire);
+        //        let p = Phase::from_bits_truncate(cur);
+        //        if let LockNature::None = how(p) {
+        //            return Some(LockResult::None(p));
+        //        }
+        //    }
+        //    LockNature::Write => {
+        //        cur = self.0.load(Ordering::Relaxed);
+        //        let p = Phase::from_bits_truncate(cur);
+        //        if LockNature::Write == how(p) {
+        //            if !is_write_locked(cur) && !has_readers(cur) && !has_waiters(cur) {
+        //                match self.0.compare_exchange(
+        //                    cur,
+        //                    cur | LOCKED_BIT,
+        //                    Ordering::Acquire,
+        //                    Ordering::Relaxed,
+        //                ) {
+        //                    Ok(x) => return Some(LockResult::Write(Lock::new(&self.0, x))),
+        //                    Err(_) => return None,
+        //                }
+        //            } else {
+        //                return None
+        //            }
+        //        }
+        //    }
+        //    LockNature::Read => {
+        //        cur = self.0.load(Ordering::Relaxed);
+        //        let p = Phase::from_bits_truncate(cur);
+        //        if LockNature::Read == how(p) && is_read_lockable(cur) {
+        //            match self.0.compare_exchange_weak(
+        //                cur,
+        //                cur + READER_UNITY,
+        //                Ordering::Acquire,
+        //                Ordering::Relaxed,
+        //            ) {
+        //                Ok(x) => return Some(LockResult::Read(ReadLock::new(&self.0, x))),
+        //                Err(x) => cur = x,
+        //            }
+        //        }
+        //    }
+        //}
+        //match how(Phase::from_bits_truncate(cur)) {
+        //    LockNature::Write => {
+        //        if !is_write_locked(cur) && !has_readers(cur) && !has_waiters(cur) {
+        //            match self.0.compare_exchange(
+        //                cur,
+        //                cur | LOCKED_BIT,
+        //                Ordering::Acquire,
+        //                Ordering::Relaxed,
+        //            ) {
+        //                Ok(x) => Some(LockResult::Write(Lock::new(&self.0, x))),
+        //                Err(_) => None,
+        //            }
+        //        } else {
+        //            None
+        //        }
+        //    }
+        //    LockNature::Read => {
+        //        loop {
+        //            if !is_read_lockable(cur) {
+        //                break None;
+        //            }
+        //            match self.0.compare_exchange_weak(
+        //                cur,
+        //                cur + READER_UNITY,
+        //                Ordering::Acquire,
+        //                Ordering::Relaxed,
+        //            ) {
+        //                Ok(_) => {
+        //                    break Some(LockResult::Read(ReadLock::new(&self.0, cur)));
+        //                }
+        //                Err(x) => {
+        //                    cur = x;
+        //                    if !(how(Phase::from_bits_truncate(cur)) == LockNature::Read) {
+        //                        break None;
+        //                    }
+        //                }
+        //            }
+        //        }
+        //    }
+        //    LockNature::None => {
+        //        fence(Ordering::Acquire);
+        //        let p = Phase::from_bits_truncate(cur);
+        //        Some(LockResult::None(p))
+        //    }
+        //}
+    //}
     #[inline(always)]
     fn raw_lock(
         &self,

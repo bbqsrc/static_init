@@ -16,7 +16,7 @@
 //          - ajouter aux macros les lazy const initializé et la tolérance à la non registration
 //            du destructeur
 
-#![cfg_attr(not(any(feature = "parking_lot_core", debug_mode)), no_std)]
+//#![cfg_attr(not(any(feature = "parking_lot_core", debug_mode)), no_std)]
 #![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]
 #![cfg_attr(
     feature = "thread_local",
@@ -160,6 +160,7 @@ pub unsafe trait Sequentializer<'a, T: Sequential>: 'static + Sized + Phased {
     fn lock(
         target: &'a T,
         lock_nature: impl Fn(Phase) -> LockNature,
+        hint: Phase,
     ) -> LockResult<Self::ReadGuard, Self::WriteGuard>;
     /// Try to lock the phases of an object in order to ensure atomic phase transition.
     ///
@@ -169,6 +170,7 @@ pub unsafe trait Sequentializer<'a, T: Sequential>: 'static + Sized + Phased {
     fn try_lock(
         target: &'a T,
         lock_nature: impl Fn(Phase) -> LockNature,
+        hint: Phase,
     ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>>;
 
     /// Lock the phases of an object in order to ensure atomic phase transition.

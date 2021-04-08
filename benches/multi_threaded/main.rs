@@ -493,49 +493,119 @@ static mut QLM: i32 = 33;
 static mut QLMD: i32 = 33;
 
 fn bench_access(c: &mut Criterion) {
-    let mut gp = c.benchmark_group("Access Mut Thread Scaling");
-
-    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
-
-    do_bench(
-        &mut gp,
-        "LazyMut read",
-        || {
-            let l = MutLazy::new(Xx);
-            l.read();
-            l
-        },
-        |l| *l.read(),
-    );
-
-    do_bench(
-        &mut gp,
-        "LazyMut write",
-        || {
-            let l = MutLazy::new(Xx);
-            l.read();
-            l
-        },
-        |l| *l.write(),
-    );
-
-    do_bench(&mut gp, "LesserLazyMut read", || (), |_| *QLM.read());
-
-    do_bench(&mut gp, "LesserLazyMut write", || (), |_| *QLM.write());
-
-    do_bench(&mut gp, "LesserLazyMutDrop read", || (), |_| *QLMD.read());
-
-    do_bench(&mut gp, "LesserLazyMutDrop write", || (), |_| *QLMD.write());
-
     let init = || {
+        let l = MutLazy::new(Xx);
+        l.read();
+        l
+    };
+
+    let rw_init = || {
         let l = RwMut::new(|| 33);
         let _ = l.read();
         l
     };
 
-    do_bench(&mut gp, "LazyMut PkLot read", init, |l| *l.read());
+    macro_rules! fast_access {
+        ($acc:expr) => {{
+            let v;
+            loop {
+                match $acc {
+                    None => {
+                        for _ in 0..64 {
+                            core::hint::spin_loop()
+                        }
+                    }
+                    Some(l) => {
+                        v = *l;
+                        break;
+                    }
+                }
+            }
+            v
+        }};
+    }
 
-    do_bench(&mut gp, "LazyMut PkLot write", init, |l| *l.write());
+    let mut gp = c.benchmark_group("Access Read Mut Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    do_bench(&mut gp, "LazyMut read", init, |l| *l.read());
+
+    do_bench(&mut gp, "LesserLazyMut read", || (), |_| *QLM.read());
+
+    do_bench(&mut gp, "LesserLazyMutDrop read", || (), |_| *QLMD.read());
+
+    do_bench(&mut gp, "LazyMut PkLot read", rw_init, |l| *l.read());
+
+    gp.finish();
+
+    let mut gp = c.benchmark_group("Access Write Mut Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    do_bench(&mut gp, "LazyMut write", init, |l| *l.write());
+
+    do_bench(&mut gp, "LesserLazyMut write", || (), |_| *QLM.write());
+
+    do_bench(&mut gp, "LesserLazyMutDrop write", || (), |_| *QLMD.write());
+
+    do_bench(&mut gp, "LazyMut PkLot write", rw_init, |l| *l.write());
+
+    gp.finish();
+
+    let mut gp = c.benchmark_group("Fast Read Access Mut Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    do_bench(&mut gp, "LazyMut fast_read", init, |l| {
+        fast_access!(l.fast_read())
+    });
+
+    do_bench(
+        &mut gp,
+        "LesserLazyMut fast_read",
+        || (),
+        |_| fast_access!(QLM.fast_read()),
+    );
+
+    do_bench(
+        &mut gp,
+        "LesserLazyMutDrop fast_read",
+        || (),
+        |_| fast_access!(QLMD.fast_read()),
+    );
+
+    do_bench(&mut gp, "LazyMut PkLot fast_read", rw_init, |l| {
+        fast_access!(l.fast_read())
+    });
+
+    gp.finish();
+
+    let mut gp = c.benchmark_group("Fast Write Access Mut Thread Scaling");
+
+    gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    do_bench(&mut gp, "LazyMut fast_write", init, |l| {
+        fast_access!(l.fast_write())
+    });
+
+    do_bench(
+        &mut gp,
+        "LesserLazyMut fast_write",
+        || (),
+        |_| fast_access!(QLM.fast_write()),
+    );
+
+    do_bench(
+        &mut gp,
+        "LesserLazyMutDrop fast_write",
+        || (),
+        |_| fast_access!(QLMD.fast_write()),
+    );
+
+    do_bench(&mut gp, "LazyMut PkLot fast_write", rw_init, |l| {
+        fast_access!(l.fast_write())
+    });
 
     gp.finish();
 

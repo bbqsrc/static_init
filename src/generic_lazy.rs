@@ -17,6 +17,7 @@ use std::panic::RefUnwindSafe;
 
 /// Policy for lazy initialization
 pub trait LazyPolicy {
+    const INITIALIZED: Phase;
     /// shall the initialization be performed (tested at each access)
     fn shall_init(_: Phase) -> bool;
     /// Is the object accessible in phase `p`
@@ -599,7 +600,9 @@ where
     pub unsafe fn fast_read_lock_unchecked(this: &'a Self) -> Option<ReadGuard<M::ReadGuard>> {
         <M as Sequentializer<'a, GenericLazyMutSeq<T, M>>>::try_lock(&this.seq, |_| {
             LockNature::Read
-        })
+        },
+        S::INITIALIZED
+        )
         .map(|l| {
             if let LockResult::Read(l) = l {
                 ReadGuard(l)
@@ -641,7 +644,9 @@ where
         if let LockResult::Read(l) =
             <M as Sequentializer<'a, GenericLazyMutSeq<T, M>>>::lock(&this.seq, |_| {
                 LockNature::Read
-            })
+            },
+            S::INITIALIZED
+            )
         {
             ReadGuard(l)
         } else {
@@ -677,7 +682,9 @@ where
     pub unsafe fn fast_write_lock_unchecked(this: &'a Self) -> Option<WriteGuard<M::WriteGuard>> {
         <M as Sequentializer<'a, GenericLazyMutSeq<T, M>>>::try_lock(&this.seq, |_| {
             LockNature::Write
-        })
+        },
+        S::INITIALIZED
+        )
         .map(|l| {
             if let LockResult::Write(l) = l {
                 WriteGuard(l)
@@ -720,7 +727,9 @@ where
         if let LockResult::Write(l) =
             <M as Sequentializer<'a, GenericLazyMutSeq<T, M>>>::lock(&this.seq, |_| {
                 LockNature::Write
-            })
+            },
+            S::INITIALIZED
+            )
         {
             WriteGuard(l)
         } else {
