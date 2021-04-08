@@ -55,12 +55,12 @@ mod linux {
             compiler_fence(Ordering::AcqRel);
             let prev_count = self.writer_count.fetch_sub(1,Ordering::Relaxed);
             assert_ne!(prev_count,0);
-            //// count = number of threads waiting at the time of unpark + those
+            //// count = number of threads waiting at the time of wake + those
             ////         for which the futex syscall as been interrupted but count not
             ////         yet substracted + those that are in the process of waiting
             //// so here count is larger than the number of waiting threads 
             if res && prev_count > 1 {
-                self.futex.fetch_or(WPARKED_BIT,Ordering::Relaxed);
+                self.futex.fetch_or(WRITE_WAITER_BIT,Ordering::Relaxed);
             } 
             res
         }
@@ -77,7 +77,7 @@ mod linux {
                 ) as usize
             };
             if count == MAX_WAKED_READERS {
-                self.futex.fetch_or(PARKED_BIT,Ordering::Relaxed);
+                self.futex.fetch_or(READ_WAITER_BIT,Ordering::Relaxed);
             }
             count
         }
@@ -112,19 +112,26 @@ pub(crate) use linux::Futex;
 
 #[cfg(feature = "parking_lot_core")]
 mod other {
-    use crate::phase::MAX_WAKED_READERS;
+    use crate::phase::*;
     use core::ops::Deref;
-    use core::sync::atomic::{AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicU32, Ordering,compiler_fence};
     use parking_lot_core::{
-        park, unpark_all, unpark_one, ParkResult, DEFAULT_PARK_TOKEN, DEFAULT_UNPARK_TOKEN, FilterOp
+        park, unpark_one, unpark_filter, ParkResult, DEFAULT_PARK_TOKEN, DEFAULT_UNPARK_TOKEN, FilterOp
     };
 
-    pub(crate) struct Futex(AtomicU32);
+    pub(crate) struct Futex {
+        futex: AtomicU32,
+        writer_count: AtomicU32,
+    }
 
 
     impl Futex {
+
         pub(crate) const fn new(value: u32) -> Self {
-            Self(AtomicU32::new(value))
+            Self {
+                futex: AtomicU32::new(value),
+                writer_count: AtomicU32::new(0),
+            }
         }
 
         pub(crate) fn compare_and_wait_as_reader(&self, value: u32) -> bool {
@@ -132,7 +139,7 @@ mod other {
                 matches!(
                     park(
                         self.reader_key(),
-                        || self.0.load(Ordering::Relaxed) == value,
+                        || self.futex.load(Ordering::Relaxed) == value,
                         || {},
                         |_, _| {},
                         DEFAULT_PARK_TOKEN,
@@ -143,11 +150,13 @@ mod other {
             }
         }
         pub(crate) fn compare_and_wait_as_writer(&self, value: u32) -> bool {
-            unsafe {
+            assert_ne!(self.writer_count.fetch_add(1,Ordering::Relaxed),u32::MAX);
+            compiler_fence(Ordering::AcqRel);
+            let res = unsafe {
                 matches!(
                     park(
-                        self.writer_key()
-                        || self.0.load(Ordering::Relaxed) == value,
+                        self.writer_key(),
+                        || self.futex.load(Ordering::Relaxed) == value,
                         || {},
                         |_, _| {},
                         DEFAULT_PARK_TOKEN,
@@ -155,43 +164,53 @@ mod other {
                     ),
                     ParkResult::Unparked(_)
                 )
-            }
+            };
+            compiler_fence(Ordering::AcqRel);
+            let prev_count = self.writer_count.fetch_sub(1,Ordering::Relaxed);
+            assert_ne!(prev_count,0);
+            //// count = number of threads waiting at the time of unpark + those
+            ////         for which the futex syscall as been interrupted but count not
+            ////         yet substracted + those that are in the process of waiting
+            //// so here count is larger than the number of waiting threads 
+            if res && prev_count > 1 {
+                self.futex.fetch_or(WRITE_WAITER_BIT,Ordering::Relaxed);
+            } 
+            res
         }
         pub(crate) fn wake_readers(&self) -> usize {
             let mut c = 0;
             let r = unsafe { 
                 unpark_filter(self.reader_key(), 
-                    |_| {c+=1; if c <= MAX_WAKED_READERS { FilterOp::Unpark } else { FilterOp::Stop}},
+                    |_| {if c < MAX_WAKED_READERS {c+=1;  FilterOp::Unpark } else { FilterOp::Stop}},
                     |_| DEFAULT_UNPARK_TOKEN
-                    ); 
+                    ) 
                 };
-            if r.have_more_threads {
-                self.0.fetch_or(PARKED_BIT,Ordering::Relaxed);
+
+            if c == MAX_WAKED_READERS {
+                self.futex.fetch_or(READ_WAITER_BIT,Ordering::Relaxed);
             }
+
             r.unparked_threads
         }
         pub(crate) fn wake_one_writer(&self) -> bool {
             let r = unsafe {
-                unpark_one(self.writer_key(), |_| DEFAULT_UNPARK_TOKEN);
+                unpark_one(self.writer_key(), |_| DEFAULT_UNPARK_TOKEN)
             };
-            if r.has_more_threads {
-                self.0.fetch_or(WPARKED_BIT, Ordering::Relaxed);
-            }
             r.unparked_threads == 1
         }
 
         fn reader_key(&self) -> usize {
-              &self.0 as *const _ as usize
+              &self.futex as *const _ as usize
         }
         fn writer_key(&self) -> usize {
-              (&self.0 as *const _ as usize) + 1
+              (&self.futex as *const _ as usize) + 1
         }
     }
 
     impl Deref for Futex {
         type Target = AtomicU32;
         fn deref(&self) -> &Self::Target {
-            &self.0
+            &self.futex
         }
     }
 }

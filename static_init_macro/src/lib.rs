@@ -467,7 +467,7 @@ pub fn dynamic(args: TokenStream, input: TokenStream) -> TokenStream {
 enum InitMode {
     Const,
     Lazy,
-    QuasiLazy,
+    LesserLazy,
     Dynamic(u16),
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -594,9 +594,9 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
                 } else if id == "lazy" {
                     check_no_init!(id);
                     opt.init = InitMode::Lazy;
-                } else if id == "quasi_lazy" {
+                } else if id == "lesser_lazy" {
                     check_no_init!(id);
-                    opt.init = InitMode::QuasiLazy;
+                    opt.init = InitMode::LesserLazy;
                 } else {
                     return unexpected_arg!(id);
                 }
@@ -635,7 +635,7 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
             }
         }
     }
-    if (opt.init == InitMode::Lazy || opt.init == InitMode::QuasiLazy)
+    if (opt.init == InitMode::Lazy || opt.init == InitMode::LesserLazy)
         && !(opt.drop == DropMode::None
             || opt.drop == DropMode::Finalize
             || opt.drop == DropMode::Drop)
@@ -708,14 +708,14 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
 
     let is_thread_local = has_thread_local(&stat.attrs);
 
-    if is_thread_local && !(options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy) {
+    if is_thread_local && !(options.init == InitMode::Lazy || options.init == InitMode::LesserLazy) {
         return generate_error!(
             "Only statics with `#[dynamic(lazy)]` or `#[dynamic(lazy,drop)]` can also have \
              `#[thread_local]` attribute"
         );
     }
 
-    let stat_ref: Expr = if !(options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy)
+    let stat_ref: Expr = if !(options.init == InitMode::Lazy || options.init == InitMode::LesserLazy)
         && stat.mutability.is_some()
     {
         parse_quote! {
@@ -740,7 +740,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         };
     }
 
-    let typ: Type = if !(options.init == InitMode::Lazy || options.init == InitMode::QuasiLazy) {
+    let typ: Type = if !(options.init == InitMode::Lazy || options.init == InitMode::LesserLazy) {
         if stat.mutability.is_none() {
             into_mutable!();
             parse_quote! {
@@ -784,15 +784,15 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 ::static_init::lazy::UnSyncMutLazy::<#stat_typ,#stat_generator_name>
             }
         }
-    } else if options.drop == DropMode::Finalize && options.init == InitMode::QuasiLazy {
+    } else if options.drop == DropMode::Finalize && options.init == InitMode::LesserLazy {
         if stat.mutability.is_none() {
             parse_quote! {
-                ::static_init::lazy::QuasiLazyFinalize::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::LesserLazyFinalize::<#stat_typ,#stat_generator_name>
             }
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::QuasiMutLazyFinalize::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::LesserMutLazyFinalize::<#stat_typ,#stat_generator_name>
             }
         }
     } else if options.drop == DropMode::Finalize && options.init == InitMode::Lazy {
@@ -815,24 +815,24 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 ::static_init::lazy::MutLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
-    } else if options.drop == DropMode::Drop && options.init == InitMode::QuasiLazy {
+    } else if options.drop == DropMode::Drop && options.init == InitMode::LesserLazy {
         if stat.mutability.is_none() {
             return generate_error!("Droped lazy must be mutable");
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::QuasiMutLazyDroped::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::LesserMutLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
-    } else if options.init == InitMode::QuasiLazy {
+    } else if options.init == InitMode::LesserLazy {
         if stat.mutability.is_none() {
             parse_quote! {
-                ::static_init::lazy::QuasiLazy::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::LesserLazy::<#stat_typ,#stat_generator_name>
             }
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::QuasiMutLazy::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::LesserMutLazy::<#stat_typ,#stat_generator_name>
             }
         }
     } else if stat.mutability.is_none() {
@@ -894,7 +894,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             })
         }
 
-        InitMode::QuasiLazy if !is_thread_local && cfg!(support_priority) => {
+        InitMode::LesserLazy if !is_thread_local && cfg!(support_priority) => {
             Some(quote_spanned! {sp=>
                     #[::static_init::constructor(__lazy_init)]
                     extern "C" fn __static_init_initializer() {
@@ -904,7 +904,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             })
         }
 
-        InitMode::Const | InitMode::Lazy | InitMode::QuasiLazy => None,
+        InitMode::Const | InitMode::Lazy | InitMode::LesserLazy => None,
     };
 
     let droper = if let DropMode::Dynamic(priority) = options.drop {
@@ -924,7 +924,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     let init_priority: Expr = match options.init {
         InitMode::Dynamic(n) => parse_quote!(::static_init::InitMode::ProgramConstructor(#n)),
         InitMode::Lazy => parse_quote!(::static_init::InitMode::Lazy),
-        InitMode::QuasiLazy => parse_quote!(::static_init::InitMode::QuasiLazy),
+        InitMode::LesserLazy => parse_quote!(::static_init::InitMode::LesserLazy),
         InitMode::Const => parse_quote!(::static_init::InitMode::Const),
     };
 
@@ -949,8 +949,9 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         None
     };
 
-    let lazy_generator = if matches!(options.init, InitMode::Lazy | InitMode::QuasiLazy) {
+    let lazy_generator = if matches!(options.init, InitMode::Lazy | InitMode::LesserLazy) {
         Some(quote_spanned! {sp=>
+            #[allow(clippy::upper_case_acronyms)]
             struct #stat_generator_name;
             impl ::static_init::Generator<#stat_typ> for #stat_generator_name {
                 #[inline]
@@ -972,7 +973,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             }
             }
         }
-        InitMode::Lazy | InitMode::QuasiLazy if cfg!(debug_mode) => {
+        InitMode::Lazy | InitMode::LesserLazy if cfg!(debug_mode) => {
             quote_spanned! {sp=> {
                 #initer
 
@@ -983,7 +984,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             }
             }
         }
-        InitMode::Lazy | InitMode::QuasiLazy => {
+        InitMode::Lazy | InitMode::LesserLazy => {
             quote_spanned! {sp=>{
                 #initer
 

@@ -4,7 +4,10 @@
 [![Crates.io Version](https://img.shields.io/crates/v/static_init.svg)](https://crates.io/crates/static_init)
 
 
-Non const static initialization, and program constructor/destructor code.
+Safe non const initialized statics and safe mutable statics with unbeatable performance.
+
+Also provides code execution and program start-up/exit and unsafe statics that are non const
+initialized at program start-up.
 
 # Lesser Lazy Statics
 
@@ -12,30 +15,19 @@ This crate provides *lazy statics* on all plateforms.
 
 On unixes and windows *lesser lazy statics* are *lazy* during program startup phase
 (before `main` is called). Once main is called, those statics are all guaranteed to be
-initialized and any access to them is as fast as any access to regular const initialized
-statics. Benches sho that usual lazy statics, as those provided by `std::lazy::*` or from
-[lazy_static][1] crate, suffer from a 2ns access penalty.
+initialized and any access to them almost no incur any performance cost
 
-*Lesser lazy statics* can optionaly be dropped at program destruction
-(after main exit but before the program stops).
-
-*Lesser lazy statics* require the standard library and are enabled by default
-crate features `lazy` and `atexit`.
 ```rust
 use static_init::{dynamic};
 
-#[dynamic] //equivalent to #[dynamic(lazy)]
-static L1: Vec<i32> = unsafe{L0.clone()};
-
-#[dynamic(drop)] //equivalent to #[dynamic(lazy,drop)]
-static L0: Vec<i32> = vec![1,2,3];
-
-#[dynamic(drop)]
-static mut L2: Vec<i32> = L1.clone();
+#[dynamic] 
+static L1: Vec<i32> = vec![1,2,3,4,5,6];
 ```
-As can be seen above accesses to *lazy static* that are dropped must be within unsafe
-blocks. The reason is that it is possible at program destruction to access already dropped
-lazy statics.
+
+## Unbeatable performance
+
+
+
 
 # Dynamic statics: statics initialized at program startup
 

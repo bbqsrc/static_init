@@ -9,10 +9,10 @@
 mod test {
     use static_init::{constructor, dynamic, CyclicPanic};
 
-    #[dynamic(quasi_lazy)]
+    #[dynamic(lesser_lazy)]
     static V0: i32 = *V0;
 
-    fn panic_hook(p: &core::panic::PanicInfo<'_>) -> () {
+    fn panic_hook(p: &core::panic::PanicInfo<'_>) {
         if p.payload().is::<CyclicPanic>() {
             println!("Cyclic Panic running");
         } else {
@@ -27,7 +27,7 @@ mod test {
     }
 }
 
-fn panic_hook(p: &core::panic::PanicInfo<'_>) -> () {
+fn panic_hook(p: &core::panic::PanicInfo<'_>) {
     println!("Panic caught {}", p);
     std::process::exit(1)
 }

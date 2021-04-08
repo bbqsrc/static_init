@@ -94,7 +94,7 @@ mod inner {
         fn raw_start() -> u64 {
             compiler_fence(Ordering::AcqRel);
             let r = unsafe {
-                __cpuid(0); 
+                //__cpuid(0); 
                 _rdtsc()
             };
             compiler_fence(Ordering::AcqRel);

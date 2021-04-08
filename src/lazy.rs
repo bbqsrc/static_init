@@ -20,14 +20,28 @@ use core::ops::{Deref, DerefMut};
 
 pub struct InitializedChecker;
 
+#[cfg(feature = "likely_stable")]
+use likely_stable::{likely,unlikely};
+
+#[cfg(not(feature = "likely_stable"))]
+#[inline(always)]
+fn likely(b: bool) -> bool {
+    b
+}
+#[cfg(not(feature = "likely_stable"))]
+#[inline(always)]
+fn unlikely(b: bool) -> bool {
+    b
+}
+
 impl LazyPolicy for InitializedChecker {
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
-        p.is_empty()
+        unlikely(p.is_empty())
     }
     #[inline(always)]
     fn is_accessible(p: Phase) -> bool {
-        p.intersects(Phase::INITIALIZED)
+        likely(p.intersects(Phase::INITIALIZED))
     }
     #[inline(always)]
     fn initialized_is_accessible(_: Phase) -> bool {
@@ -39,15 +53,15 @@ pub struct InitializedAndNonFinalizedChecker;
 impl LazyPolicy for InitializedAndNonFinalizedChecker {
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
-        p.is_empty()
+        unlikely(p.is_empty())
     }
     #[inline(always)]
     fn is_accessible(p: Phase) -> bool {
-        !p.intersects(Phase::FINALIZED) && p.intersects(Phase::INITIALIZED)
+        likely(!p.intersects(Phase::FINALIZED) && p.intersects(Phase::INITIALIZED))
     }
     #[inline(always)]
     fn initialized_is_accessible(p: Phase) -> bool {
-        p.intersects(Phase::INITIALIZED)
+        likely(p.intersects(Phase::INITIALIZED))
     }
 }
 //pub struct InitializedRearmingChecker;
@@ -241,7 +255,7 @@ macro_rules! impl_lazy {
                     // as it is constructed through the macros #[dynamic(quasi_lazy)]
                     // If initialization failed, the program terminates before the
                     // global_inited_hint is set. So if the global_initied_hint is
-                    // set all QuasiLazy are guaranteed to be initialized
+                    // set all LesserLazy are guaranteed to be initialized
                     // Moreover global lazy are never dropped
                     // TODO: get_unchecked
                     Ok(unsafe{this.__private.get_unchecked()})
@@ -256,7 +270,7 @@ macro_rules! impl_lazy {
                     // as it is constructed through the macros #[dynamic(quasi_lazy)]
                     // If initialization failed, the program terminates before the
                     // global_inited_hint is set. So if the global_initied_hint is
-                    // set all QuasiLazy are guaranteed to be initialized
+                    // set all LesserLazy are guaranteed to be initialized
                     // Moreover global lazy are never dropped
                     unsafe{this.__private.get_unchecked()}
                 } else {
@@ -277,7 +291,7 @@ macro_rules! impl_lazy {
                 // as it is constructed through the macros #[dynamic(quasi_lazy)]
                 // If initialization failed, the program terminates before the
                 // global_inited_hint is set. So if the global_initied_hint is
-                // set all QuasiLazy are guaranteed to be initialized
+                // set all LesserLazy are guaranteed to be initialized
                 Self::get(unsafe{as_static(self)})
             }
         }
@@ -376,7 +390,7 @@ macro_rules! impl_lazy {
 impl_lazy! {Lazy,SyncSequentializer,InitializedChecker,UnInited::<T>,SyncPhaseLocker,
 "A type that initialize it self only once on the first access"}
 
-impl_lazy! {global QuasiLazy,SyncSequentializer,InitializedChecker,UnInited::<T>,SyncPhaseLocker,
+impl_lazy! {global LesserLazy,SyncSequentializer,InitializedChecker,UnInited::<T>,SyncPhaseLocker,
 "The actual type of statics attributed with #[dynamic(quasi_lazy)]. \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -389,7 +403,7 @@ impl_lazy! {static LazyFinalize,ExitSequentializer<false>,InitializedChecker,UnI
 The method (new)[Self::new] is unsafe as the object must be a non mutable static."
 }
 
-impl_lazy! {global QuasiLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
+impl_lazy! {global LesserLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_lazy,finalize)]. \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -861,7 +875,7 @@ macro_rules! impl_mut_lazy {
 impl_mut_lazy! {MutLazy,SyncSequentializer,InitializedChecker,UnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
 "A mutex that initialize its content only once on the first lock"}
 
-impl_mut_lazy! {global QuasiMutLazy,SyncSequentializer,InitializedChecker,UnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
+impl_mut_lazy! {global LesserMutLazy,SyncSequentializer,InitializedChecker,UnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -872,7 +886,7 @@ impl_mut_lazy! {static MutLazyFinalize,ExitSequentializer<false>,InitializedChec
 "The actual type of statics attributed with #[dynamic(mut_lazy,finalize)]"
 }
 
-impl_mut_lazy! {global QuasiMutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
+impl_mut_lazy! {global LesserMutLazyFinalize,ExitSequentializer<false>,InitializedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -882,7 +896,7 @@ impl_mut_lazy! {static MutLazyDroped,ExitSequentializer<false>,InitializedAndNon
 "The actual type of statics attributed with #[dynamic(mut_lazy,finalize)]"
 }
 
-impl_mut_lazy! {global QuasiMutLazyDroped,ExitSequentializer<false>,InitializedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+impl_mut_lazy! {global LesserMutLazyDroped,ExitSequentializer<false>,InitializedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -973,6 +987,7 @@ impl<T, G> Drop for UnSyncMutLazy<T, G> {
 
 #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]
 mod inited {
+    use super::likely;
 
     use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -985,7 +1000,7 @@ mod inited {
 
     #[inline(always)]
     pub(super) fn global_inited_hint() -> bool {
-        LAZY_INIT_ENSURED.load(Ordering::Acquire)
+        likely(LAZY_INIT_ENSURED.load(Ordering::Acquire))
     }
 }
 #[cfg(not(all(support_priority, not(feature = "test_no_global_lazy_hint"))))]
@@ -1009,8 +1024,8 @@ mod test_lazy {
 #[cfg(feature = "test_no_global_lazy_hint")]
 #[cfg(test)]
 mod test_quasi_lazy {
-    use super::QuasiLazy;
-    static _X: QuasiLazy<u32, fn() -> u32> = unsafe { QuasiLazy::new_static(|| 22) };
+    use super::LesserLazy;
+    static _X: LesserLazy<u32, fn() -> u32> = unsafe { LesserLazy::new_static(|| 22) };
     #[test]
     fn test() {
         assert_eq!(*_X, 22);
@@ -1044,14 +1059,14 @@ mod test_lazy_finalize {
 #[cfg(feature = "test_no_global_lazy_hint")]
 #[cfg(test)]
 mod test_quasi_lazy_finalize {
-    use super::QuasiLazyFinalize;
+    use super::LesserLazyFinalize;
     use crate::Finaly;
     #[derive(Debug)]
     struct A(u32);
     impl Finaly for A {
         fn finaly(&self) {}
     }
-    static _X: QuasiLazyFinalize<A, fn() -> A> = unsafe { QuasiLazyFinalize::new_static(|| A(22)) };
+    static _X: LesserLazyFinalize<A, fn() -> A> = unsafe { LesserLazyFinalize::new_static(|| A(22)) };
     #[test]
     fn test() {
         assert_eq!((*_X).0, 22);
@@ -1101,8 +1116,8 @@ mod test_mut_lazy {
 #[cfg(feature = "test_no_global_lazy_hint")]
 #[cfg(test)]
 mod test_quasi_mut_lazy {
-    use super::QuasiMutLazy;
-    static _X: QuasiMutLazy<u32, fn() -> u32> = unsafe { QuasiMutLazy::new_static(|| 22) };
+    use super::LesserMutLazy;
+    static _X: LesserMutLazy<u32, fn() -> u32> = unsafe { LesserMutLazy::new_static(|| 22) };
     #[test]
     fn test() {
         assert_eq!(*_X.read(), 22);
@@ -1130,15 +1145,15 @@ mod test_mut_lazy_finalize {
 #[cfg(feature = "test_no_global_lazy_hint")]
 #[cfg(test)]
 mod test_quasi_mut_lazy_finalize {
-    use super::QuasiMutLazyFinalize;
+    use super::LesserMutLazyFinalize;
     use crate::Finaly;
     #[derive(Debug)]
     struct A(u32);
     impl Finaly for A {
         fn finaly(&self) {}
     }
-    static _X: QuasiMutLazyFinalize<A, fn() -> A> =
-        unsafe { QuasiMutLazyFinalize::new_static(|| A(22)) };
+    static _X: LesserMutLazyFinalize<A, fn() -> A> =
+        unsafe { LesserMutLazyFinalize::new_static(|| A(22)) };
     #[test]
     fn test() {
         assert!((*_X.read()).0 == 22);
@@ -1160,9 +1175,9 @@ mod test_mut_lazy_dropped {
 #[cfg(feature = "test_no_global_lazy_hint")]
 #[cfg(test)]
 mod test_quasi_mut_lazy_dropped {
-    use super::QuasiMutLazyDroped;
-    static _X: QuasiMutLazyDroped<u32, fn() -> u32> =
-        unsafe { QuasiMutLazyDroped::new_static(|| 22) };
+    use super::LesserMutLazyDroped;
+    static _X: LesserMutLazyDroped<u32, fn() -> u32> =
+        unsafe { LesserMutLazyDroped::new_static(|| 22) };
     #[test]
     fn test() {
         assert_eq!(*_X.read(), 22);

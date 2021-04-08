@@ -748,6 +748,7 @@ where
                         // This function is called only once within the init function
                         // Only one thread can ever get this mutable access
                         let d = Generator::generate(&this.generator);
+                        #[allow(unused_unsafe)]
                         unsafe { data.get().write(d) };
                     },
                 )
@@ -801,6 +802,7 @@ where
                         // This function is called only once within the init function
                         // Only one thread can ever get this mutable access
                         let d = Generator::generate(&this.generator);
+                        #[allow(unused_unsafe)]
                         unsafe { data.get().write(d) };
                     },
                 )
@@ -853,6 +855,7 @@ where
                         // This function is called only once within the init function
                         // Only one thread can ever get this mutable access
                         let d = Generator::generate(&this.generator);
+                        #[allow(unused_unsafe)]
                         unsafe { data.get().write(d) };
                     },
                 )
@@ -903,6 +906,7 @@ where
                         // This function is called only once within the init function
                         // Only one thread can ever get this mutable access
                         let d = Generator::generate(&this.generator);
+                        #[allow(unused_unsafe)]
                         unsafe { data.get().write(d) };
                     },
                 )

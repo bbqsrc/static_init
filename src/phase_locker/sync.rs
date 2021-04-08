@@ -194,15 +194,15 @@ impl<'a, T> DerefMut for MutexGuard<'a, T> {
 // ----
 
 // STATES:
-// LOCKED_BIT | <PARKED_BIT|WPARKED_BIT> => Write lock held
-// any READER_BIT | <PARKED_BIT|WPARKED_BIT> => Read lock held
-// LOCKED_BIT|any READER_BIT | <PARKED_BIT|WPARKED_BIT>
+// LOCKED_BIT | <READ_WAITER_BIT|WRITE_WAITER_BIT> => Write lock held
+// any READER_BIT | <READ_WAITER_BIT|WRITE_WAITER_BIT> => Read lock held
+// LOCKED_BIT|any READER_BIT | <READ_WAITER_BIT|WRITE_WAITER_BIT>
 //       => wlock or rlock is being transfered to rlock
 //       => rlock are taken right now
-// any PARKED_BIT,WPARKED_BIT => a lock is being released
-// during transfer to a write lock, the WPARKED_BIT is 0
+// any READ_WAITER_BIT,WRITE_WAITER_BIT => a lock is being released
+// during transfer to a write lock, the WRITE_WAITER_BIT is 0
 // but if the transfer succeed, it means that there where one or
-// more waiter for the write lock and WPARKED_BIT must be reset to 1
+// more waiter for the write lock and WRITE_WAITER_BIT must be reset to 1
 // if a waiter is awaken.
 
 impl<'a> Lock<'a> {
@@ -230,12 +230,12 @@ impl<'a> Lock<'a> {
 impl<'a> Lock<'a> {
     #[inline(always)]
     fn into_read_lock(self, cur: Phase) -> ReadLock<'a> {
-        //state: old_phase | LOCKED_BIT | <0:PARKED_BIT|0:WPARKED_BIT>
+        //state: old_phase | LOCKED_BIT | <0:READ_WAITER_BIT|0:WRITE_WAITER_BIT>
         let xor = (cur ^ self.on_unlock).bits() | LOCKED_BIT | READER_UNITY;
-        //state: phase | READER_UNITY | <0:PARKED_BIT|0:WPARKED_BIT>
+        //state: phase | READER_UNITY | <0:READ_WAITER_BIT|0:WRITE_WAITER_BIT>
         let prev = self.futex.fetch_xor(xor, Ordering::Release);
 
-        let r = if prev & PARKED_BIT != 0 {
+        let r = if prev & READ_WAITER_BIT != 0 {
             wake_readers(&self.futex, 0, true)
         } else {
             ReadLock::new(self.futex, self.on_unlock.bits())
@@ -251,75 +251,47 @@ impl<'a> Lock<'a> {
     #[inline]
     fn drop_slow(&mut self, mut cur: u32) {
         // try to reaquire the lock
-        //state: phase | 0:PARKED_BIT<|>0:WPARKED_BIT
+        //state: phase | 0:READ_WAITER_BIT<|>0:WRITE_WAITER_BIT
         loop {
             assert_eq!(cur & (LOCKED_BIT | READER_BITS | READER_OVERF), 0);
             let mut un_activate_lock = 0;
-            if cur & WPARKED_BIT != 0 {
-                //state: phase | <PARKED_BIT> | WPARKED_BIT
+            if cur & WRITE_WAITER_BIT != 0 {
+                //state: phase | <READ_WAITER_BIT> | WRITE_WAITER_BIT
                 let prev = self
                     .futex
-                    .fetch_xor(WPARKED_BIT | LOCKED_BIT, Ordering::Relaxed);
-                assert_ne!(prev & WPARKED_BIT, 0);
+                    .fetch_xor(WRITE_WAITER_BIT | LOCKED_BIT, Ordering::Relaxed);
+                assert_ne!(prev & WRITE_WAITER_BIT, 0);
                 assert_eq!(prev & (LOCKED_BIT | READER_BITS | READER_OVERF), 0);
                 if self.futex.wake_one_writer() {
                     return;
                 };
-                cur ^= WPARKED_BIT | LOCKED_BIT;
+                cur ^= WRITE_WAITER_BIT | LOCKED_BIT;
                 un_activate_lock = LOCKED_BIT;
-                //phase: phase | LOCKED_BIT | <PARKED_BIT>
+                //phase: phase | LOCKED_BIT | <READ_WAITER_BIT>
             }
 
-            if cur & PARKED_BIT != 0 {
-                //phase: phase | <LOCKED_BIT> | PARKED_BIT
+            if cur & READ_WAITER_BIT != 0 {
+                //phase: phase | <LOCKED_BIT> | READ_WAITER_BIT
                 wake_readers(&self.futex, un_activate_lock, false);
                 return;
             }
-            // ici on possède un lock unique, il s'est avéré qu'il n'y
-            // avait plus de thread parké pour write, cela sera nécessairement
-            // réglé ici ou à la seconde iteration avant de retourner ici.
 
             //cur: phase | LOCKED_BIT
             cur = self.futex.fetch_and(!LOCKED_BIT, Ordering::Relaxed);
             assert_ne!(cur & LOCKED_BIT, 0);
             if has_no_waiters(cur) {
                 break;
-            } //else new threads were parked
+            } //else new threads are waiting
             cur &= !LOCKED_BIT; //unused
             core::hint::spin_loop();
         }
-        //loop {
-        //    if cur & PARKED_BIT != 0 {
-        //        //state: phase | 0:PARKED_BIT | <0:WPARKED_BIT>
-        //        wake_readers(&self.futex,0,false);
-        //        return;
-        //    }
-
-        //    //state: phase | <1:PARKED_BIT> | WPARKED_BIT
-        //    self.futex
-        //        .fetch_xor(WPARKED_BIT | LOCKED_BIT, Ordering::Relaxed);
-        //    //state: phase | LOCKED_BIT | <1:PARKED_BIT>
-        //    if self.futex.wake_one_writer() {
-        //        return;
-        //    }
-
-        //    //cur: phase | LOCKED_BIT
-        //    cur = self
-        //        .futex
-        //        .fetch_and(!LOCKED_BIT, Ordering::Relaxed);
-        //    if has_no_waiters(cur) {
-        //        break;
-        //    } //else new threads were parked
-        //    cur &= !LOCKED_BIT;
-        //    core::hint::spin_loop();
-        //}
     }
 }
 
 impl<'a> Drop for Lock<'a> {
     #[inline(always)]
     fn drop(&mut self) {
-        //state: old_phase | LOCKED_BIT | <0:PARKED_BIT|0:WPARKED_BIT>
+        //state: old_phase | LOCKED_BIT | <0:READ_WAITER_BIT|0:WRITE_WAITER_BIT>
         let p = self.init_phase.bits();
 
         match self.futex.compare_exchange(
@@ -333,15 +305,15 @@ impl<'a> Drop for Lock<'a> {
         };
 
         //while let Err(x) = self.futex.compare_exchange_weak(
-        //    cur, cur & (PARKED_BIT|WPARKED_BIT|READER_BITS|READER_OVERF) | p,Ordering::Release,Ordering::Relaxed) {
+        //    cur, cur & (READ_WAITER_BIT|WRITE_WAITER_BIT|READER_BITS|READER_OVERF) | p,Ordering::Release,Ordering::Relaxed) {
         //    cur = x;
         //}
         let xor = (self.init_phase ^ self.on_unlock).bits() | LOCKED_BIT;
         let prev = self.futex.fetch_xor(xor, Ordering::Release);
-        //state: phase | <1:PARKED_BIT|1:WPARKED_BIT>
+        //state: phase | <1:READ_WAITER_BIT|1:WRITE_WAITER_BIT>
         if has_waiters(prev) {
-            //let cur = cur & (PARKED_BIT|WPARKED_BIT|READER_BITS|READER_OVERF) | p;
-            //state: phase | 1:PARKED_BIT<|>1:WPARKED_BIT
+            //let cur = cur & (READ_WAITER_BIT|WRITE_WAITER_BIT|READER_BITS|READER_OVERF) | p;
+            //state: phase | 1:READ_WAITER_BIT<|>1:WRITE_WAITER_BIT
             self.drop_slow(prev ^ xor);
         }
     }
@@ -369,40 +341,37 @@ impl<'a> ReadLock<'a> {
     #[inline]
     #[cold]
     fn drop_slow(&mut self, mut cur: u32) {
-        //state: phase | PARKED_BIT <|> WPARKED_BIT
+        //state: phase | READ_WAITER_BIT <|> WRITE_WAITER_BIT
         loop {
             let mut un_activate_lock = 0;
-            if cur & WPARKED_BIT != 0 {
-                //state: phase | <PARKED_BIT> | WPARKED_BIT
+            if cur & WRITE_WAITER_BIT != 0 {
+                //state: phase | <READ_WAITER_BIT> | WRITE_WAITER_BIT
                 let prev = self
                     .futex
-                    .fetch_xor(WPARKED_BIT | LOCKED_BIT, Ordering::Relaxed);
+                    .fetch_xor(WRITE_WAITER_BIT | LOCKED_BIT, Ordering::Relaxed);
                 assert_eq!(prev & LOCKED_BIT, 0);
-                assert_ne!(prev & WPARKED_BIT, 0);
+                assert_ne!(prev & WRITE_WAITER_BIT, 0);
                 assert_eq!(prev & (READER_BITS | READER_OVERF), 0);
                 if self.futex.wake_one_writer() {
                     return;
                 };
-                cur ^= WPARKED_BIT;
+                cur ^= WRITE_WAITER_BIT;
                 un_activate_lock = LOCKED_BIT;
-                //phase: phase | LOCKED_BIT | <PARKED_BIT>
+                //phase: phase | LOCKED_BIT | <READ_WAITER_BIT>
             }
 
-            if cur & PARKED_BIT != 0 {
-                //phase: phase | <LOCKED_BIT> | PARKED_BIT
+            if cur & READ_WAITER_BIT != 0 {
+                //phase: phase | <LOCKED_BIT> | READ_WAITER_BIT
                 wake_readers(&self.futex, un_activate_lock, false);
                 return;
             }
-            // ici on possède un lock unique, il s'est avéré qu'il n'y
-            // avait plus de thread parké pour write, cela sera nécessairement
-            // réglé ici ou à la seconde iteration avant de retourner ici.
 
             //cur: phase | LOCKED_BIT
             cur = self.futex.fetch_and(!LOCKED_BIT, Ordering::Relaxed);
             assert_ne!(cur & LOCKED_BIT, 0);
             if has_no_waiters(cur) {
                 break;
-            } //else new threads were parked
+            } //else new threads are waiting 
             cur &= !LOCKED_BIT; //unused
             core::hint::spin_loop();
         }
@@ -412,11 +381,11 @@ impl<'a> ReadLock<'a> {
 impl<'a> Drop for ReadLock<'a> {
     #[inline(always)]
     fn drop(&mut self) {
-        //state: phase | <LOCKED_BIT> | READER_UNITY*n | <0:PARKED_BIT> |<0:WPARKED_BIT>
+        //state: phase | <LOCKED_BIT> | READER_UNITY*n | <0:READ_WAITER_BIT> |<0:WRITE_WAITER_BIT>
         let prev = self.futex.fetch_sub(READER_UNITY, Ordering::Release);
-        //state: phase | <LOCKED_BIT> | READER_UNITY*(n-1) | <1:PARKED_BIT> |<1:WPARKED_BIT>
+        //state: phase | <LOCKED_BIT> | READER_UNITY*(n-1) | <1:READ_WAITER_BIT> |<1:WRITE_WAITER_BIT>
         if has_one_reader(prev) && is_not_write_locked(prev) && has_waiters(prev) {
-            //state: phase | PARKED_BIT <|> WPARKED_BIT
+            //state: phase | READ_WAITER_BIT <|> WRITE_WAITER_BIT
             let cur = prev - READER_UNITY;
             self.drop_slow(cur);
         }
@@ -441,6 +410,9 @@ fn has_one_reader(v: u32) -> bool {
 
 #[inline(always)]
 fn has_readers_max(v: u32) -> bool {
+    //can actualy happen in two condition:
+    //  - READER_BITS
+    //  - READER_BITS | READER_OVERF
     v & READER_BITS == READER_BITS
 }
 
@@ -458,11 +430,11 @@ fn is_write_locked(v: u32) -> bool {
 //}
 #[inline(always)]
 fn has_waiters(v: u32) -> bool {
-    v & (PARKED_BIT | WPARKED_BIT) != 0
+    v & (READ_WAITER_BIT | WRITE_WAITER_BIT) != 0
 }
 #[inline(always)]
 fn has_no_waiters(v: u32) -> bool {
-    v & (PARKED_BIT | WPARKED_BIT) == 0
+    v & (READ_WAITER_BIT | WRITE_WAITER_BIT) == 0
 }
 
 #[inline(always)]
@@ -479,7 +451,7 @@ fn wake_readers(futex: &Futex, to_unactivate: u32, converting: bool) -> ReadLock
     // at least one reader must have been marked + READER_OVERF
     let rb = if converting { 0 } else { READER_UNITY };
     let v = futex.fetch_xor(
-        PARKED_BIT | to_unactivate | READER_OVERF | rb,
+        READ_WAITER_BIT | to_unactivate | READER_OVERF | rb,
         Ordering::Relaxed,
     );
     assert_eq!(v & to_unactivate, to_unactivate);
@@ -572,10 +544,10 @@ impl SyncPhaseLocker {
         &'a self,
         v: &'a T,
         how: impl Fn(Phase) -> LockNature,
-        on_parking_how: impl Fn(Phase) -> LockNature,
+        on_waiting_how: impl Fn(Phase) -> LockNature,
         hint: Phase,
     ) -> LockResult<SyncReadPhaseGuard<'_, T>, SyncPhaseGuard<'_, T>> {
-        match self.raw_lock(how, on_parking_how, hint) {
+        match self.raw_lock(how, on_waiting_how, hint) {
             LockResult::Write(l) => LockResult::Write(SyncPhaseGuard::new(v, l)),
             LockResult::Read(l) => LockResult::Read(SyncReadPhaseGuard::new(v, l)),
             LockResult::None(p) => LockResult::None(p),
@@ -690,7 +662,7 @@ impl SyncPhaseLocker {
     fn raw_lock(
         &self,
         how: impl Fn(Phase) -> LockNature,
-        on_parking_how: impl Fn(Phase) -> LockNature,
+        on_waiting_how: impl Fn(Phase) -> LockNature,
         hint: Phase,
     ) -> LockResult<ReadLock<'_>, Lock<'_>> {
         let mut cur = hint.bits();
@@ -783,13 +755,13 @@ impl SyncPhaseLocker {
                 return LockResult::None(p);
             }
         }
-        self.raw_lock_slow(how, on_parking_how)
+        self.raw_lock_slow(how, on_waiting_how)
     }
     #[cold]
     fn raw_lock_slow(
         &self,
         how: impl Fn(Phase) -> LockNature,
-        on_parking_how: impl Fn(Phase) -> LockNature,
+        on_waiting_how: impl Fn(Phase) -> LockNature,
     ) -> LockResult<ReadLock<'_>, Lock<'_>> {
         let mut spin_wait = SpinWait::new();
 
@@ -815,14 +787,11 @@ impl SyncPhaseLocker {
                                 }
                                 Err(x) => {
                                     cur = x;
-                                    //hint::spin_loop();
                                     continue;
                                 }
                             }
                         } else {
                             //lock while readers
-                            assert!(has_readers(cur));
-                            assert_eq!(cur & LOCKED_BIT, 0);
                             match self.0.compare_exchange_weak(
                                 cur,
                                 cur | LOCKED_BIT,
@@ -832,7 +801,6 @@ impl SyncPhaseLocker {
                                 Ok(x) => cur = x | LOCKED_BIT,
                                 Err(x) => {
                                     cur = x;
-                                    //hint::spin_loop();
                                     continue;
                                 }
                             }
@@ -845,10 +813,10 @@ impl SyncPhaseLocker {
                                 }
                             }
 
-                            while cur & LOCKED_BIT != 0 {
+                            loop {
                                 match self.0.compare_exchange_weak(
                                     cur,
-                                    (cur | WPARKED_BIT) & !LOCKED_BIT,
+                                    (cur | WRITE_WAITER_BIT) & !LOCKED_BIT,
                                     Ordering::Relaxed,
                                     Ordering::Relaxed,
                                 ) {
@@ -860,7 +828,7 @@ impl SyncPhaseLocker {
                                         }
                                     }
                                     Ok(_) => {
-                                        cur = (cur | WPARKED_BIT) & !LOCKED_BIT;
+                                        cur = (cur | WRITE_WAITER_BIT) & !LOCKED_BIT;
                                         break;
                                     }
                                 }
@@ -872,23 +840,21 @@ impl SyncPhaseLocker {
                                 let lock = Lock::new(&self.0, cur);
                                 match how(Phase::from_bits_truncate(cur)) {
                                     LockNature::Write => return LockResult::Write(lock),
-                                    LockNature::Read => {
+                                    LockNature::Read => 
                                         return LockResult::Read(
                                             lock.into_read_lock(Phase::from_bits_truncate(cur)),
-                                        )
-                                    }
-                                    LockNature::None => {
-                                        return LockResult::None(Phase::from_bits_truncate(cur))
-                                    }
+                                        ),
+                                    LockNature::None => 
+                                        return LockResult::None(Phase::from_bits_truncate(cur)),
                                 }
                             }
 
-                            cur = self.0.load(Ordering::Relaxed);
                             spin_wait.reset();
+                            cur = self.0.load(Ordering::Relaxed);
                             continue;
                         }
                     }
-                    if cur & WPARKED_BIT == 0 && spin_wait.spin() {
+                    if cur & WRITE_WAITER_BIT == 0 && spin_wait.spin() {
                         cur = self.0.load(Ordering::Relaxed);
                         continue;
                     }
@@ -925,16 +891,18 @@ impl SyncPhaseLocker {
                     }
                 }
             }
-            match on_parking_how(Phase::from_bits_truncate(cur)) {
+
+            match on_waiting_how(Phase::from_bits_truncate(cur)) {
                 LockNature::None => {
                     fence(Ordering::Acquire);
                     return LockResult::None(Phase::from_bits_truncate(cur));
                 }
+
                 LockNature::Write => {
-                    if cur & WPARKED_BIT == 0 {
+                    if cur & WRITE_WAITER_BIT == 0 {
                         match self.0.compare_exchange_weak(
                             cur,
-                            cur | WPARKED_BIT,
+                            cur | WRITE_WAITER_BIT,
                             Ordering::Relaxed,
                             Ordering::Relaxed,
                         ) {
@@ -942,7 +910,7 @@ impl SyncPhaseLocker {
                                 cur = x;
                                 continue;
                             }
-                            Ok(_) => cur |= WPARKED_BIT,
+                            Ok(_) => cur |= WRITE_WAITER_BIT,
                         }
                     }
 
@@ -953,22 +921,19 @@ impl SyncPhaseLocker {
                         let lock = Lock::new(&self.0, cur);
                         match how(Phase::from_bits_truncate(cur)) {
                             LockNature::Write => return LockResult::Write(lock),
-                            LockNature::Read => {
+                            LockNature::Read => 
                                 return LockResult::Read(
                                     lock.into_read_lock(Phase::from_bits_truncate(cur)),
-                                )
-                            }
-                            LockNature::None => {
-                                return LockResult::None(Phase::from_bits_truncate(cur))
-                            }
+                                ),
+                            LockNature::None => return LockResult::None(Phase::from_bits_truncate(cur)),
                         }
                     }
                 }
                 LockNature::Read => {
-                    if cur & PARKED_BIT == 0 {
+                    if cur & READ_WAITER_BIT == 0 {
                         match self.0.compare_exchange_weak(
                             cur,
-                            cur | PARKED_BIT,
+                            cur | READ_WAITER_BIT,
                             Ordering::Relaxed,
                             Ordering::Relaxed,
                         ) {
@@ -976,7 +941,7 @@ impl SyncPhaseLocker {
                                 cur = x;
                                 continue;
                             }
-                            Ok(_) => cur |= PARKED_BIT,
+                            Ok(_) => cur |= READ_WAITER_BIT,
                         }
                     }
 
@@ -986,13 +951,8 @@ impl SyncPhaseLocker {
                         let lock = ReadLock::new(&self.0, cur);
                         match how(Phase::from_bits_truncate(cur)) {
                             LockNature::Read => return LockResult::Read(lock),
-                            LockNature::None => {
-                                return LockResult::None(Phase::from_bits_truncate(cur))
-                            }
-                            LockNature::Write => {
-                                spin_wait.reset();
-                                continue;
-                            } //drop the lock and try again;
+                            LockNature::None => return LockResult::None(Phase::from_bits_truncate(cur)),
+                            LockNature::Write => (),
                         }
                     }
                 }

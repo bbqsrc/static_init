@@ -1,6 +1,6 @@
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering,compiler_fence};
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::time::Duration;
 
@@ -69,7 +69,7 @@ pub fn synchro_bench_input<
                     match started.compare_exchange_weak(
                         expect,
                         expect + 1,
-                        Ordering::AcqRel,
+                        Ordering::Relaxed,
                         Ordering::Relaxed,
                     ) {
                         Err(x) => {
@@ -81,7 +81,6 @@ pub fn synchro_bench_input<
                             }
                             if x < NT_START {
                                 expect = x;
-                                core::hint::spin_loop();
                                 continue;
                             }
                         }
@@ -89,11 +88,19 @@ pub fn synchro_bench_input<
                     }
                 }
                 let duration = if MICRO_BENCH {
-                    unsafe { TK.time(|| access(&*vm.0.get())) }
+                    compiler_fence(Ordering::AcqRel);
+                    let d = unsafe { TK.time(|| access(&*vm.0.get())) };
+                    compiler_fence(Ordering::AcqRel);
+                    d
                 } else {
+                    compiler_fence(Ordering::AcqRel);
                     let s = std::time::Instant::now();
+                    compiler_fence(Ordering::AcqRel);
                     black_box(unsafe { access(&*vm.0.get()) });
-                    Some(s.elapsed())
+                    compiler_fence(Ordering::AcqRel);
+                    let d = Some(s.elapsed());
+                    compiler_fence(Ordering::AcqRel);
+                    d
                 };
                 let end_prempted_count = if TOL_SWITCH { 0 } else { get_context_switch() };
                 if end_prempted_count == deb_prempted_count {
@@ -106,7 +113,7 @@ pub fn synchro_bench_input<
                 while let Err(x) = started.compare_exchange_weak(
                     expect,
                     expect + 1,
-                    Ordering::AcqRel,
+                    Ordering::Acquire,
                     Ordering::Relaxed,
                 ) {
                     if x >= 2 * NT + 10 {
@@ -133,13 +140,12 @@ pub fn synchro_bench_input<
                 let mut index = 0;
                 let mut iter_failure = 0;
                 while index != iter {
-                    unsafe { *vm.0.get() = build(input) };
                     //VMX.store(0, Ordering::Relaxed);
                     while started
                         .compare_exchange_weak(
                             NT_START,
                             NT_START + 1,
-                            Ordering::AcqRel,
+                            Ordering::Relaxed,
                             Ordering::Relaxed,
                         )
                         .is_err()
@@ -173,16 +179,17 @@ pub fn synchro_bench_input<
                             std::process::exit(1);
                         }
                     }
+                    unsafe { *vm.0.get() = build(input) };
                     started
                         .compare_exchange(
                             NT_START + 1,
                             2 * NT + 10,
-                            Ordering::AcqRel,
+                            Ordering::Release,
                             Ordering::Relaxed,
                         )
                         .unwrap();
                     while started
-                        .compare_exchange_weak(3 * NT + 10, 0, Ordering::AcqRel, Ordering::Relaxed)
+                        .compare_exchange_weak(3 * NT + 10, 0, Ordering::Relaxed, Ordering::Relaxed)
                         .is_err()
                     {
                         for _ in 1..32 {

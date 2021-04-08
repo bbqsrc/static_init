@@ -23,8 +23,8 @@ use std::time::Duration;
 
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
-struct XX;
-impl Generator<i32> for XX {
+struct Xx;
+impl Generator<i32> for Xx {
     #[inline(always)]
     fn generate(&self) -> i32 {
         10
@@ -49,67 +49,6 @@ impl Generator<i32> for W {
     }
 }
 
-//enum StaticStatus<T> {
-//    Uninitialized,
-//    Poisoned,
-//    Value(T),
-//}
-//struct Guard<'a,T>(&'a mut StaticStatus<T>);
-//
-//impl<'a,T> Drop for Guard<'a,T> {
-//    fn drop(&mut self) {
-//        *self.0 = StaticStatus::Poisoned;
-//    }
-//}
-//
-//struct RwMut<T,F> (RwLock<StaticStatus<T>>,F);
-//
-//impl<T,F> RwMut<T,F>
-//    where F: Generator<T>
-//    {
-//    fn new(f: F) -> Self {
-//        Self(RwLock::new(StaticStatus::Uninitialized), f)
-//    }
-//    fn write(&self) -> MappedRwLockWriteGuard<'_,RawRwLock,T> {
-//        let mut l = self.0.write();
-//        if let StaticStatus::Uninitialized = &mut * l {
-//            let g = Guard(&mut *l);
-//            *g.0 = StaticStatus::Value(self.1.generate());
-//            std::mem::forget(g);
-//        }
-//        RwLockWriteGuard::map(l,|v|
-//        match v {
-//            StaticStatus::Value(v) => v,
-//
-//            StaticStatus::Poisoned => {
-//                panic!("Poisoned accceess");
-//            }
-//            StaticStatus::Uninitialized => unreachable!(),
-//        }
-//        )
-//    }
-//    fn read(&self) -> MappedRwLockReadGuard<'_,RawRwLock,T> {
-//        let mut l = self.0.write();
-//        if let StaticStatus::Uninitialized = &mut * l {
-//            let g = Guard(&mut *l);
-//            *g.0 = StaticStatus::Value(self.1.generate());
-//            std::mem::forget(g);
-//        }
-//        drop(l);
-//        let l = self.0.read();
-//        RwLockReadGuard::map(l,|v|
-//        match v {
-//            StaticStatus::Value(v) => v,
-//
-//            StaticStatus::Poisoned => {
-//                panic!("Poisoned accceess");
-//            }
-//            StaticStatus::Uninitialized => unreachable!(),
-//        }
-//        )
-//    }
-//    }
-//
 struct RwMut<T, F>(RwLock<Option<T>>, AtomicI32, F);
 
 struct Guard<'a>(&'a AtomicI32);
@@ -310,12 +249,12 @@ fn bench_init(c: &mut Criterion) {
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    do_bench(&mut gp, "LazyMut read", || MutLazy::new(XX), |l| *l.read());
+    do_bench(&mut gp, "LazyMut read", || MutLazy::new(Xx), |l| *l.read());
 
     do_bench(
         &mut gp,
         "LazyMut write",
-        || MutLazy::new(XX),
+        || MutLazy::new(Xx),
         |l| *l.write(),
     );
 
@@ -331,7 +270,7 @@ fn bench_init(c: &mut Criterion) {
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    do_bench(&mut gp, "Lazy", || Lazy::new(XX), |l| **l);
+    do_bench(&mut gp, "Lazy", || Lazy::new(Xx), |l| **l);
 
     let init = || STLazy::<i32>::INIT;
 
@@ -544,13 +483,13 @@ fn bench_init(c: &mut Criterion) {
     gp.finish();
 }
 
-#[dynamic(quasi_lazy)]
+#[dynamic(lesser_lazy)]
 static QL: i32 = 33;
 
-#[dynamic(quasi_lazy)]
+#[dynamic(lesser_lazy)]
 static mut QLM: i32 = 33;
 
-#[dynamic(quasi_lazy, drop)]
+#[dynamic(lesser_lazy, drop)]
 static mut QLMD: i32 = 33;
 
 fn bench_access(c: &mut Criterion) {
@@ -562,7 +501,7 @@ fn bench_access(c: &mut Criterion) {
         &mut gp,
         "LazyMut read",
         || {
-            let l = MutLazy::new(XX);
+            let l = MutLazy::new(Xx);
             l.read();
             l
         },
@@ -573,20 +512,20 @@ fn bench_access(c: &mut Criterion) {
         &mut gp,
         "LazyMut write",
         || {
-            let l = MutLazy::new(XX);
+            let l = MutLazy::new(Xx);
             l.read();
             l
         },
         |l| *l.write(),
     );
 
-    do_bench(&mut gp, "QuasiLazyMut read", || (), |_| *QLM.read());
+    do_bench(&mut gp, "LesserLazyMut read", || (), |_| *QLM.read());
 
-    do_bench(&mut gp, "QuasiLazyMut write", || (), |_| *QLM.write());
+    do_bench(&mut gp, "LesserLazyMut write", || (), |_| *QLM.write());
 
-    do_bench(&mut gp, "QuasiLazyMutDrop read", || (), |_| *QLMD.read());
+    do_bench(&mut gp, "LesserLazyMutDrop read", || (), |_| *QLMD.read());
 
-    do_bench(&mut gp, "QuasiLazyMutDrop write", || (), |_| *QLMD.write());
+    do_bench(&mut gp, "LesserLazyMutDrop write", || (), |_| *QLMD.write());
 
     let init = || {
         let l = RwMut::new(|| 33);
@@ -608,14 +547,14 @@ fn bench_access(c: &mut Criterion) {
         &mut gp,
         "Lazy",
         || {
-            let l = Lazy::new(XX);
+            let l = Lazy::new(Xx);
             let _ = *l;
             l
         },
         |l| **l,
     );
 
-    do_bench(&mut gp, "QuasiLazy", || (), |_| *QL);
+    do_bench(&mut gp, "LesserLazy", || (), |_| *QL);
 
     let init = || {
         let l = STLazy::<i32>::INIT;
@@ -644,9 +583,9 @@ fast_bench_heavy
 
 criterion_main! {multi}
 
-struct YY(usize);
+struct Yy(usize);
 
-impl Generator<Vec<usize>> for YY {
+impl Generator<Vec<usize>> for Yy {
     fn generate(&self) -> Vec<usize> {
         let mut v = Vec::new();
         for i in 0..self.0 {
@@ -681,12 +620,12 @@ macro_rules! heavy_bench {
             }
 
             let init = || {
-                let v = $type::new(YY(size));
+                let v = $type::new(Yy(size));
                 let _ = v.read();
                 v
             };
 
-            let access = |l: &$type<Vec<usize>, YY>| {
+            let access = |l: &$type<Vec<usize>, Yy>| {
                 let c0 = unsafe { ID[THREAD_ID.with(|f| *f)].fetch_add(1, Ordering::Relaxed) };
                 let mut k = 0;
                 while k < ITER {

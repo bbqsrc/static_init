@@ -16,7 +16,7 @@
 //          - ajouter aux macros les lazy const initializé et la tolérance à la non registration
 //            du destructeur
 
-//#![cfg_attr(not(any(feature = "parking_lot_core", debug_mode)), no_std)]
+#![cfg_attr(not(any(feature = "parking_lot_core", debug_mode)), no_std)]
 #![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]
 #![cfg_attr(
     feature = "thread_local",
@@ -347,8 +347,8 @@ pub mod phase {
     use core::fmt::{self, Display, Formatter};
 
     use bitflags::bitflags;
-    pub(crate) const WPARKED_BIT: u32 = 0b1000_0000_0000_0000_0000_0000_0000_0000;
-    pub(crate) const PARKED_BIT: u32 = 0b0100_0000_0000_0000_0000_0000_0000_0000;
+    pub(crate) const WRITE_WAITER_BIT: u32 = 0b1000_0000_0000_0000_0000_0000_0000_0000;
+    pub(crate) const READ_WAITER_BIT: u32 = 0b0100_0000_0000_0000_0000_0000_0000_0000;
     pub(crate) const LOCKED_BIT: u32 = 0b0010_0000_0000_0000_0000_0000_0000_0000; 
     pub(crate) const READER_BITS: u32 = 0b0000_1111_1111_1111_1111_1111_0000_0000;
     pub(crate) const READER_OVERF: u32 = 0b0001_0000_0000_0000_0000_0000_0000_0000;
@@ -473,7 +473,7 @@ pub mod raw_static;
 pub enum InitMode {
     Const,
     Lazy,
-    QuasiLazy,
+    LesserLazy,
     ProgramConstructor(u16),
 }
 

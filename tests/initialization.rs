@@ -125,16 +125,16 @@ macro_rules! accr {
 }
 
 make_test!(lazy, acc0, lazy);
-make_test!(quasi_lazy, acc0, lazy);
+make_test!(lesser_lazy, acc0, lazy);
 make_test!(lazy_finalize, acc0, lazy finalize); //F:3
-make_test!(quasi_lazy_finalize, acc0, quasi_lazy finalize); //F:3
+make_test!(lesser_lazy_finalize, acc0, lesser_lazy finalize); //F:3
 
 make_test!(mut_lazy, accr, lazy, mut);
-make_test!(quasi_mut_lazy, accr, lazy, mut);
+make_test!(lesser_mut_lazy, accr, lazy, mut);
 make_test!(mut_lazy_finalize, accr, lazy finalize, mut); //F:3
-make_test!(quasi_mut_lazy_finalize, accr, quasi_lazy finalize, mut); //F:3
+make_test!(lesser_mut_lazy_finalize, accr, lesser_lazy finalize, mut); //F:3
 make_test!(mut_lazy_drop, accr, lazy drop, mut); //D:3
-make_test!(quasi_mut_lazy_drop, accr, quasi_lazy drop, mut); //D:3
+make_test!(lesser_mut_lazy_drop, accr, lesser_lazy drop, mut); //D:3
 
 #[cfg(feature = "thread_local")]
 make_test!(thread_local_lazy, acc0, lazy => thread_local);

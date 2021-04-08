@@ -231,7 +231,6 @@ mod lazy {
         assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 4);
     }
 
-    #[cfg(feature = "global_once")]
     mod global_lazy {
         use super::super::A;
         use static_init::dynamic;
@@ -241,10 +240,10 @@ mod lazy {
         #[dynamic(lazy)]
         static mut L0: A = A::new(10);
 
-        #[dynamic(quasi_lazy, finalize)]
+        #[dynamic(finalize)]
         static L3: A = A::new(33);
 
-        #[dynamic(quasi_lazy, finalize)]
+        #[dynamic(lesser_lazy,finalize)]
         static mut L2: A = A::new(L3.0);
 
         #[test]
