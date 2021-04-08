@@ -423,7 +423,6 @@ impl<'a> Drop for ReadLock<'a> {
     }
 }
 
-const MAX_WAKED_READERS: usize = (READER_OVERF / READER_UNITY) as usize;
 
 #[inline(always)]
 fn has_no_readers(v: u32) -> bool {
@@ -442,7 +441,7 @@ fn has_one_reader(v: u32) -> bool {
 
 #[inline(always)]
 fn has_readers_max(v: u32) -> bool {
-    v & (READER_OVERF | READER_BITS) == READER_OVERF | READER_BITS
+    v & READER_BITS == READER_BITS
 }
 
 #[inline(always)]
@@ -489,9 +488,9 @@ fn wake_readers(futex: &Futex, to_unactivate: u32, converting: bool) -> ReadLock
         assert_ne!(v & READER_UNITY, rb); //BUG: fired
     }
     assert_eq!((v ^ to_unactivate) & LOCKED_BIT, 0);
+
     let c = futex.wake_readers();
-    //TODO: on peut se contanter de réveiller MAX_WAKED_READERS, ce qui évite l'assertion
-    assert!(c <= MAX_WAKED_READERS);
+
     let cur = futex.fetch_sub(READER_OVERF - READER_UNITY * (c as u32), Ordering::Relaxed);
     ReadLock::new(futex, cur)
 }
@@ -868,8 +867,7 @@ impl SyncPhaseLocker {
                             }
 
                             if self.0.compare_and_wait_as_writer(cur) {
-                                //There could have more parked thread
-                                cur = self.0.fetch_or(WPARKED_BIT, Ordering::Acquire);
+                                cur = self.0.load(Ordering::Relaxed);
                                 assert_ne!(cur & LOCKED_BIT, 0);
                                 let lock = Lock::new(&self.0, cur);
                                 match how(Phase::from_bits_truncate(cur)) {
@@ -920,20 +918,7 @@ impl SyncPhaseLocker {
                             }
                         }
                     }
-                    //if is_read_lockable(cur) {
-                    //    match self.0.compare_exchange_weak(
-                    //        cur,
-                    //        cur + READER_UNITY,
-                    //        Ordering::Acquire,
-                    //        Ordering::Relaxed,
-                    //    ) {
-                    //        Ok(_) => return LockResult::Read(ReadLock::new(&self.0, cur)),
-                    //        Err(x) => {
-                    //            cur = x;
-                    //            continue;
-                    //        }
-                    //    }
-                    //}
+
                     if has_no_waiters(cur) && spin_wait.spin() {
                         cur = self.0.load(Ordering::Relaxed);
                         continue;
@@ -962,8 +947,8 @@ impl SyncPhaseLocker {
                     }
 
                     if self.0.compare_and_wait_as_writer(cur) {
-                        //There could have more parked thread
-                        cur = self.0.fetch_or(WPARKED_BIT, Ordering::Relaxed);
+
+                        cur = self.0.load(Ordering::Relaxed);
                         assert_ne!(cur & LOCKED_BIT, 0);
                         let lock = Lock::new(&self.0, cur);
                         match how(Phase::from_bits_truncate(cur)) {

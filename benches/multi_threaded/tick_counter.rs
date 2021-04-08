@@ -11,6 +11,7 @@ mod inner {
     // Cpuid is used to serialize instructions see:
     //https://www.intel.com/content/dam/www/public/us/en/documents/white-papers/ia-32-ia-64-benchmark-code-execution-paper.pdf
     use core::arch::x86_64::{__cpuid, __rdtscp, _rdtsc};
+    use core::sync::atomic::{compiler_fence,Ordering};
     use criterion::black_box;
     use std::time::{Duration, Instant};
 
@@ -91,10 +92,13 @@ mod inner {
         }
         #[inline(always)]
         fn raw_start() -> u64 {
-            unsafe {
+            compiler_fence(Ordering::AcqRel);
+            let r = unsafe {
                 __cpuid(0); 
                 _rdtsc()
-            }
+            };
+            compiler_fence(Ordering::AcqRel);
+            r
             //let cpuid_ask: u64 = 0;
             //let high: u64;
             //let low: u64;
@@ -114,11 +118,14 @@ mod inner {
         #[inline(always)]
         fn raw_end() -> u64 {
             let mut v = 0;
-            unsafe {
+            compiler_fence(Ordering::AcqRel);
+            let c = unsafe {
                 let c = __rdtscp(&mut v);
                 __cpuid(0);
                 c
-            }
+            };
+            compiler_fence(Ordering::AcqRel);
+            c
             //let high: u64;
             //let low: u64;
             //unsafe {

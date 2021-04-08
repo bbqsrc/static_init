@@ -3,19 +3,25 @@
     any(target_os = "linux", target_os = "android")
 ))]
 mod linux {
+    use crate::phase::*;
     use core::ops::Deref;
     use core::ptr;
-    use core::sync::atomic::AtomicU32;
+    use core::sync::atomic::{AtomicU32,Ordering,compiler_fence};
     use libc::{syscall, SYS_futex, FUTEX_PRIVATE_FLAG, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET};
 
     pub(crate) struct Futex {
         futex: AtomicU32,
+        writer_count: AtomicU32,
     }
+
+    const READER_BIT: u32 = 0b01;
+    const WRITER_BIT: u32 = 0b10;
 
     impl Futex {
         pub(crate) const fn new(value: u32) -> Self {
             Self {
                 futex: AtomicU32::new(value),
+                writer_count: AtomicU32::new(0),
             }
         }
 
@@ -28,12 +34,14 @@ mod linux {
                     value,
                     ptr::null::<u32>(),
                     ptr::null::<u32>(),
-                    1,
+                    READER_BIT,
                 ) == 0
             }
         }
         pub(crate) fn compare_and_wait_as_writer(&self, value: u32) -> bool {
-            unsafe {
+            assert_ne!(self.writer_count.fetch_add(1,Ordering::Relaxed),u32::MAX);
+            compiler_fence(Ordering::AcqRel);
+            let res = unsafe {
                 syscall(
                     SYS_futex,
                     &self.futex as *const _ as *const _,
@@ -41,22 +49,37 @@ mod linux {
                     value,
                     ptr::null::<u32>(),
                     ptr::null::<u32>(),
-                    2,
+                    WRITER_BIT,
                 ) == 0
-            }
+            };
+            compiler_fence(Ordering::AcqRel);
+            let prev_count = self.writer_count.fetch_sub(1,Ordering::Relaxed);
+            assert_ne!(prev_count,0);
+            //// count = number of threads waiting at the time of unpark + those
+            ////         for which the futex syscall as been interrupted but count not
+            ////         yet substracted + those that are in the process of waiting
+            //// so here count is larger than the number of waiting threads 
+            if res && prev_count > 1 {
+                self.futex.fetch_or(WPARKED_BIT,Ordering::Relaxed);
+            } 
+            res
         }
         pub(crate) fn wake_readers(&self) -> usize {
-            unsafe {
+            let count = unsafe {
                 syscall(
                     SYS_futex,
                     &self.futex as *const _ as *const _,
                     FUTEX_WAKE_BITSET | FUTEX_PRIVATE_FLAG,
-                    i32::MAX,
+                    MAX_WAKED_READERS as i32,
                     ptr::null::<u32>(),
                     ptr::null::<u32>(),
-                    1,
+                    READER_BIT,
                 ) as usize
+            };
+            if count == MAX_WAKED_READERS {
+                self.futex.fetch_or(PARKED_BIT,Ordering::Relaxed);
             }
+            count
         }
         pub(crate) fn wake_one_writer(&self) -> bool {
             unsafe {
@@ -67,17 +90,19 @@ mod linux {
                     1,
                     ptr::null::<u32>(),
                     ptr::null::<u32>(),
-                    2,
+                    WRITER_BIT,
                 ) == 1
             }
         }
     }
+
     impl Deref for Futex {
         type Target = AtomicU32;
         fn deref(&self) -> &Self::Target {
             &self.futex
         }
     }
+
 }
 #[cfg(all(
     not(feature = "parking_lot_core"),
@@ -87,13 +112,15 @@ pub(crate) use linux::Futex;
 
 #[cfg(feature = "parking_lot_core")]
 mod other {
+    use crate::phase::MAX_WAKED_READERS;
     use core::ops::Deref;
     use core::sync::atomic::{AtomicU32, Ordering};
     use parking_lot_core::{
-        park, unpark_all, unpark_one, ParkResult, DEFAULT_PARK_TOKEN, DEFAULT_UNPARK_TOKEN,
+        park, unpark_all, unpark_one, ParkResult, DEFAULT_PARK_TOKEN, DEFAULT_UNPARK_TOKEN, FilterOp
     };
 
     pub(crate) struct Futex(AtomicU32);
+
 
     impl Futex {
         pub(crate) const fn new(value: u32) -> Self {
@@ -104,7 +131,7 @@ mod other {
             unsafe {
                 matches!(
                     park(
-                        &self.0 as *const _ as usize,
+                        self.reader_key(),
                         || self.0.load(Ordering::Relaxed) == value,
                         || {},
                         |_, _| {},
@@ -119,7 +146,7 @@ mod other {
             unsafe {
                 matches!(
                     park(
-                        (&self.0 as *const _ as usize) + 1,
+                        self.writer_key()
                         || self.0.load(Ordering::Relaxed) == value,
                         || {},
                         |_, _| {},
@@ -131,13 +158,33 @@ mod other {
             }
         }
         pub(crate) fn wake_readers(&self) -> usize {
-            unsafe { unpark_all(&self.0 as *const _ as usize, DEFAULT_UNPARK_TOKEN) }
+            let mut c = 0;
+            let r = unsafe { 
+                unpark_filter(self.reader_key(), 
+                    |_| {c+=1; if c <= MAX_WAKED_READERS { FilterOp::Unpark } else { FilterOp::Stop}},
+                    |_| DEFAULT_UNPARK_TOKEN
+                    ); 
+                };
+            if r.have_more_threads {
+                self.0.fetch_or(PARKED_BIT,Ordering::Relaxed);
+            }
+            r.unparked_threads
         }
         pub(crate) fn wake_one_writer(&self) -> bool {
-            unsafe {
-                let r = unpark_one((&self.0 as *const _ as usize) + 1, |_| DEFAULT_UNPARK_TOKEN);
-                r.unparked_threads == 1
+            let r = unsafe {
+                unpark_one(self.writer_key(), |_| DEFAULT_UNPARK_TOKEN);
+            };
+            if r.has_more_threads {
+                self.0.fetch_or(WPARKED_BIT, Ordering::Relaxed);
             }
+            r.unparked_threads == 1
+        }
+
+        fn reader_key(&self) -> usize {
+              &self.0 as *const _ as usize
+        }
+        fn writer_key(&self) -> usize {
+              (&self.0 as *const _ as usize) + 1
         }
     }
 
