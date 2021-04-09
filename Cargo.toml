@@ -23,11 +23,13 @@ debug_order = ["static_init_macro/debug_order","parking_lot"]
 
 thread_local = []
 
+spin_loop = []
+
 # internal feature to enable tests
 test_no_global_lazy_hint = []
 
 
-default = []
+default = ["thread_local","debug_order","spin_loop"]
 
 [dependencies]
 bitflags = "1"

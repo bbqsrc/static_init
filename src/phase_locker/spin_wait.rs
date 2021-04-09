@@ -23,6 +23,7 @@ impl SpinWait {
 
     /// Resets a `SpinWait` to its initial state.
     #[inline]
+    #[cfg(not(feature = "spin_loop"))]
     pub fn reset(&mut self) {
         self.counter = 0;
     }
@@ -36,6 +37,7 @@ impl SpinWait {
     /// The spin strategy will initially use a CPU-bound loop but will fall back
     /// to yielding the CPU to the OS after a few iterations.
     #[inline]
+    #[cfg(not(feature = "spin_loop"))]
     pub fn spin(&mut self) -> bool {
         if self.counter >= 16 {
             return false;
@@ -66,7 +68,7 @@ impl SpinWait {
 }
 
 #[cfg(all(
-    not(feature = "parking_lot_core"),
+    not(feature = "parking_lot_core"), not(feature = "spin_loop"),
     any(target_os = "linux", target_os = "android")
 ))]
 fn yield_now() {
@@ -74,8 +76,8 @@ fn yield_now() {
         libc::sched_yield();
     }
 }
-#[cfg(not(all(
+#[cfg(all(not(feature = "spin_loop"),not(all(
     not(feature = "parking_lot_core"),
     any(target_os = "linux", target_os = "android")
-)))]
+))))]
 use std::thread::yield_now;

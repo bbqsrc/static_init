@@ -5,7 +5,7 @@ use synchronised_bench::{synchro_bench_input, Config};
 
 mod tick_counter;
 
-use static_init::{dynamic, Generator, Lazy, MutLazy};
+use static_init::{dynamic, Generator, Lazy, LockedLazy};
 
 use parking_lot::{
     lock_api::{MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLockReadGuard, RwLockWriteGuard},
@@ -245,24 +245,24 @@ fn do_bench<'a, R, T, F: Fn() -> T + Copy, A: Fn(&T) -> R + Sync>(
 }
 
 fn bench_init(c: &mut Criterion) {
-    let mut gp = c.benchmark_group("Init Mut Thread Scaling");
+    let mut gp = c.benchmark_group("Init Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    do_bench(&mut gp, "LazyMut read", || MutLazy::new(Xx), |l| *l.read());
+    do_bench(&mut gp, "Locked Lazy read", || LockedLazy::new(Xx), |l| *l.read());
 
     do_bench(
         &mut gp,
-        "LazyMut write",
-        || MutLazy::new(Xx),
+        "Locked Lazy write",
+        || LockedLazy::new(Xx),
         |l| *l.write(),
     );
 
     let init = || RwMut::new(|| 33);
 
-    do_bench(&mut gp, "LazyMut PkLot read", init, |l| *l.read());
+    do_bench(&mut gp, "Locked Lazy PkLot read", init, |l| *l.read());
 
-    do_bench(&mut gp, "LazyMut PkLot write", init, |l| *l.write());
+    do_bench(&mut gp, "Locked Lazy PkLot write", init, |l| *l.write());
 
     gp.finish();
 
@@ -283,21 +283,22 @@ fn bench_init(c: &mut Criterion) {
 
     gp.finish();
 
-    let mut gp = c.benchmark_group("Init (1us) Mut Thread Scaling");
+
+    let mut gp = c.benchmark_group("Init (1us) Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
     do_bench(
         &mut gp,
-        "LazyMut read",
-        || MutLazy::new(W(Duration::from_micros(1))),
+        "Locked Lazy read",
+        || LockedLazy::new(W(Duration::from_micros(1))),
         |l| *l.read(),
     );
 
     do_bench(
         &mut gp,
-        "LazyMut write",
-        || MutLazy::new(W(Duration::from_micros(1))),
+        "Locked Lazy write",
+        || LockedLazy::new(W(Duration::from_micros(1))),
         |l| *l.write(),
     );
 
@@ -308,27 +309,28 @@ fn bench_init(c: &mut Criterion) {
         })
     };
 
-    do_bench(&mut gp, "LazyMut PkLot read", init, |l| *l.read());
+    do_bench(&mut gp, "Locked Lazy PkLot read", init, |l| *l.read());
 
-    do_bench(&mut gp, "LazyMut PkLot write", init, |l| *l.write());
+    do_bench(&mut gp, "Locked Lazy PkLot write", init, |l| *l.write());
 
     gp.finish();
 
-    let mut gp = c.benchmark_group("Init (5us) Mut Thread Scaling");
+
+    let mut gp = c.benchmark_group("Init (5us) Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
     do_bench(
         &mut gp,
-        "LazyMut read",
-        || MutLazy::new(W(Duration::from_micros(5))),
+        "Locked Lazy read",
+        || LockedLazy::new(W(Duration::from_micros(5))),
         |l| *l.read(),
     );
 
     do_bench(
         &mut gp,
-        "LazyMut write",
-        || MutLazy::new(W(Duration::from_micros(5))),
+        "Locked Lazy write",
+        || LockedLazy::new(W(Duration::from_micros(5))),
         |l| *l.write(),
     );
 
@@ -339,27 +341,28 @@ fn bench_init(c: &mut Criterion) {
         })
     };
 
-    do_bench(&mut gp, "LazyMut PkLot read", init, |l| *l.read());
+    do_bench(&mut gp, "Locked Lazy PkLot read", init, |l| *l.read());
 
-    do_bench(&mut gp, "LazyMut PkLot write", init, |l| *l.write());
+    do_bench(&mut gp, "Locked Lazy PkLot write", init, |l| *l.write());
 
     gp.finish();
 
-    let mut gp = c.benchmark_group("Init (10us) Mut Thread Scaling");
+
+    let mut gp = c.benchmark_group("Init (10us) Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
     do_bench(
         &mut gp,
-        "LazyMut read",
-        || MutLazy::new(W(Duration::from_micros(10))),
+        "Locked Lazy read",
+        || LockedLazy::new(W(Duration::from_micros(10))),
         |l| *l.read(),
     );
 
     do_bench(
         &mut gp,
-        "LazyMut write",
-        || MutLazy::new(W(Duration::from_micros(10))),
+        "Locked Lazy write",
+        || LockedLazy::new(W(Duration::from_micros(10))),
         |l| *l.write(),
     );
 
@@ -370,27 +373,28 @@ fn bench_init(c: &mut Criterion) {
         })
     };
 
-    do_bench(&mut gp, "LazyMut PkLot read", init, |l| *l.read());
+    do_bench(&mut gp, "Locked Lazy PkLot read", init, |l| *l.read());
 
-    do_bench(&mut gp, "LazyMut PkLot write", init, |l| *l.write());
+    do_bench(&mut gp, "Locked Lazy PkLot write", init, |l| *l.write());
 
     gp.finish();
 
-    let mut gp = c.benchmark_group("Init (20us) Mut Thread Scaling");
+
+    let mut gp = c.benchmark_group("Init (20us) Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
     do_bench(
         &mut gp,
-        "LazyMut read",
-        || MutLazy::new(W(Duration::from_micros(20))),
+        "Locked Lazy read",
+        || LockedLazy::new(W(Duration::from_micros(20))),
         |l| *l.read(),
     );
 
     do_bench(
         &mut gp,
-        "LazyMut write",
-        || MutLazy::new(W(Duration::from_micros(20))),
+        "Locked Lazy write",
+        || LockedLazy::new(W(Duration::from_micros(20))),
         |l| *l.write(),
     );
 
@@ -401,11 +405,12 @@ fn bench_init(c: &mut Criterion) {
         })
     };
 
-    do_bench(&mut gp, "LazyMut PkLot read", init, |l| *l.read());
+    do_bench(&mut gp, "Locked Lazy PkLot read", init, |l| *l.read());
 
-    do_bench(&mut gp, "LazyMut PkLot write", init, |l| *l.write());
+    do_bench(&mut gp, "Locked Lazy PkLot write", init, |l| *l.write());
 
     gp.finish();
+
 
     let mut gp = c.benchmark_group("Init (1us) Thread Scaling");
 
@@ -432,6 +437,7 @@ fn bench_init(c: &mut Criterion) {
 
     gp.finish();
 
+
     let mut gp = c.benchmark_group("Init (5us) Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
@@ -456,6 +462,7 @@ fn bench_init(c: &mut Criterion) {
     do_bench(&mut gp, "static_lazy::Lazy", init, access);
 
     gp.finish();
+
 
     let mut gp = c.benchmark_group("Init (20us) Thread Scaling");
 
@@ -494,7 +501,7 @@ static mut QLMD: i32 = 33;
 
 fn bench_access(c: &mut Criterion) {
     let init = || {
-        let l = MutLazy::new(Xx);
+        let l = LockedLazy::new(Xx);
         l.read();
         l
     };
@@ -526,85 +533,86 @@ fn bench_access(c: &mut Criterion) {
         }};
     }
 
-    let mut gp = c.benchmark_group("Access Read Mut Thread Scaling");
+
+    let mut gp = c.benchmark_group("Access Read Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    do_bench(&mut gp, "LazyMut read", init, |l| *l.read());
+    do_bench(&mut gp, "Locked Lazy", init, |l| *l.read());
 
-    do_bench(&mut gp, "LesserLazyMut read", || (), |_| *QLM.read());
+    do_bench(&mut gp, "LesserLocked Lazy", || (), |_| *QLM.read());
 
-    do_bench(&mut gp, "LesserLazyMutDrop read", || (), |_| *QLMD.read());
+    do_bench(&mut gp, "LesserLocked LazyDrop", || (), |_| *QLMD.read());
 
-    do_bench(&mut gp, "LazyMut PkLot read", rw_init, |l| *l.read());
+    do_bench(&mut gp, "Locked Lazy PkLot", rw_init, |l| *l.read());
 
     gp.finish();
 
-    let mut gp = c.benchmark_group("Access Write Mut Thread Scaling");
+    let mut gp = c.benchmark_group("Access Write Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    do_bench(&mut gp, "LazyMut write", init, |l| *l.write());
+    do_bench(&mut gp, "Locked Lazy", init, |l| *l.write());
 
-    do_bench(&mut gp, "LesserLazyMut write", || (), |_| *QLM.write());
+    do_bench(&mut gp, "LesserLocked Lazy", || (), |_| *QLM.write());
 
-    do_bench(&mut gp, "LesserLazyMutDrop write", || (), |_| *QLMD.write());
+    do_bench(&mut gp, "LesserLocked LazyDrop", || (), |_| *QLMD.write());
 
-    do_bench(&mut gp, "LazyMut PkLot write", rw_init, |l| *l.write());
+    do_bench(&mut gp, "Locked Lazy PkLot", rw_init, |l| *l.write());
 
     gp.finish();
 
-    let mut gp = c.benchmark_group("Fast Read Access Mut Thread Scaling");
+    let mut gp = c.benchmark_group("Fast Read Access Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    do_bench(&mut gp, "LazyMut fast_read", init, |l| {
+    do_bench(&mut gp, "Locked Lazy", init, |l| {
         fast_access!(l.fast_read())
     });
 
     do_bench(
         &mut gp,
-        "LesserLazyMut fast_read",
+        "LesserLocked Lazy",
         || (),
         |_| fast_access!(QLM.fast_read()),
     );
 
     do_bench(
         &mut gp,
-        "LesserLazyMutDrop fast_read",
+        "LesserLocked LazyDrop",
         || (),
         |_| fast_access!(QLMD.fast_read()),
     );
 
-    do_bench(&mut gp, "LazyMut PkLot fast_read", rw_init, |l| {
+    do_bench(&mut gp, "Locked Lazy PkLot", rw_init, |l| {
         fast_access!(l.fast_read())
     });
 
     gp.finish();
 
-    let mut gp = c.benchmark_group("Fast Write Access Mut Thread Scaling");
+    let mut gp = c.benchmark_group("Fast Write Access Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    do_bench(&mut gp, "LazyMut fast_write", init, |l| {
+    do_bench(&mut gp, "Locked Lazy", init, |l| {
         fast_access!(l.fast_write())
     });
 
     do_bench(
         &mut gp,
-        "LesserLazyMut fast_write",
+        "LesserLocked Lazy",
         || (),
         |_| fast_access!(QLM.fast_write()),
     );
 
     do_bench(
         &mut gp,
-        "LesserLazyMutDrop fast_write",
+        "LesserLocked LazyDrop",
         || (),
         |_| fast_access!(QLMD.fast_write()),
     );
 
-    do_bench(&mut gp, "LazyMut PkLot fast_write", rw_init, |l| {
+    do_bench(&mut gp, "Locked Lazy PkLot", rw_init, |l| {
         fast_access!(l.fast_write())
     });
 
@@ -809,10 +817,10 @@ macro_rules! fast_write_access {
     };
 }
 
-heavy_bench! {heavy_mutlazy,MutLazy, read_access, write_access}
+heavy_bench! {heavy_mutlazy,LockedLazy, read_access, write_access}
 heavy_bench! {heavy_rwmut,RwMut, read_access, write_access}
 
-heavy_bench! {heavy_fast_mutlazy,MutLazy, fast_read_access, fast_write_access}
+heavy_bench! {heavy_fast_mutlazy,LockedLazy, fast_read_access, fast_write_access}
 heavy_bench! {heavy_fast_rwmut,RwMut, fast_read_access, fast_write_access}
 
 fn bench_heavy(c: &mut Criterion) {
@@ -820,19 +828,19 @@ fn bench_heavy(c: &mut Criterion) {
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    heavy_mutlazy::<false>(&mut gp, "LazyMut", 1024);
+    heavy_mutlazy::<false>(&mut gp, "Locked Lazy", 1024);
 
-    heavy_mutlazy::<false>(&mut gp, "LazyMut", 2048);
+    heavy_mutlazy::<false>(&mut gp, "Locked Lazy", 2048);
 
     gp.measurement_time(Duration::from_secs(5));
 
-    heavy_mutlazy::<false>(&mut gp, "LazyMut", 4096);
+    heavy_mutlazy::<false>(&mut gp, "Locked Lazy", 4096);
 
-    heavy_mutlazy::<false>(&mut gp, "LazyMut", 8192);
+    heavy_mutlazy::<false>(&mut gp, "Locked Lazy", 8192);
 
     gp.measurement_time(Duration::from_secs(10));
 
-    heavy_mutlazy::<false>(&mut gp, "LazyMut", 16384);
+    heavy_mutlazy::<false>(&mut gp, "Locked Lazy", 16384);
 
     gp.measurement_time(Duration::from_secs(3));
 
@@ -856,19 +864,19 @@ fn bench_heavy(c: &mut Criterion) {
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    heavy_mutlazy::<true>(&mut gp, "LazyMut", 1024);
+    heavy_mutlazy::<true>(&mut gp, "Locked Lazy", 1024);
 
-    heavy_mutlazy::<true>(&mut gp, "LazyMut", 2048);
+    heavy_mutlazy::<true>(&mut gp, "Locked Lazy", 2048);
 
     gp.measurement_time(Duration::from_secs(5));
 
-    heavy_mutlazy::<true>(&mut gp, "LazyMut", 4096);
+    heavy_mutlazy::<true>(&mut gp, "Locked Lazy", 4096);
 
-    heavy_mutlazy::<true>(&mut gp, "LazyMut", 8192);
+    heavy_mutlazy::<true>(&mut gp, "Locked Lazy", 8192);
 
     gp.measurement_time(Duration::from_secs(10));
 
-    heavy_mutlazy::<true>(&mut gp, "LazyMut", 16384);
+    heavy_mutlazy::<true>(&mut gp, "Locked Lazy", 16384);
 
     gp.measurement_time(Duration::from_secs(3));
 
@@ -894,19 +902,19 @@ fn fast_bench_heavy(c: &mut Criterion) {
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    heavy_fast_mutlazy::<false>(&mut gp, "LazyMut", 1024);
+    heavy_fast_mutlazy::<false>(&mut gp, "Locked Lazy", 1024);
 
-    heavy_fast_mutlazy::<false>(&mut gp, "LazyMut", 2048);
+    heavy_fast_mutlazy::<false>(&mut gp, "Locked Lazy", 2048);
 
     gp.measurement_time(Duration::from_secs(5));
 
-    heavy_fast_mutlazy::<false>(&mut gp, "LazyMut", 4096);
+    heavy_fast_mutlazy::<false>(&mut gp, "Locked Lazy", 4096);
 
-    heavy_fast_mutlazy::<false>(&mut gp, "LazyMut", 8192);
+    heavy_fast_mutlazy::<false>(&mut gp, "Locked Lazy", 8192);
 
     gp.measurement_time(Duration::from_secs(10));
 
-    heavy_fast_mutlazy::<false>(&mut gp, "LazyMut", 16384);
+    heavy_fast_mutlazy::<false>(&mut gp, "Locked Lazy", 16384);
 
     gp.measurement_time(Duration::from_secs(3));
 
@@ -930,19 +938,19 @@ fn fast_bench_heavy(c: &mut Criterion) {
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    heavy_fast_mutlazy::<true>(&mut gp, "LazyMut", 1024);
+    heavy_fast_mutlazy::<true>(&mut gp, "Locked Lazy", 1024);
 
-    heavy_fast_mutlazy::<true>(&mut gp, "LazyMut", 2048);
+    heavy_fast_mutlazy::<true>(&mut gp, "Locked Lazy", 2048);
 
     gp.measurement_time(Duration::from_secs(5));
 
-    heavy_fast_mutlazy::<true>(&mut gp, "LazyMut", 4096);
+    heavy_fast_mutlazy::<true>(&mut gp, "Locked Lazy", 4096);
 
-    heavy_fast_mutlazy::<true>(&mut gp, "LazyMut", 8192);
+    heavy_fast_mutlazy::<true>(&mut gp, "Locked Lazy", 8192);
 
     gp.measurement_time(Duration::from_secs(10));
 
-    heavy_fast_mutlazy::<true>(&mut gp, "LazyMut", 16384);
+    heavy_fast_mutlazy::<true>(&mut gp, "Locked Lazy", 16384);
 
     gp.measurement_time(Duration::from_secs(3));
 

@@ -16,7 +16,7 @@
 //          - ajouter aux macros les lazy const initializé et la tolérance à la non registration
 //            du destructeur
 
-//#![cfg_attr(not(any(feature = "parking_lot_core", debug_mode)), no_std)]
+#![cfg_attr(not(any(feature = "parking_lot_core", debug_mode)), no_std)]
 #![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]
 #![cfg_attr(
     feature = "thread_local",
@@ -337,12 +337,15 @@ pub mod phase {
     use core::fmt::{self, Display, Formatter};
 
     use bitflags::bitflags;
+    #[cfg(not(feature = "spin_loop"))]
     pub(crate) const WRITE_WAITER_BIT: u32 = 0b1000_0000_0000_0000_0000_0000_0000_0000;
+    #[cfg(not(feature = "spin_loop"))]
     pub(crate) const READ_WAITER_BIT: u32 = 0b0100_0000_0000_0000_0000_0000_0000_0000;
     pub(crate) const LOCKED_BIT: u32 = 0b0010_0000_0000_0000_0000_0000_0000_0000; 
     pub(crate) const READER_BITS: u32 = 0b0000_1111_1111_1111_1111_1111_0000_0000;
     pub(crate) const READER_OVERF: u32 = 0b0001_0000_0000_0000_0000_0000_0000_0000;
     pub(crate) const READER_UNITY: u32 = 0b0000_0000_0000_0000_0000_0001_0000_0000;
+    #[cfg(not(feature = "spin_loop"))]
     pub(crate) const MAX_WAKED_READERS: usize = (READER_OVERF / READER_UNITY) as usize;
     // Although some flags exclude others, Phase is represented by
     // a bitflag to allow xor bit tricks that eases atomic phase
@@ -450,9 +453,9 @@ pub mod generic_lazy;
 /// Provides various implementation of lazily initialized types
 pub mod lazy;
 #[doc(inline)]
-pub use lazy::{Lazy, MutLazy};
+pub use lazy::{Lazy, LockedLazy};
 #[doc(inline)]
-pub use lazy::{UnSyncLazy, UnSyncMutLazy};
+pub use lazy::{UnSyncLazy, UnSyncLockedLazy};
 
 #[cfg(any(elf, mach_o, coff))]
 /// Provides types for statics that are meant to run code before main start or after it exit.

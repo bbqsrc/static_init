@@ -1,10 +1,19 @@
+
+#[cfg(not(feature = "spin_loop"))]
 mod futex;
 
 mod spin_wait;
 
+#[cfg(not(feature = "spin_loop"))]
 mod sync;
+
+#[cfg(feature = "spin_loop")]
+#[path = "phase_locker/sync_spinning.rs"]
+mod sync;
+
 pub(crate) use sync::Mutex;
 pub use sync::{SyncPhaseGuard, SyncPhaseLocker, SyncReadPhaseGuard};
+
 
 mod unsync;
 pub use unsync::UnSyncPhaseLocker;

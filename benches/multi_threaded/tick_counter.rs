@@ -20,58 +20,106 @@ mod inner {
 
     impl TickCounter {
         pub fn new() -> TickCounter {
-            let mut arr = [0; 10000];
+            #![allow(clippy::many_single_char_names)]
+            let n = 10000;
+            let mut arr = vec![];
+            arr.reserve(n);
+
             for _ in 1..1000 {
                 let s = Self::raw_start();
                 let e = Self::raw_end();
                 black_box(e - s);
             }
-            for v in arr.iter_mut() {
+
+            std::thread::yield_now();
+
+            for _ in 1..10 {
                 let s = Self::raw_start();
                 let e = Self::raw_end();
-                *v = e - s;
+                black_box(e - s);
             }
+
+            for _ in 0..n {
+                let s = Self::raw_start();
+                let e = Self::raw_end();
+                arr.push(e - s);
+            }
+
             arr.sort_unstable();
-            for k in 0..1000 {
-                arr[k] = arr[1000];
+            for k in 0..n/10 {
+                arr[k] = arr[n/10];
             }
-            for k in 9000..10000 {
-                arr[k] = arr[8999];
+            for k in n-n/10..n {
+                arr[k] = arr[n-n/10 - 1];
             }
             let s = arr.iter().fold(0, |cur, v| cur + *v);
             let zero = s / 10000;
-            let mut k = 0;
-            let mut arr = [0f64; 10000];
-            loop {
-                let s = Instant::now();
-                let s0 = Self::raw_start();
-                for _ in 1..1000 {
-                    let s = Self::raw_start();
-                    let e = Self::raw_end();
-                    black_box(e - s);
-                }
-                let e0 = Self::raw_end();
+
+            // Now estimate the time/tick
+            let n = 200;
+            let mut arr = vec![];
+            arr.reserve(n);
+
+            //heat up
+            for _ in 1..100 {
+                Instant::now().elapsed();
+            }
+
+            std::thread::yield_now(); 
+
+            for _ in 1..10 {
+                Instant::now().elapsed();
+            }
+
+            let mut i = 0;
+            while i < n {
                 let e = Instant::now();
-                if s0 > e0 {
+                let e0 = black_box(Self::raw_start());
+                for _ in 0..i+1 {
+                    black_box(Self::raw_start());
+                    black_box(Self::raw_end());
+                }
+                let e1 = black_box(Self::raw_start());
+                let y = e.elapsed();
+                if e1 < e0 {
                     continue;
+                } else {
+                    i+=1;
                 }
-                let l = e.duration_since(s).as_nanos() as f64;
-                let dst = (e0 - s0) as f64;
-                arr[k] = l / dst;
-                k += 1;
-                if k == 10000 {
-                    break;
-                }
+                let dx = e1-e0;
+                let x = if dx > zero {
+                    dx - zero
+                } else {
+                    0
+                };
+                arr.push((x as u32,y));
             }
-            arr.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            for k in 0..1000 {
-                arr[k] = arr[1000];
+
+            //Regularize
+            let mut arr_1 = vec![];
+            for v in arr.into_iter() {
+                let v0 = v.0 as f64;
+                arr_1.push((v0,v.1.as_nanos() as f64 / v0));
             }
-            for k in 9000..10000 {
-                arr[k] = arr[8999];
+
+            //Windsorize
+            arr_1.sort_unstable_by(|a,b| PartialOrd::partial_cmp(&a.1,&b.1).unwrap());
+
+            for k in 0..n/10 {
+                arr_1[k].1 = arr_1[n/10].1;
             }
-            let s = arr.iter().fold(0f64, |cur, v| cur + *v);
-            TickCounter(zero, s / 10000f64)
+            for k in n-n/10..n {
+                arr_1[k].1 = arr_1[n-n/10-1].1;
+            }
+
+            //the linear function that minimize quadratic error sum goes
+            //through the middle point yeah!! 
+            let xm = arr_1.iter().fold(0f64, |v,x| v+x.0);
+            let ym = arr_1.iter().fold(0f64, |v,x| v+(x.0 * x.1));
+            
+            let ns_per_tick = ym/xm;
+            println!("Estimated processor frequency: {}",(100f64/ns_per_tick).round()/100f64);
+            TickCounter(zero, ns_per_tick)
         }
         #[inline(always)]
         pub fn time<R, F: FnOnce() -> R>(&self, f: F) -> Option<Duration> {

@@ -106,7 +106,7 @@ pub struct GenericLazySeq<T, M> {
     sequentializer: M,
 }
 
-pub struct GenericLazyMutSeq<T, M> {
+pub struct GenericLockedLazySeq<T, M> {
     value:          T,
     sequentializer: M,
 }
@@ -137,17 +137,17 @@ impl<T: LazyData, M: RefUnwindSafe> RefUnwindSafe for GenericLazySeq<T, M> where
 //  1. GenericLazy fullfill the requirement that its sequentializer is a field
 //  of itself as is its target data.
 //  2. The sequentializer ensure that the initialization is atomic
-unsafe impl<T: LazyData, M: Sync> Sync for GenericLazyMutSeq<T, M> where
+unsafe impl<T: LazyData, M: Sync> Sync for GenericLockedLazySeq<T, M> where
     <T as LazyData>::Target: Send
 {
 }
-unsafe impl<T: LazyData, M: Sync> Send for GenericLazyMutSeq<T, M> where
+unsafe impl<T: LazyData, M: Sync> Send for GenericLockedLazySeq<T, M> where
     <T as LazyData>::Target: Send
 {
 }
 
 #[cfg(any(feature = "parking_lot_core", debug_mode))]
-impl<T: LazyData, M: RefUnwindSafe> RefUnwindSafe for GenericLazyMutSeq<T, M> where <T as LazyData>::Target: RefUnwindSafe {}
+impl<T: LazyData, M: RefUnwindSafe> RefUnwindSafe for GenericLockedLazySeq<T, M> where <T as LazyData>::Target: RefUnwindSafe {}
 
 impl<T, F, M, S> GenericLazy<T, F, M, S> {
     #[inline(always)]
@@ -489,15 +489,15 @@ impl<T: LazyData> RefUnwindSafe for WriteGuard<T> where <T as LazyData>::Target:
 /// A type that wrap a Sequentializer and a raw data, and that may
 /// initialize the data, at each access depending on the LazyPolicy
 /// provided as generic argument.
-pub struct GenericMutLazy<T, F, M, S> {
-    seq:       GenericLazyMutSeq<T, M>,
+pub struct GenericLockedLazy<T, F, M, S> {
+    seq:       GenericLockedLazySeq<T, M>,
     generator: F,
     phantom:   PhantomData<S>,
     #[cfg(debug_mode)]
     _info:     Option<StaticInfo>,
 }
 
-impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
+impl<T, F, M, S> GenericLockedLazy<T, F, M, S> {
     #[inline(always)]
     /// const initialize the lazy, the inner data may be in an uninitialized state
     ///
@@ -508,7 +508,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
     ///  2. The finalization is run only if the object was previously initialized
     pub const unsafe fn new(generator: F, sequentializer: M, value: T) -> Self {
         Self {
-            seq: GenericLazyMutSeq {
+            seq: GenericLockedLazySeq {
                 value,
                 sequentializer,
             },
@@ -534,7 +534,7 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         _info: StaticInfo,
     ) -> Self {
         Self {
-            seq: GenericLazyMutSeq {
+            seq: GenericLockedLazySeq {
                 value,
                 sequentializer,
             },
@@ -550,11 +550,11 @@ impl<T, F, M, S> GenericMutLazy<T, F, M, S> {
         &this.seq.sequentializer
     }
 }
-impl<'a, T, F, M, S> GenericMutLazy<T, F, M, S>
+impl<'a, T, F, M, S> GenericLockedLazy<T, F, M, S>
 where
     T: 'static + LazyData,
     M: 'static,
-    M: LazySequentializer<'a, GenericLazyMutSeq<T, M>>,
+    M: LazySequentializer<'a, GenericLockedLazySeq<T, M>>,
     F: 'static + Generator<T::Target>,
     S: 'static + LazyPolicy,
     M::ReadGuard: Phased,
@@ -598,7 +598,7 @@ where
     /// The obtained [ReadGuard] may reference an uninitialized target.
     #[inline(always)]
     pub unsafe fn fast_read_lock_unchecked(this: &'a Self) -> Option<ReadGuard<M::ReadGuard>> {
-        <M as Sequentializer<'a, GenericLazyMutSeq<T, M>>>::try_lock(&this.seq, |_| {
+        <M as Sequentializer<'a, GenericLockedLazySeq<T, M>>>::try_lock(&this.seq, |_| {
             LockNature::Read
         },
         S::INITIALIZED
@@ -642,7 +642,7 @@ where
     #[inline(always)]
     pub unsafe fn read_lock_unchecked(this: &'a Self) -> ReadGuard<M::ReadGuard> {
         if let LockResult::Read(l) =
-            <M as Sequentializer<'a, GenericLazyMutSeq<T, M>>>::lock(&this.seq, |_| {
+            <M as Sequentializer<'a, GenericLockedLazySeq<T, M>>>::lock(&this.seq, |_| {
                 LockNature::Read
             },
             S::INITIALIZED
@@ -680,7 +680,7 @@ where
     /// The obtained [ReadGuard] may reference an uninitialized target.
     #[inline(always)]
     pub unsafe fn fast_write_lock_unchecked(this: &'a Self) -> Option<WriteGuard<M::WriteGuard>> {
-        <M as Sequentializer<'a, GenericLazyMutSeq<T, M>>>::try_lock(&this.seq, |_| {
+        <M as Sequentializer<'a, GenericLockedLazySeq<T, M>>>::try_lock(&this.seq, |_| {
             LockNature::Write
         },
         S::INITIALIZED
@@ -725,7 +725,7 @@ where
     #[inline(always)]
     pub unsafe fn write_lock_unchecked(this: &'a Self) -> WriteGuard<M::WriteGuard> {
         if let LockResult::Write(l) =
-            <M as Sequentializer<'a, GenericLazyMutSeq<T, M>>>::lock(&this.seq, |_| {
+            <M as Sequentializer<'a, GenericLockedLazySeq<T, M>>>::lock(&this.seq, |_| {
                 LockNature::Write
             },
             S::INITIALIZED
@@ -765,7 +765,7 @@ where
     pub unsafe fn init_then_read_lock_unchecked(this: &'a Self) -> ReadGuard<M::ReadGuard> {
         let r = may_debug(
             || {
-                <M as LazySequentializer<'a, GenericLazyMutSeq<T, M>>>::init_then_read_guard(
+                <M as LazySequentializer<'a, GenericLockedLazySeq<T, M>>>::init_then_read_guard(
                     &this.seq,
                     S::shall_init,
                     |data: &T| {
@@ -819,7 +819,7 @@ where
     ) -> Option<ReadGuard<M::ReadGuard>> {
         may_debug(
             || {
-                <M as LazySequentializer<'a, GenericLazyMutSeq<T, M>>>::try_init_then_read_guard(
+                <M as LazySequentializer<'a, GenericLockedLazySeq<T, M>>>::try_init_then_read_guard(
                     &this.seq,
                     S::shall_init,
                     |data: &T| {
@@ -872,7 +872,7 @@ where
     pub unsafe fn init_then_write_lock_unchecked(this: &'a Self) -> WriteGuard<M::WriteGuard> {
         let r = may_debug(
             || {
-                <M as LazySequentializer<'a, GenericLazyMutSeq<T, M>>>::init_then_write_guard(
+                <M as LazySequentializer<'a, GenericLockedLazySeq<T, M>>>::init_then_write_guard(
                     &this.seq,
                     S::shall_init,
                     |data: &T| {
@@ -923,7 +923,7 @@ where
     ) -> Option<WriteGuard<M::WriteGuard>> {
         may_debug(
             || {
-                <M as LazySequentializer<'a, GenericLazyMutSeq<T, M>>>::try_init_then_write_guard(
+                <M as LazySequentializer<'a, GenericLockedLazySeq<T, M>>>::try_init_then_write_guard(
                     &this.seq,
                     S::shall_init,
                     |data: &T| {
@@ -964,11 +964,11 @@ where
     }
 }
 
-impl<T, F, M, S> GenericMutLazy<T, F, M, S>
+impl<T, F, M, S> GenericLockedLazy<T, F, M, S>
 where
     T: 'static + LazyData,
     M: 'static,
-    for<'a> M: LazySequentializer<'a, GenericLazyMutSeq<T, M>>,
+    for<'a> M: LazySequentializer<'a, GenericLockedLazySeq<T, M>>,
     F: 'static + Generator<T::Target>,
     S: 'static + LazyPolicy,
 {
@@ -1002,7 +1002,7 @@ where
     pub fn only_init_unique(&mut self) -> Phase {
         let generator = &self.generator;
         let seq = &mut self.seq;
-        <M as LazySequentializer<GenericLazyMutSeq<T, M>>>::init_unique(
+        <M as LazySequentializer<GenericLockedLazySeq<T, M>>>::init_unique(
             seq,
             S::shall_init,
             |data: &T| {
@@ -1022,7 +1022,7 @@ where
 //        T: 'static + LazyData,
 //        M: 'static,
 //        S: 'static + LazyPolicy,
-//    > Sequential for GenericMutLazy<T, F, M, S>
+//    > Sequential for GenericLockedLazy<T, F, M, S>
 //{
 //    type Data = T;
 //    type Sequentializer = M;
@@ -1036,7 +1036,7 @@ where
 //    }
 //}
 //SAFETY: data and sequentialize are two fields of Self.
-unsafe impl<T: 'static + LazyData, M: 'static> Sequential for GenericLazyMutSeq<T, M> {
+unsafe impl<T: 'static + LazyData, M: 'static> Sequential for GenericLockedLazySeq<T, M> {
     type Data = T;
     type Sequentializer = M;
     #[inline(always)]
@@ -1052,7 +1052,7 @@ unsafe impl<T: 'static + LazyData, M: 'static> Sequential for GenericLazyMutSeq<
         &this.value
     }
 }
-impl<F, T, M, S> Deref for GenericMutLazy<T, F, M, S> {
+impl<F, T, M, S> Deref for GenericLockedLazy<T, F, M, S> {
     type Target = T;
     #[inline(always)]
     ///get a pointer to the raw data
@@ -1060,7 +1060,7 @@ impl<F, T, M, S> Deref for GenericMutLazy<T, F, M, S> {
         &self.seq.value
     }
 }
-impl<T, M> Deref for GenericLazyMutSeq<T, M> {
+impl<T, M> Deref for GenericLockedLazySeq<T, M> {
     type Target = T;
     #[inline(always)]
     ///get a pointer to the raw data
@@ -1069,7 +1069,7 @@ impl<T, M> Deref for GenericLazyMutSeq<T, M> {
     }
 }
 
-impl<F, T, M: Phased, S> Phased for GenericMutLazy<T, F, M, S> {
+impl<F, T, M: Phased, S> Phased for GenericLockedLazy<T, F, M, S> {
     #[inline(always)]
     fn phase(this: &Self) -> Phase {
         Phased::phase(&this.seq.sequentializer)

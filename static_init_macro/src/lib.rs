@@ -716,7 +716,6 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     }
 
     let stat_ref: Expr = if !(options.init == InitMode::Lazy || options.init == InitMode::LesserLazy)
-        && stat.mutability.is_some()
     {
         parse_quote! {
             &mut #stat_name
@@ -759,7 +758,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::UnSyncMutLazyFinalize::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::UnSyncLockedLazyFinalize::<#stat_typ,#stat_generator_name>
             }
         }
     } else if is_thread_local && options.drop == DropMode::Drop {
@@ -770,7 +769,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::UnSyncMutLazyDroped::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::UnSyncLockedLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
     } else if is_thread_local {
@@ -781,7 +780,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::UnSyncMutLazy::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::UnSyncLockedLazy::<#stat_typ,#stat_generator_name>
             }
         }
     } else if options.drop == DropMode::Finalize && options.init == InitMode::LesserLazy {
@@ -792,7 +791,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::LesserMutLazyFinalize::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::LesserLockedLazyFinalize::<#stat_typ,#stat_generator_name>
             }
         }
     } else if options.drop == DropMode::Finalize && options.init == InitMode::Lazy {
@@ -803,16 +802,18 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::MutLazyFinalize::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::LockedLazyFinalize::<#stat_typ,#stat_generator_name>
             }
         }
     } else if options.drop == DropMode::Drop && options.init == InitMode::Lazy {
         if stat.mutability.is_none() {
-            return generate_error!("Droped lazy must be mutable");
+            parse_quote! {
+                ::static_init::lazy::ConstLockedLazyDroped::<#stat_typ,#stat_generator_name>
+            }
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::MutLazyDroped::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::LockedLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
     } else if options.drop == DropMode::Drop && options.init == InitMode::LesserLazy {
@@ -821,7 +822,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::LesserMutLazyDroped::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::LesserLockedLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
     } else if options.init == InitMode::LesserLazy {
@@ -832,7 +833,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         } else {
             into_immutable!();
             parse_quote! {
-                ::static_init::lazy::LesserMutLazy::<#stat_typ,#stat_generator_name>
+                ::static_init::lazy::LesserLockedLazy::<#stat_typ,#stat_generator_name>
             }
         }
     } else if stat.mutability.is_none() {
@@ -842,7 +843,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     } else {
         into_immutable!();
         parse_quote! {
-            ::static_init::lazy::MutLazy::<#stat_typ,#stat_generator_name>
+            ::static_init::lazy::LockedLazy::<#stat_typ,#stat_generator_name>
         }
     };
 

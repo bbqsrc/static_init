@@ -367,15 +367,17 @@ mod local_manager {
         fn lock(
             st: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
+            hint: Phase,
         ) -> LockResult<UnSyncReadPhaseGuard<'a, T::Data>, UnSyncPhaseGuard<'a, T::Data>> {
-            <SubSequentializer as Sequentializer<T>>::lock(st, lock_nature)
+            <SubSequentializer as Sequentializer<T>>::lock(st, lock_nature,hint)
         }
         #[inline(always)]
         fn try_lock(
             st: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
+            hint: Phase,
         ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>> {
-            <SubSequentializer as Sequentializer<T>>::try_lock(st, lock_nature)
+            <SubSequentializer as Sequentializer<T>>::try_lock(st, lock_nature,hint)
         }
         #[inline(always)]
         fn lock_mut(st: &'a mut T) -> UnSyncPhaseGuard<'a, T::Data> {
