@@ -388,7 +388,7 @@ macro_rules! impl_lazy {
             }
             #[inline(always)]
             pub fn init(this: &$($static)? Self) -> Phase {
-                GenericLazy::init(&this.__private).result
+                GenericLazy::init(&this.__private)
             }
         }
 

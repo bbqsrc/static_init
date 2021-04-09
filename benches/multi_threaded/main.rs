@@ -511,9 +511,10 @@ fn bench_access(c: &mut Criterion) {
             loop {
                 match $acc {
                     None => {
-                        for _ in 0..64 {
-                            core::hint::spin_loop()
-                        }
+                        //for _ in 0..64 {
+                        //    core::hint::spin_loop()
+                        //}
+                        ()
                     }
                     Some(l) => {
                         v = *l;

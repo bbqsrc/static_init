@@ -43,7 +43,7 @@ lazy_static = "1.4"
 ctor = "0.1"
 libc = "0.2"
 parking_lot = "0.11"
-criterion = "0.3"
+criterion = {version = "0.3", features = ["html_reports", "real_blackbox"]}
 crossbeam = "0.8"
 
 [[bench]]

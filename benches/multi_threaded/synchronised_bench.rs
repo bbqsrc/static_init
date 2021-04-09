@@ -25,11 +25,11 @@ pub struct Config<
     const TOLERATE_CONTEXT_SWITCH: bool,
 >;
 
-fn get_context_switch() -> i64 {
+fn get_involontary_context_switch() -> i64 {
     unsafe {
         let mut usage = MaybeUninit::<rusage>::zeroed().assume_init();
         assert_eq!(getrusage(RUSAGE_THREAD, &mut usage), 0);
-        usage.ru_nvcsw + usage.ru_nivcsw
+        usage.ru_nivcsw
     }
 }
 
@@ -64,7 +64,7 @@ pub fn synchro_bench_input<
         let test_init = {
             |sender: SyncSender<Option<Duration>>| loop {
                 let mut expect = 0;
-                let deb_prempted_count = if TOL_SWITCH { 0 } else { get_context_switch() };
+                let deb_prempted_count = if TOL_SWITCH { 0 } else { get_involontary_context_switch() };
                 loop {
                     match started.compare_exchange_weak(
                         expect,
@@ -102,7 +102,7 @@ pub fn synchro_bench_input<
                     compiler_fence(Ordering::AcqRel);
                     d
                 };
-                let end_prempted_count = if TOL_SWITCH { 0 } else { get_context_switch() };
+                let end_prempted_count = if TOL_SWITCH { 0 } else { get_involontary_context_switch() };
                 if end_prempted_count == deb_prempted_count {
                     sender.send(duration).unwrap();
                 } else {
