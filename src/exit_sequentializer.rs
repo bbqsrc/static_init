@@ -29,9 +29,9 @@ mod exit_manager {
     // static that have not yet been finalized will not
     // be finalized 
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
-    impl RefUnwindSafe for ExitSequentializerBase {}
+    impl<G> RefUnwindSafe for ExitSequentializerBase<G> {}
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
-    impl UnwindSafe for ExitSequentializerBase {}
+    impl<G> UnwindSafe for ExitSequentializerBase<G> {}
 
 
     /// A sequentializer that store finalize_callback  
@@ -306,9 +306,9 @@ mod local_manager {
     // static that have not yet been finalized will not
     // be finalized 
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
-    impl RefUnwindSafe for ThreadExitSequentializerBase {}
+    impl<G> RefUnwindSafe for ThreadExitSequentializerBase<G> {}
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
-    impl UnwindSafe for ThreadExitSequentializerBase {}
+    impl<G> UnwindSafe for ThreadExitSequentializerBase<G> {}
 
     #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
     /// A sequentializer that store finalize_callback  

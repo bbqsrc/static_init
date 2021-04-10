@@ -331,6 +331,12 @@ pub trait Finaly {
     fn finaly(&self);
 }
 
+/// A Drop replacement that changes the value
+pub trait Uninit {
+    fn uninit(&mut self);
+}
+
+
 #[cfg_attr(docsrs, doc(cfg(debug_mode)))]
 #[cfg(debug_mode)]
 #[doc(hidden)]

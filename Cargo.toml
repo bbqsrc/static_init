@@ -29,7 +29,7 @@ spin_loop = []
 test_no_global_lazy_hint = []
 
 
-default = ["thread_local"]
+default = []
 
 [dependencies]
 bitflags = "1"

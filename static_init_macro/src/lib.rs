@@ -488,6 +488,7 @@ struct DynMode {
     init: InitMode,
     drop: DropMode,
     tolerance: Tolerance,
+    priming: bool,
 }
 
 fn parse_priority(args: TokenStream) -> std::result::Result<u16, TokenStream2> {
@@ -543,7 +544,8 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
     let mut opt = DynMode {
         init: InitMode::Lazy,
         drop: DropMode::None,
-        tolerance: Tolerance {init_fail: true, registration_fail: false}
+        tolerance: Tolerance {init_fail: true, registration_fail: false},
+        priming : false,
     };
 
     let mut init_set = false;
@@ -608,6 +610,8 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
                     opt.tolerance.init_fail = false;
                 } else if id == "leak" {
                     opt.tolerance.registration_fail = true;
+                } else if id == "prime" {
+                    opt.priming = true;
                 } else {
                     return unexpected_arg!(id);
                 }
@@ -713,7 +717,52 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
 
     let stat_generator_name = Ident::new(&stat_generator_name, Span::call_site());
 
-    let expr = &*stat.expr;
+    let err =  generate_error!(stat.expr.span()=>
+            "Expected an expression of the form `match INIT { PRIME => /*expr/*, DYN => /*expr*/}`"
+        );
+
+    let (expr, prime_expr) = if !options.priming {
+        (&*stat.expr,None)
+    } else if let Expr::Match(mexp) = &*stat.expr {
+        if let Expr::Path(p) = &*mexp.expr {
+            if !p.path.segments.len() == 1 && p.path.segments.first().unwrap().ident == "INIT" {
+                return generate_error!(mexp.expr.span()=>
+                    "Expected `INIT` because the static has `#[dynamic(prime)]` attribute."
+                    );
+            }
+        } else {
+            return generate_error!(mexp.expr.span()=>
+                "Expected `INIT` because the static has `#[dynamic(prime)]` attribute."
+                );
+        }
+        if mexp.arms.len() != 2 {
+            return generate_error!(mexp.span()=>
+                "Expected two match arms as the static has `#[dynamic(prime)]` attribute."
+                );
+        }
+        let mut expr = None;
+        let mut prime_expr = None;
+        for arm in &mexp.arms {
+           let p = match &arm.pat { 
+               Pat::Ident(p) if p.by_ref.is_none() && p.mutability.is_none() && p.subpat.is_none()=> p,
+               x => return generate_error!(x.span()=>
+                "Expected either `DYN` or `PRIME` as the static has `#[dynamic(prime)]` attribute."
+                ),
+           };
+           if p.ident == "PRIME" && prime_expr.is_none() {
+               prime_expr = Some(&*arm.body);
+           } else if p.ident == "DYN" && expr.is_none() {
+               expr = Some(&*arm.body);
+           } else {
+               return generate_error!(p.span()=>
+                "Repeated match expression `", p, "`. There must be one arm that matches `PRIME` and the other `DYN`."
+                );
+           }
+        }
+        (expr.unwrap(), Some(prime_expr))
+    } else {
+        return err;
+    };
 
     let stat_typ = &*stat.ty;
 
@@ -759,6 +808,50 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         } else {
             parse_quote! {
                 ::static_init::raw_static::Static::<#stat_typ>
+            }
+        }
+    } else if is_thread_local && options.priming && options.drop == DropMode::None {
+        if stat.mutability.is_none() {
+            return generate_error!(stat.static_token.span()=>
+                "Primed statics are mutating (safe). Add the `mut` keyword."
+            );
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::UnSyncPrimedLockedLazy::<#stat_typ,#stat_generator_name>
+            }
+        }
+    } else if is_thread_local && options.priming {
+        if stat.mutability.is_none() {
+            return generate_error!(stat.static_token.span()=>
+                "Primed statics are mutating (safe). Add the `mut` keyword."
+            );
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::UnSyncPrimedLockedLazyDroped::<#stat_typ,#stat_generator_name>
+            }
+        }
+    } else if options.priming && options.drop == DropMode::None {
+        if stat.mutability.is_none() {
+            return generate_error!(stat.static_token.span()=>
+                "Primed statics are mutating (safe). Add the `mut` keyword."
+            );
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::PrimedLockedLazy::<#stat_typ,#stat_generator_name>
+            }
+        }
+    } else if options.priming {
+        if stat.mutability.is_none() {
+            return generate_error!(stat.static_token.span()=>
+                "Primed statics are mutating (safe). Add the `mut` keyword."
+            );
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::PrimedLockedLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
     } else if is_thread_local && options.drop == DropMode::Finalize {
@@ -989,6 +1082,28 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 #initer
                 #droper
                 unsafe{#typ::uninit(#static_info)}
+            }
+            }
+        }
+        InitMode::Lazy | InitMode::LesserLazy if options.priming && cfg!(debug_mode) => {
+            quote_spanned! {sp=> {
+                #initer
+
+                let _ = ();
+
+                #[allow(unused_unsafe)]
+                unsafe{#typ::new_static_with_info(#prime_expr,#stat_generator_name, #static_info)}
+            }
+            }
+        }
+        InitMode::Lazy | InitMode::LesserLazy if options.priming => {
+            quote_spanned! {sp=> {
+                #initer
+
+                let _ = ();
+
+                #[allow(unused_unsafe)]
+                unsafe{#typ::new_static(#prime_expr,#stat_generator_name)}
             }
             }
         }

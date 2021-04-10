@@ -1,6 +1,6 @@
 use crate::{
     Finaly, Generator, LazySequentializer, LockNature, LockResult, Phase, Phased, Sequential,
-    Sequentializer, StaticInfo
+    Sequentializer, StaticInfo, Uninit
 };
 use core::cell::UnsafeCell;
 use core::fmt::{self, Display, Formatter};
@@ -21,6 +21,8 @@ pub trait LazyPolicy {
     fn shall_init(_: Phase) -> bool;
     /// Is the object accessible in phase `p`
     fn is_accessible(p: Phase) -> bool;
+    /// Is the object accessible in phase `p`
+    fn post_init_is_accessible(p: Phase) -> bool;
     /// If the object is known to already be initialized, is the object accessible in phase `p`
     fn initialized_is_accessible(p: Phase) -> bool;
 }
@@ -41,6 +43,33 @@ impl<T: Finaly> Finaly for UnInited<T> {
     }
 }
 
+impl<T> UnInited<T> {
+    pub const INIT: Self = Self(UnsafeCell::new(MaybeUninit::uninit()));
+}
+
+/// Generic lazy interior data storage, initialized with interior mutability data storage
+/// that call T::finaly when finalized
+pub struct Primed<T>(UnsafeCell<T>);
+
+impl<T: Uninit> Finaly for Primed<T> {
+    #[inline(always)]
+    fn finaly(&self) {
+        //SAFETY: UnInited is only used as part of GenericLazy, that gives access
+        //only if the Sequentializer is a Lazy Sequentializer
+        //
+        //So the lazy Sequentializer should only execute finaly if the object initialization
+        //succeeded
+      unsafe { &mut *self.0.get() }.uninit();
+    }
+}
+
+impl<T> Primed<T> {
+    pub const fn prime(v: T) -> Self {
+        Self(UnsafeCell::new(v))
+    }
+}
+
+
 /// Generic lazy interior data storage, uninitialized with interior mutability data storage
 /// that call drop when finalized
 pub struct DropedUnInited<T>(UnsafeCell<MaybeUninit<T>>);
@@ -57,31 +86,57 @@ impl<T> Finaly for DropedUnInited<T> {
     }
 }
 
+impl<T> DropedUnInited<T> {
+    pub const INIT: Self = Self(UnsafeCell::new(MaybeUninit::uninit()));
+}
+
+
 /// Trait implemented by generic lazy inner data.
 ///
 /// Dereferencement of generic lazy will return a reference to
 /// the inner data returned by the get method
 pub trait LazyData {
     type Target;
-    const INIT: Self;
     fn get(&self) -> *mut Self::Target;
+    /// # Safety
+    ///
+    /// The reference to self should be unique
+    unsafe fn init(&self,v: Self::Target);
 }
 
 impl<T> LazyData for UnInited<T> {
     type Target = T;
-    const INIT: Self = Self(UnsafeCell::new(MaybeUninit::uninit()));
     #[inline(always)]
     fn get(&self) -> *mut T {
         self.0.get() as *mut T
+    }
+    #[inline(always)]
+    unsafe fn init(&self, v: T){
+        self.get().write(v)
     }
 }
 
 impl<T> LazyData for DropedUnInited<T> {
     type Target = T;
-    const INIT: Self = Self(UnsafeCell::new(MaybeUninit::uninit()));
     #[inline(always)]
     fn get(&self) -> *mut T {
         self.0.get() as *mut T
+    }
+    #[inline(always)]
+    unsafe fn init(&self, v: T){
+        self.get().write(v)
+    }
+}
+
+impl<T> LazyData for Primed<T> {
+    type Target = T;
+    #[inline(always)]
+    fn get(&self) -> *mut T {
+        self.0.get()
+    }
+    #[inline(always)]
+    unsafe fn init(&self, v: T){
+        *self.get() = v
     }
 }
 
@@ -291,7 +346,7 @@ where
     #[inline(always)]
     pub fn init_then_try_get(&'a self) -> Result<&'a T::Target, AccessError> {
         let phase = self.init();
-        check_access::<*mut T::Target, S>(self.seq.value.get(), phase).map(|ptr| unsafe { &*ptr })
+        post_init_check_access::<*mut T::Target, S>(self.seq.value.get(), phase).map(|ptr| unsafe { &*ptr })
     }
     /// Attempt initialization then get a reference to the target, returning an error if the
     /// target is not in the correct phase.
@@ -313,7 +368,7 @@ where
                         // This function is called only once within the init function
                         // Only one thread can ever get this mutable access
                         let d = Generator::generate(&self.generator);
-                        unsafe { data.get().write(d) };
+                        unsafe { data.init(d) };
                     },
                 )
             },
@@ -346,7 +401,7 @@ where
     /// target is not in the correct phase.
     pub fn only_init_then_try_get_mut(&mut self) -> Result<&mut T::Target, AccessError> {
         let phase = self.only_init_unique();
-        check_access::<*mut T::Target, S>(self.seq.value.get(), phase)
+        post_init_check_access::<*mut T::Target, S>(self.seq.value.get(), phase)
             .map(|ptr| unsafe { &mut *ptr })
     }
     #[inline(always)]
@@ -369,31 +424,12 @@ where
                 // This function is called only once within the init function
                 // Only one thread can ever get this mutable access
                 let d = Generator::generate(generator);
-                unsafe { data.get().write(d) };
+                unsafe { data.init(d) };
             },
         )
     }
 }
 
-//SAFETY: data and sequentialize are two fields of Self.
-//unsafe impl<
-//        F: 'static + Generator<T::Target>,
-//        T: 'static + LazyData,
-//        M: 'static,
-//        S: 'static + LazyPolicy,
-//    > Sequential for GenericLazy<T, F, M, S>
-//{
-//    type Data = T;
-//    type Sequentializer = M;
-//    #[inline(always)]
-//    fn sequentializer(this: &Self) -> &Self::Sequentializer {
-//        &this.seq.sequentializer
-//    }
-//    #[inline(always)]
-//    fn data(this: &Self) -> &Self::Data {
-//        &this.seq.value
-//    }
-//}
 //SAFETY: data and sequentialize are two fields of Self.
 unsafe impl<T: 'static + LazyData, M: 'static> Sequential for GenericLazySeq<T, M> {
     type Data = T;
@@ -773,7 +809,7 @@ where
                         // Only one thread can ever get this mutable access
                         let d = Generator::generate(&this.generator);
                         #[allow(unused_unsafe)]
-                        unsafe { data.get().write(d) };
+                        unsafe { data.init(d) };
                     },
                 )
             },
@@ -789,7 +825,7 @@ where
     /// state.
     #[inline(always)]
     pub fn init_then_try_read_lock(this: &'a Self) -> Result<ReadGuard<M::ReadGuard>, AccessError> {
-        checked_access::<ReadGuard<M::ReadGuard>, S>(unsafe {
+        post_init_checked_access::<ReadGuard<M::ReadGuard>, S>(unsafe {
             Self::init_then_read_lock_unchecked(this)
         })
     }
@@ -827,7 +863,7 @@ where
                         // Only one thread can ever get this mutable access
                         let d = Generator::generate(&this.generator);
                         #[allow(unused_unsafe)]
-                        unsafe { data.get().write(d) };
+                        unsafe { data.init(d) };
                     },
                 )
             },
@@ -847,7 +883,7 @@ where
         this: &'a Self,
     ) -> Option<Result<ReadGuard<M::ReadGuard>, AccessError>> {
         unsafe { Self::fast_init_then_read_lock_unchecked(this) }
-            .map(checked_access::<ReadGuard<M::ReadGuard>, S>)
+            .map(post_init_checked_access::<ReadGuard<M::ReadGuard>, S>)
     }
 
     #[inline(always)]
@@ -880,7 +916,7 @@ where
                         // Only one thread can ever get this mutable access
                         let d = Generator::generate(&this.generator);
                         #[allow(unused_unsafe)]
-                        unsafe { data.get().write(d) };
+                        unsafe { data.init(d) };
                     },
                 )
             },
@@ -897,7 +933,7 @@ where
     pub fn init_then_try_write_lock(
         this: &'a Self,
     ) -> Result<WriteGuard<M::WriteGuard>, AccessError> {
-        checked_access::<WriteGuard<M::WriteGuard>, S>(unsafe {
+        post_init_checked_access::<WriteGuard<M::WriteGuard>, S>(unsafe {
             Self::init_then_write_lock_unchecked(this)
         })
     }
@@ -931,7 +967,7 @@ where
                         // Only one thread can ever get this mutable access
                         let d = Generator::generate(&this.generator);
                         #[allow(unused_unsafe)]
-                        unsafe { data.get().write(d) };
+                        unsafe { data.init(d) };
                     },
                 )
             },
@@ -949,7 +985,7 @@ where
         this: &'a Self,
     ) -> Option<Result<WriteGuard<M::WriteGuard>, AccessError>> {
         unsafe { Self::fast_init_then_write_lock_unchecked(this) }
-            .map(checked_access::<WriteGuard<M::WriteGuard>, S>)
+            .map(post_init_checked_access::<WriteGuard<M::WriteGuard>, S>)
     }
     /// Attempt to get a write locks then initialize the target if necessary and returns the
     /// writelock.
@@ -1009,31 +1045,12 @@ where
                 // This function is called only once within the init function
                 // Only one thread can ever get this mutable access
                 let d = Generator::generate(generator);
-                unsafe { data.get().write(d) };
+                unsafe { data.init(d) };
             },
         )
     }
 }
 
-////SAFETY: data and sequentialize are two fields of Self.
-//unsafe impl<
-//        F: 'static + Generator<T::Target>,
-//        T: 'static + LazyData,
-//        M: 'static,
-//        S: 'static + LazyPolicy,
-//    > Sequential for GenericLockedLazy<T, F, M, S>
-//{
-//    type Data = T;
-//    type Sequentializer = M;
-//    #[inline(always)]
-//    fn sequentializer(this: &Self) -> &Self::Sequentializer {
-//        &this.seq.sequentializer
-//    }
-//    #[inline(always)]
-//    fn data(this: &Self) -> &Self::Data {
-//        &this.seq.value
-//    }
-//}
 //SAFETY: data and sequentialize are two fields of Self.
 unsafe impl<T: 'static + LazyData, M: 'static> Sequential for GenericLockedLazySeq<T, M> {
     type Data = T;
@@ -1118,4 +1135,18 @@ fn check_access<T, S: LazyPolicy>(l: T, phase: Phase) -> Result<T, AccessError> 
 fn checked_access<T: Phased, S: LazyPolicy>(l: T) -> Result<T, AccessError> {
     let phase = Phased::phase(&l);
     check_access::<T, S>(l, phase)
+}
+#[inline(always)]
+fn post_init_check_access<T, S: LazyPolicy>(l: T, phase: Phase) -> Result<T, AccessError> {
+        if S::post_init_is_accessible(phase) {
+            Ok(l)
+        } else {
+            Err(AccessError { phase })
+        }
+}
+
+#[inline(always)]
+fn post_init_checked_access<T: Phased, S: LazyPolicy>(l: T) -> Result<T, AccessError> {
+    let phase = Phased::phase(&l);
+    post_init_check_access::<T, S>(l, phase)
 }

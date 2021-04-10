@@ -330,7 +330,7 @@ mod generic {
         {
             let this = Sequential::sequentializer(_s).as_ref();
             use parking_lot::lock_api::GetThreadId;
-            this.1.store(
+            this.2.store(
                 parking_lot::RawThreadId.nonzero_thread_id().into(),
                 Ordering::Relaxed,
             );
@@ -344,7 +344,7 @@ mod generic {
         #[cfg(debug_mode)]
         {
             let this = Sequential::sequentializer(_s).as_ref();
-            this.1.store(0, Ordering::Relaxed);
+            this.2.store(0, Ordering::Relaxed);
         }
     }
     #[inline(always)]
@@ -355,7 +355,7 @@ mod generic {
         #[cfg(debug_mode)]
         {
             let this = Sequential::sequentializer(_s).as_ref();
-            let id = this.1.load(Ordering::Relaxed);
+            let id = this.2.load(Ordering::Relaxed);
             if id != 0 {
                 use parking_lot::lock_api::GetThreadId;
                 if id == parking_lot::RawThreadId.nonzero_thread_id().into() {

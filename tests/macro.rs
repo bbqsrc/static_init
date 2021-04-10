@@ -7,7 +7,7 @@
 #![cfg_attr(feature = "thread_local", feature(thread_local))]
 
 extern crate static_init;
-use static_init::{constructor, destructor, dynamic, Finaly};
+use static_init::{constructor, destructor, dynamic, Finaly, Uninit};
 
 static mut DEST: i32 = 0;
 
@@ -101,6 +101,11 @@ impl Finaly for A {
         assert_eq!(self.0, 33)
     }
 }
+impl Uninit for A {
+    fn uninit(&mut self) {
+        assert_eq!(self.0, 33)
+    }
+}
 
 #[test]
 #[cfg(not(miri))] //miri do not know about program constructors
@@ -164,6 +169,7 @@ fn dynamic_init() {
     }
 }
 
+
 mod lazy {
     #[cfg(any(feature = "thread_local"))]
     use super::A;
@@ -177,11 +183,32 @@ mod lazy {
         #[dynamic(lazy)]
         static mut TH_LOCAL: A = A::new(3);
 
+        #[dynamic(prime)]
+        #[thread_local]
+        static mut L4: i32 = match INIT {
+            PRIME => 42,
+            DYN => 33,
+        };
+
         assert_eq!(TH_LOCAL.read().0, 3);
+
+        match L4.primed_read_non_initializing() {
+            Ok(_) => panic!("Unexpected"),
+            Err(x) => assert_eq!(*x,42),
+        }
+        assert_eq!(*L4.read(), 33);
+
         TH_LOCAL.write().0 = 42;
+
         assert_eq!(TH_LOCAL.read().0, 42);
+
         std::thread::spawn(|| {
             assert_eq!(TH_LOCAL.read().0, 3);
+            match L4.primed_read_non_initializing() {
+                Ok(_) => panic!("Unexpected"),
+                Err(x) => assert_eq!(*x,42),
+            }
+            assert_eq!(*L4.read(), 33);
         })
         .join()
         .unwrap();
@@ -246,12 +273,36 @@ mod lazy {
         #[dynamic(lesser_lazy,finalize)]
         static mut L2: A = A::new(L3.0);
 
+        #[dynamic(prime)]
+        static mut L4: i32 = match INIT {
+            PRIME => 42,
+            DYN => 33,
+        };
+
+        #[dynamic(prime,drop)]
+        static mut L5: A = match INIT {
+            PRIME => A(33),
+            DYN => A::new(12),
+        };
+
         #[test]
         fn lazy_init() {
             assert_eq!(L0.read().0, 10);
             assert_eq!(L1.0, 11);
             assert_eq!(L2.read().0, 33);
             assert_eq!(L3.0, 33);
+            match L4.primed_read_non_initializing() {
+                Ok(_) => panic!("Unexpected"),
+                Err(x) => assert_eq!(*x,42),
+            }
+            assert_eq!(*L4.read(), 33);
+            match L5.primed_read_non_initializing() {
+                Ok(_) => panic!("Unexpected"),
+                Err(x) => assert_eq!(x.0,33),
+            }
+            assert_eq!(L5.read().0, 12);
+            L5.write().0 = 33;
         }
+
     }
 }

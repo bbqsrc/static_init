@@ -457,6 +457,17 @@ fn bench_init(c: &mut Criterion) {
 
     do_bench(&mut gp, "static_lazy::Lazy", init, access);
 
+    let init = || DoubleCheckedCell::<i32>::new();
+
+    let access = |l: &DoubleCheckedCell<i32>| {
+        *l.get_or_init(|| {
+            occupy_for(Duration::from_micros(1));
+            33
+            })
+    };
+
+    do_bench(&mut gp, "double_checked_cell", init, access);
+
     gp.finish();
 
 
@@ -483,6 +494,17 @@ fn bench_init(c: &mut Criterion) {
 
     do_bench(&mut gp, "static_lazy::Lazy", init, access);
 
+    let init = || DoubleCheckedCell::<i32>::new();
+
+    let access = |l: &DoubleCheckedCell<i32>| {
+        *l.get_or_init(|| {
+            occupy_for(Duration::from_micros(5));
+            33
+            })
+    };
+
+    do_bench(&mut gp, "double_checked_cell", init, access);
+
     gp.finish();
 
 
@@ -508,6 +530,17 @@ fn bench_init(c: &mut Criterion) {
     };
 
     do_bench(&mut gp, "static_lazy::Lazy", init, access);
+
+    let init = || DoubleCheckedCell::<i32>::new();
+
+    let access = |l: &DoubleCheckedCell<i32>| {
+        *l.get_or_init(|| {
+            occupy_for(Duration::from_micros(20));
+            33
+            })
+    };
+
+    do_bench(&mut gp, "double_checked_cell", init, access);
 
     gp.finish();
 }
