@@ -179,6 +179,7 @@ pub unsafe trait Sequentializer<'a, T: Sequential>: 'static + Sized + Phased {
 ///    to take another lock while a write lock is alive or to take a write lock while there
 ///    is already a read_lock.(the lock should behave as a RefCell).
 pub unsafe trait LazySequentializer<'a, T: Sequential>: Sequentializer<'a, T> {
+    const INITIALIZED_HINT: Phase;
     /// if `shall_init` return true for the target [`Sequential`] object, it initialize
     /// the data of the target object using `init`
     ///
@@ -256,7 +257,6 @@ pub unsafe trait FinalizableLazySequentializer<'a, T: Sequential>:
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
-        init_on_reg_failure: bool,
     ) -> Phase;
     fn only_init(
         target: &'a T,
@@ -275,7 +275,6 @@ pub unsafe trait FinalizableLazySequentializer<'a, T: Sequential>:
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
-        init_on_reg_failure: bool,
     ) -> Self::ReadGuard;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change accepts through the returned lock guard (Write Lock). The lock is exculisive.
@@ -284,7 +283,6 @@ pub unsafe trait FinalizableLazySequentializer<'a, T: Sequential>:
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
-        init_on_reg_failure: bool,
     ) -> Self::WriteGuard;
     /// Similar to [init_then_read_guard](Self::init_then_read_guard) but will return None
     /// if any lock is taken on the lazy or if it is beiing initialized
@@ -293,7 +291,6 @@ pub unsafe trait FinalizableLazySequentializer<'a, T: Sequential>:
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
-        init_on_reg_failure: bool,
     ) -> Option<Self::ReadGuard>;
     /// Similar to [init_then_write_guard](Self::init_then_write_guard) but will return None
     /// if any lock is taken on the lazy or if it is beiing initialized
@@ -302,14 +299,18 @@ pub unsafe trait FinalizableLazySequentializer<'a, T: Sequential>:
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
-        init_on_reg_failure: bool,
     ) -> Option<Self::WriteGuard>;
     /// A callback that is intened to be stored by the `reg` argument of `init` method.
     fn finalize_callback(s: &'a T, f: impl FnOnce(&'a T::Data));
 }
 
+pub trait GeneratorTolerance {
+    const INIT_FAILURE: bool;
+    const FINAL_REGISTRATION_FAILURE: bool;
+}
+
 /// Generates a value of type `T`
-pub trait Generator<T> {
+pub trait Generator<T>: GeneratorTolerance {
     fn generate(&self) -> T;
 }
 
@@ -318,6 +319,12 @@ impl<U, T: Fn() -> U> Generator<U> for T {
         self()
     }
 }
+
+impl<U, T:Fn() -> U> GeneratorTolerance for T {
+    const INIT_FAILURE: bool = true;
+    const FINAL_REGISTRATION_FAILURE: bool = false;
+}
+
 
 /// A Drop replacement that does not change the state of the object
 pub trait Finaly {
@@ -362,12 +369,15 @@ pub mod phase {
             const INITIALIZATION_PANICKED   = 0b0000_0000_0000_0000_0000_0000_0000_0010;
             const INITIALIZATION_SKIPED     = 0b0000_0000_0000_0000_0000_0000_0000_0100;
 
+
             const REGISTERED                = 0b0000_0000_0000_0000_0000_0000_0000_1000;
             const REGISTRATION_PANICKED     = 0b0000_0000_0000_0000_0000_0000_0001_0000;
             const REGISTRATION_REFUSED      = 0b0000_0000_0000_0000_0000_0000_0010_0000;
 
             const FINALIZED                 = 0b0000_0000_0000_0000_0000_0000_0100_0000;
             const FINALIZATION_PANICKED     = 0b0000_0000_0000_0000_0000_0000_1000_0000;
+
+            const INITIALIZED_AND_REGISTERED     = Self::INITIALIZED.bits | Self::REGISTERED.bits; 
         }
     }
 

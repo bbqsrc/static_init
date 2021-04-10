@@ -477,11 +477,17 @@ enum DropMode {
     Finalize,
     Dynamic(u16),
 }
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct Tolerance {
+    init_fail: bool,
+    registration_fail: bool,
+}
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct DynMode {
     init: InitMode,
     drop: DropMode,
+    tolerance: Tolerance,
 }
 
 fn parse_priority(args: TokenStream) -> std::result::Result<u16, TokenStream2> {
@@ -537,6 +543,7 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
     let mut opt = DynMode {
         init: InitMode::Lazy,
         drop: DropMode::None,
+        tolerance: Tolerance {init_fail: true, registration_fail: false}
     };
 
     let mut init_set = false;
@@ -597,6 +604,10 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
                 } else if id == "lesser_lazy" {
                     check_no_init!(id);
                     opt.init = InitMode::LesserLazy;
+                } else if id == "try_init_once" {
+                    opt.tolerance.init_fail = false;
+                } else if id == "leak" {
+                    opt.tolerance.registration_fail = true;
                 } else {
                     return unexpected_arg!(id);
                 }
@@ -950,6 +961,9 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         None
     };
 
+    let init_fail_tol = options.tolerance.init_fail;
+    let reg_fail_tol = options.tolerance.registration_fail;
+
     let lazy_generator = if matches!(options.init, InitMode::Lazy | InitMode::LesserLazy) {
         Some(quote_spanned! {sp=>
             #[allow(clippy::upper_case_acronyms)]
@@ -959,6 +973,10 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 fn generate(&self) -> #stat_typ {
                     #expr
                 }
+            }
+            impl ::static_init::GeneratorTolerance for #stat_generator_name {
+                const INIT_FAILURE: bool = #init_fail_tol; 
+                const FINAL_REGISTRATION_FAILURE: bool = #reg_fail_tol; 
             }
         })
     } else {

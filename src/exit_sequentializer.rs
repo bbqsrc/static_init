@@ -6,8 +6,9 @@ mod exit_manager {
     use crate::lazy_sequentializer::SyncSequentializer as SubSequentializer;
     use crate::Finaly;
     use crate::{
-        LazySequentializer, Phase, Phased, Sequential, Sequentializer, FinalizableLazySequentializer
+        LazySequentializer, Phase, Phased, Sequential, Sequentializer, FinalizableLazySequentializer,GeneratorTolerance
     };
+
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
     use std::panic::{RefUnwindSafe,UnwindSafe};
 
@@ -18,8 +19,8 @@ mod exit_manager {
 
     type Node = dyn 'static + OnExit + Sync;
 
-    pub struct ExitSequentializerBase {
-        sub:  SubSequentializer,
+    pub struct ExitSequentializerBase<G> {
+        sub:  SubSequentializer<G>,
         next: Mutex<Option<&'static Node>>,
     }
 
@@ -35,12 +36,12 @@ mod exit_manager {
 
     /// A sequentializer that store finalize_callback  
     /// for execution at program exit
-    pub struct ExitSequentializer<const INIT_ON_REF_FAILURE: bool>(ExitSequentializerBase);
+    pub struct ExitSequentializer<Tol>(ExitSequentializerBase<Tol>);
 
     mod reg {
 
         use super::{ExitSequentializer, Node};
-        use crate::{destructor, Finaly, Sequential};
+        use crate::{destructor, Finaly, Sequential, GeneratorTolerance};
 
         use crate::phase_locker::Mutex;
 
@@ -72,8 +73,8 @@ mod exit_manager {
         /// Store a reference of the static for execution of the
         /// finalize call back at program exit
         pub fn finalize_at_exit<
-            T: 'static + Sequential<Sequentializer = ExitSequentializer<IRF>> + Sync,
-            const IRF: bool,
+            T: 'static + Sequential<Sequentializer = ExitSequentializer<Tol>> + Sync,
+            Tol: 'static + GeneratorTolerance,
         >(
             st: &'static T,
         ) -> bool
@@ -101,7 +102,7 @@ mod exit_manager {
     /// This object is only used to for const initialization
     const MUTEX_INIT: Mutex<Option<&'static Node>> = Mutex::new(None);
 
-    impl<const IRF: bool> ExitSequentializer<IRF> {
+    impl<Tol> ExitSequentializer<Tol> {
         #[inline(always)]
         /// Create a new ExitSequentializer
         ///
@@ -115,28 +116,28 @@ mod exit_manager {
         }
     }
 
-    impl<const IRF: bool> AsRef<SubSequentializer> for ExitSequentializer<IRF> {
+    impl<Tol> AsRef<SubSequentializer<Tol>> for ExitSequentializer<Tol> {
         #[inline(always)]
-        fn as_ref(&self) -> &SubSequentializer {
+        fn as_ref(&self) -> &SubSequentializer<Tol> {
             &self.0.sub
         }
     }
-    impl<const IRF: bool> AsMut<SubSequentializer> for ExitSequentializer<IRF> {
+    impl<Tol> AsMut<SubSequentializer<Tol>> for ExitSequentializer<Tol> {
         #[inline(always)]
-        fn as_mut(&mut self) -> &mut SubSequentializer {
+        fn as_mut(&mut self) -> &mut SubSequentializer<Tol> {
             &mut self.0.sub
         }
     }
 
-    impl<const IRF: bool> Phased for ExitSequentializer<IRF> {
+    impl<Tol: GeneratorTolerance> Phased for ExitSequentializer<Tol> {
         #[inline(always)]
         fn phase(this: &Self) -> Phase {
             Phased::phase(&this.0.sub)
         }
     }
     // SAFETY: it is safe because it does implement synchronized locks
-    unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>, const IRF: bool>
-        Sequentializer<'a, T> for ExitSequentializer<IRF>
+    unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>, Tol: GeneratorTolerance+'static>
+        Sequentializer<'a, T> for ExitSequentializer<Tol>
     where
         T: 'static + Sync,
         T::Data: 'static + Finaly,
@@ -149,7 +150,7 @@ mod exit_manager {
             lock_nature: impl Fn(Phase) -> LockNature,
             hint:Phase
         ) -> LockResult<SyncReadPhaseGuard<'a, T::Data>, SyncPhaseGuard<'a, T::Data>> {
-            <SubSequentializer as Sequentializer<T>>::lock(st, lock_nature,hint)
+            <SubSequentializer<Tol> as Sequentializer<T>>::lock(st, lock_nature,hint)
         }
         #[inline(always)]
         fn try_lock(
@@ -157,33 +158,34 @@ mod exit_manager {
             lock_nature: impl Fn(Phase) -> LockNature,
             hint:Phase
         ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>> {
-            <SubSequentializer as Sequentializer<T>>::try_lock(st, lock_nature,hint)
+            <SubSequentializer<Tol> as Sequentializer<T>>::try_lock(st, lock_nature,hint)
         }
         #[inline(always)]
         fn lock_mut(st: &'a mut T) -> SyncPhaseGuard<'a, T::Data> {
-            <SubSequentializer as Sequentializer<T>>::lock_mut(st)
+            <SubSequentializer<Tol> as Sequentializer<T>>::lock_mut(st)
         }
     }
 
     // SAFETY: it is safe because it does implement synchronized locks
-    unsafe impl<T: 'static + Sequential<Sequentializer = Self>, const IRF: bool>
-        LazySequentializer<'static, T> for ExitSequentializer<IRF>
+    unsafe impl<T: 'static + Sequential<Sequentializer = Self>, Tol: GeneratorTolerance+'static>
+        LazySequentializer<'static, T> for ExitSequentializer<Tol>
     where
         T: 'static + Sync,
         T::Data: 'static + Finaly,
     {
+        const INITIALIZED_HINT: Phase = Phase::INITIALIZED_AND_REGISTERED;
+
         #[inline(always)]
         fn init(
             st: &'static T,
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Phase {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::init(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::init(
                 st,
                 shall_init,
                 init,
                 finalize_at_exit,
-                IRF,
             )
         }
         #[inline(always)]
@@ -192,7 +194,7 @@ mod exit_manager {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Phase {
-            <SubSequentializer as LazySequentializer<T>>::init_unique(st, shall_init, init)
+            <SubSequentializer<Tol> as LazySequentializer<T>>::init_unique(st, shall_init, init)
         }
         #[inline(always)]
         fn init_then_read_guard(
@@ -200,12 +202,11 @@ mod exit_manager {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Self::ReadGuard {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::init_then_read_guard(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::init_then_read_guard(
                 st,
                 shall_init,
                 init,
                 finalize_at_exit,
-                IRF,
             )
         }
         #[inline(always)]
@@ -214,12 +215,11 @@ mod exit_manager {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Self::WriteGuard {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::init_then_write_guard(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::init_then_write_guard(
                 st,
                 shall_init,
                 init,
                 finalize_at_exit,
-                IRF,
             )
         }
         #[inline(always)]
@@ -228,12 +228,11 @@ mod exit_manager {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Option<Self::ReadGuard> {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::try_init_then_read_guard(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::try_init_then_read_guard(
                 st,
                 shall_init,
                 init,
                 finalize_at_exit,
-                IRF,
             )
         }
         #[inline(always)]
@@ -242,17 +241,16 @@ mod exit_manager {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Option<Self::WriteGuard> {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::try_init_then_write_guard(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::try_init_then_write_guard(
                 st,
                 shall_init,
                 init,
                 finalize_at_exit,
-                IRF,
             )
         }
     }
 
-    impl<T: Sequential<Sequentializer = ExitSequentializer<IRF>>, const IRF: bool> OnExit for T
+    impl<T: Sequential<Sequentializer = ExitSequentializer<Tol>>, Tol: 'static + GeneratorTolerance> OnExit for T
     where
         T::Data: 'static + Finaly,
     {
@@ -260,7 +258,7 @@ mod exit_manager {
             Sequential::sequentializer(self).0.next.lock().take()
         }
         fn execute(&self) {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::finalize_callback(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::finalize_callback(
                 self,
                 Finaly::finaly,
             );
@@ -278,13 +276,13 @@ mod local_manager {
     use crate::lazy_sequentializer::UnSyncSequentializer as SubSequentializer;
     use crate::{
         Finaly, LazySequentializer, Phase, Phased, Sequential, Sequentializer,
-        FinalizableLazySequentializer
+        FinalizableLazySequentializer, GeneratorTolerance
     };
 
     use core::cell::Cell;
 
     use crate::phase_locker::{
-        LockNature, LockResult, UnSyncPhaseGuard, UnSyncPhaseLocker, UnSyncReadPhaseGuard,
+        LockNature, LockResult, UnSyncPhaseGuard, UnSyncPhaseLocker, UnSyncReadPhaseGuard
     };
 
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
@@ -299,8 +297,8 @@ mod local_manager {
 
     /// A sequentializer that store finalize_callback  
     /// for execution at thread exit
-    struct ThreadExitSequentializerBase {
-        sub:  SubSequentializer,
+    struct ThreadExitSequentializerBase<Tol> {
+        sub:  SubSequentializer<Tol>,
         next: Cell<Option<&'static Node>>,
     }
 
@@ -315,15 +313,15 @@ mod local_manager {
     #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
     /// A sequentializer that store finalize_callback  
     /// for execution at thread exit
-    pub struct ThreadExitSequentializer<const INIT_ON_REF_FAILURE: bool>(
-        ThreadExitSequentializerBase,
+    pub struct ThreadExitSequentializer<Tol>(
+        ThreadExitSequentializerBase<Tol>,
     );
 
     #[allow(clippy::declare_interior_mutable_const)]
     /// This object is only used to be copied
     const CELL_INIT: Cell<Option<&'static Node>> = Cell::new(None);
 
-    impl<const IRF: bool> ThreadExitSequentializer<IRF> {
+    impl<Tol> ThreadExitSequentializer<Tol> {
         #[inline(always)]
         /// Useless if the target object is not a static thread_local
         pub const fn new(l: UnSyncPhaseLocker) -> Self {
@@ -335,28 +333,28 @@ mod local_manager {
         }
     }
 
-    impl<const IRF: bool> AsRef<SubSequentializer> for ThreadExitSequentializer<IRF> {
+    impl<Tol> AsRef<SubSequentializer<Tol>> for ThreadExitSequentializer<Tol> {
         #[inline(always)]
-        fn as_ref(&self) -> &SubSequentializer {
+        fn as_ref(&self) -> &SubSequentializer<Tol> {
             &self.0.sub
         }
     }
-    impl<const IRF: bool> AsMut<SubSequentializer> for ThreadExitSequentializer<IRF> {
+    impl<Tol> AsMut<SubSequentializer<Tol>> for ThreadExitSequentializer<Tol> {
         #[inline(always)]
-        fn as_mut(&mut self) -> &mut SubSequentializer {
+        fn as_mut(&mut self) -> &mut SubSequentializer<Tol> {
             &mut self.0.sub
         }
     }
 
-    impl<const IRF: bool> Phased for ThreadExitSequentializer<IRF> {
+    impl<Tol: GeneratorTolerance> Phased for ThreadExitSequentializer<Tol> {
         #[inline(always)]
         fn phase(this: &Self) -> Phase {
             Phased::phase(&this.0.sub)
         }
     }
     // SAFETY: it is safe because it does implement locking panic
-    unsafe impl<'a, T: 'static + Sequential<Sequentializer = Self>, const IRF: bool>
-        Sequentializer<'a, T> for ThreadExitSequentializer<IRF>
+    unsafe impl<'a, T: 'static + Sequential<Sequentializer = Self>, Tol: GeneratorTolerance + 'static>
+        Sequentializer<'a, T> for ThreadExitSequentializer<Tol>
     where
         T::Data: 'static + Finaly,
     {
@@ -369,7 +367,7 @@ mod local_manager {
             lock_nature: impl Fn(Phase) -> LockNature,
             hint: Phase,
         ) -> LockResult<UnSyncReadPhaseGuard<'a, T::Data>, UnSyncPhaseGuard<'a, T::Data>> {
-            <SubSequentializer as Sequentializer<T>>::lock(st, lock_nature,hint)
+            <SubSequentializer<Tol> as Sequentializer<T>>::lock(st, lock_nature,hint)
         }
         #[inline(always)]
         fn try_lock(
@@ -377,32 +375,32 @@ mod local_manager {
             lock_nature: impl Fn(Phase) -> LockNature,
             hint: Phase,
         ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>> {
-            <SubSequentializer as Sequentializer<T>>::try_lock(st, lock_nature,hint)
+            <SubSequentializer<Tol> as Sequentializer<T>>::try_lock(st, lock_nature,hint)
         }
         #[inline(always)]
         fn lock_mut(st: &'a mut T) -> UnSyncPhaseGuard<'a, T::Data> {
-            <SubSequentializer as Sequentializer<T>>::lock_mut(st)
+            <SubSequentializer<Tol> as Sequentializer<T>>::lock_mut(st)
         }
     }
 
     // SAFETY: it is safe because it does implement circular initialization panic
-    unsafe impl<T: 'static + Sequential<Sequentializer = Self>, const IRF: bool>
-        LazySequentializer<'static, T> for ThreadExitSequentializer<IRF>
+    unsafe impl<T: 'static + Sequential<Sequentializer = Self>, Tol: GeneratorTolerance+'static>
+        LazySequentializer<'static, T> for ThreadExitSequentializer<Tol>
     where
         T::Data: 'static + Finaly,
     {
+        const INITIALIZED_HINT: Phase = Phase::INITIALIZED_AND_REGISTERED;
         #[inline(always)]
         fn init(
             st: &'static T,
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Phase {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::init(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::init(
                 st,
                 shall_proceed,
                 init,
                 finalize_at_thread_exit,
-                IRF,
             )
         }
         #[inline(always)]
@@ -411,7 +409,7 @@ mod local_manager {
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Phase {
-            <SubSequentializer as LazySequentializer<T>>::init_unique(st, shall_proceed, init)
+            <SubSequentializer<Tol> as LazySequentializer<T>>::init_unique(st, shall_proceed, init)
         }
         #[inline(always)]
         fn init_then_read_guard(
@@ -419,12 +417,11 @@ mod local_manager {
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Self::ReadGuard {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::init_then_read_guard(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::init_then_read_guard(
                 st,
                 shall_proceed,
                 init,
                 finalize_at_thread_exit,
-                IRF,
             )
         }
         #[inline(always)]
@@ -433,12 +430,11 @@ mod local_manager {
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Self::WriteGuard {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::init_then_write_guard(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::init_then_write_guard(
                 st,
                 shall_proceed,
                 init,
                 finalize_at_thread_exit,
-                IRF,
             )
         }
         #[inline(always)]
@@ -447,12 +443,11 @@ mod local_manager {
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Option<Self::ReadGuard> {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::try_init_then_read_guard(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::try_init_then_read_guard(
                 st,
                 shall_proceed,
                 init,
                 finalize_at_thread_exit,
-                IRF,
             )
         }
         #[inline(always)]
@@ -461,19 +456,18 @@ mod local_manager {
             shall_proceed: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'static <T as Sequential>::Data),
         ) -> Option<Self::WriteGuard> {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::try_init_then_write_guard(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::try_init_then_write_guard(
                 st,
                 shall_proceed,
                 init,
                 finalize_at_thread_exit,
-                IRF,
             )
         }
     }
 
     impl<
-            T: 'static + Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,
-            const IRF: bool,
+            T: 'static + Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
+            Tol: 'static + GeneratorTolerance,
         > OnExit for T
     where
         T::Data: 'static + Finaly,
@@ -482,7 +476,7 @@ mod local_manager {
             Sequential::sequentializer(self).0.next.take()
         }
         fn execute(&self) {
-            <SubSequentializer as FinalizableLazySequentializer<T>>::finalize_callback(
+            <SubSequentializer<Tol> as FinalizableLazySequentializer<T>>::finalize_callback(
                 self,
                 Finaly::finaly,
             );
@@ -492,7 +486,7 @@ mod local_manager {
     #[cfg(coff_thread_at_exit)]
     mod windows {
         use super::{Node, ThreadExitSequentializer};
-        use crate::{Finaly, Sequential};
+        use crate::{Finaly, Sequential,GeneratorTolerance};
         use core::cell::Cell;
         use core::ptr::NonNull;
 
@@ -548,8 +542,8 @@ mod local_manager {
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
         pub fn finalize_at_thread_exit<
-            T: Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,
-            const IRF: bool,
+            T: Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
+            Tol: GeneratorTolerance,
         >(
             st: &'static T,
         ) -> bool
@@ -571,7 +565,7 @@ mod local_manager {
     #[cfg(cxa_thread_at_exit)]
     mod cxa {
         use super::{Node, ThreadExitSequentializer};
-        use crate::{Finaly, Sequential};
+        use crate::{Finaly, Sequential, GeneratorTolerance};
         use core::cell::Cell;
         use core::ptr::null_mut;
 
@@ -618,8 +612,8 @@ mod local_manager {
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
         pub fn finalize_at_thread_exit<
-            T: 'static + Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,
-            const IRF: bool,
+            T: 'static + Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
+            Tol: 'static+GeneratorTolerance,
         >(
             st: &'static T,
         ) -> bool
@@ -642,7 +636,7 @@ mod local_manager {
     #[cfg(pthread_thread_at_exit)]
     mod pthread {
         use super::{Node, ThreadExitSequentializer};
-        use crate::{Finaly, Sequential};
+        use crate::{Finaly, Sequential, GeneratorTolerance};
 
         use core::cell::Cell;
         use core::ffi::c_void;
@@ -716,8 +710,8 @@ mod local_manager {
             Some(key as pthread_key_t)
         }
         fn register_on_thread_exit<
-            T: Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,
-            const IRF: bool,
+            T: Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
+            Tol: GeneratorTolerance,
         >(
             st: &'static T,
             key: pthread_key_t,
@@ -749,8 +743,8 @@ mod local_manager {
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
         pub fn finalize_at_thread_exit<
-            T: Sequential<Sequentializer = ThreadExitSequentializer<IRF>>,
-            const IRF: bool,
+            T: Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
+            Tol: GeneratorTolerance,
         >(
             st: &'static T,
         ) -> bool

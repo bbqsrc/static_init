@@ -5,25 +5,33 @@ use synchronised_bench::{synchro_bench_input, Config};
 
 mod tick_counter;
 
-use static_init::{dynamic, Generator, Lazy, LockedLazy};
+use static_init::{dynamic, Generator, Lazy, LockedLazy, GeneratorTolerance};
 
 use parking_lot::{
     lock_api::{MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
 
+use lazy_static::lazy::Lazy as STLazy;
+
+use double_checked_cell::DoubleCheckedCell;
+
 use criterion::{
     criterion_group, criterion_main, measurement::WallTime, AxisScale, BatchSize, BenchmarkGroup,
     BenchmarkId, Criterion, PlotConfiguration,
 };
-
-use lazy_static::lazy::Lazy as STLazy;
 
 use std::time::Duration;
 
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 struct Xx;
+
+impl GeneratorTolerance for Xx {
+    const INIT_FAILURE: bool = true;
+    const FINAL_REGISTRATION_FAILURE: bool = false;
+}
+
 impl Generator<i32> for Xx {
     #[inline(always)]
     fn generate(&self) -> i32 {
@@ -41,6 +49,12 @@ fn occupy_for(duration: Duration) {
 }
 
 struct W(Duration);
+
+impl GeneratorTolerance for W {
+    const INIT_FAILURE: bool = true;
+    const FINAL_REGISTRATION_FAILURE: bool = false;
+}
+
 impl Generator<i32> for W {
     #[inline(always)]
     fn generate(&self) -> i32 {
@@ -280,6 +294,14 @@ fn bench_init(c: &mut Criterion) {
     };
 
     do_bench(&mut gp, "static_lazy::Lazy", init, access);
+
+    let init = || DoubleCheckedCell::<i32>::new();
+
+    let access = |l: &DoubleCheckedCell<i32>| {
+        *l.get_or_init(|| 33)
+    };
+
+    do_bench(&mut gp, "double_checked_cell", init, access);
 
     gp.finish();
 
@@ -548,6 +570,7 @@ fn bench_access(c: &mut Criterion) {
 
     gp.finish();
 
+
     let mut gp = c.benchmark_group("Access Write Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
@@ -561,6 +584,7 @@ fn bench_access(c: &mut Criterion) {
     do_bench(&mut gp, "Locked Lazy PkLot", rw_init, |l| *l.write());
 
     gp.finish();
+
 
     let mut gp = c.benchmark_group("Fast Read Access Locked Thread Scaling");
 
@@ -590,6 +614,7 @@ fn bench_access(c: &mut Criterion) {
 
     gp.finish();
 
+
     let mut gp = c.benchmark_group("Fast Write Access Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
@@ -617,6 +642,7 @@ fn bench_access(c: &mut Criterion) {
     });
 
     gp.finish();
+
 
     let mut gp = c.benchmark_group("Access Thread Scaling");
 
@@ -649,6 +675,18 @@ fn bench_access(c: &mut Criterion) {
 
     do_bench(&mut gp, "static_lazy::Lazy", init, access);
 
+    let init = || {
+        let v = DoubleCheckedCell::<i32>::new();
+        v.get_or_init(|| 33);
+        v
+    };
+
+    let access = |l: &DoubleCheckedCell<i32>| {
+        *l.get_or_init(|| 33)
+    };
+
+    do_bench(&mut gp, "double_checked_cell", init, access);
+
     gp.finish();
 }
 
@@ -663,6 +701,11 @@ fast_bench_heavy
 criterion_main! {multi}
 
 struct Yy(usize);
+
+impl GeneratorTolerance for Yy {
+    const INIT_FAILURE: bool = true;
+    const FINAL_REGISTRATION_FAILURE: bool = false;
+}
 
 impl Generator<Vec<usize>> for Yy {
     fn generate(&self) -> Vec<usize> {

@@ -6,10 +6,31 @@
 
 Safe non const initialized statics and safe mutable statics with unbeatable performance.
 
-Also provides code execution and program start-up/exit and unsafe statics that are non const
-initialized at program start-up.
+Also provides code execution at program start-up/exit.
 
-# Lesser Lazy Statics
+# Feature
+
+[x] non const initialized statics.
+
+[x] statics dropped at program exit.
+
+[x] safe mutable lazy statics (locked).
+
+[x] every feature with `no_std` support.
+
+[x] unbeatable performance, can be order of magnitude faster that any other solution.
+
+[x] registration of code execution at program exit without allocation (as opposed to libc::at_exit).
+
+[x] ergonomic syntax.
+
+[x] sound and safe.
+
+[x] on nigtly, `thread_locals` and safe mutable `thread_locals`, guaranteed to be
+    dropped at thread exit with the lowest possible overhead compared to
+    what is provided by system library thread support or the standard library!
+
+# Fastest Lazy Statics
 
 This crate provides *lazy statics* on all plateforms.
 
@@ -22,180 +43,152 @@ use static_init::{dynamic};
 
 #[dynamic] 
 static L1: Vec<i32> = vec![1,2,3,4,5,6];
+
+#[dynamic(drop)] 
+static L2: Vec<i32> = {let v = L1.clone(); v.push(43); v};
 ```
 
-## Unbeatable performance
+Those static initialization and access can be 10x faster than
+what is provided by the standard library or other crates.
 
+# Safe Mutable Statics
 
-
-
-# Dynamic statics: statics initialized at program startup
-
-On plateforms that support it (unixes, mac, windows), this crate provides *dynamic statics*: statics that are
-initialized at program startup. This feature is `no_std`.
+Just add the `mut` keyword to have mutable locked statics.
 
 ```rust
 use static_init::{dynamic};
 
-#[dynamic(0)]
-//equivalent to #[dynamic(init=0)]
-static D1: Vec<i32> = vec![1,2,3];
+#[dynamic] 
+static mut L1: Vec<i32> = vec![1,2,3,4,5,6];
 
-assert_eq!(unsafe{D1[0]}, 1);
+#[dynamic(drop)] 
+static mut L2: Vec<i32> = {
+	//get a unique lock:
+	let lock = L1.write(); 
+	lock.push(42); 
+	lock.clone()
+	};
 ```
-As can be seen above, even if D1 is not mutable, access to it must be performed in unsafe
-blocks. The reason is that during startup phase, accesses to *dynamic statics* may cause
-*undefined behavior*: *dynamic statics* may be in a zero initialized state.
 
-To prevent such hazardeous accesses, on unixes and window plateforms, a priority can be
-specified. Dynamic static initializations with higher priority are sequenced before dynamic
-static initializations with lower priority. Dynamic static initializations with the same
-priority are underterminately sequenced.
+Those statics use an *apdaptative phase locker* that gives them surprising performance.
+
+# Classical Lazy statics 
+
+By default, initialization of statics declared with the `dynamic` is forced before main
+start on plateform that support it. If *lazyness* if a required feature, the attribute argument
+`lazy` can be used.
 
 ```rust
 use static_init::{dynamic};
 
-// D2 initialization is sequenced before D1 initialization
-#[dynamic(0)]
-static mut D1: Vec<i32> = unsafe{D2.clone()};
+#[dynamic(lazy)] 
+static L1: Vec<i32> = vec![1,2,3,4,5,6];
 
+#[dynamic(lazy,drop)] 
+static mut L3: Vec<i32> =L1.clone(); 
+```
+
+Even if the static is not mut, dropped statics are always locked. There is also a `finalize` attribute
+argument that can be used to run a "drop" equivalent at program exit but leaves the static unchanged. 
+
+Those lazy also provide superior performances compared to other solutions.
+
+# `no_std` support
+
+On linux or Reddox (TBC) this library is `no_std`. The library use directly the `futex` system call
+to place thread in a wait queue when needed.
+
+On other plateform `no_std` support can be gain by using the `spin_loop` feature. NB that lock strategies
+based on spin loop are not system-fair and cause entire system slow-down.
+
+# Performant
+
+## Under the hood
+
+The statics and mutable statics declared with `dynamic` attribute use what we
+call an  *adaptative phase locker*. This is a lock that is in between a `Once`
+and a `RwLock`. It is carefully implemented as a variation over the `RwLock`
+algorithms of `parking_lot` crate with other tradeoff and different
+capabilities. 
+
+It is qualified *adaptative* because the decision to take a read lock,
+a write lock or not to take a lock is performed while the lock attempt is
+performed and a thread may attempt to get a write lock but decides to be waked
+as the owner of a read lock if it is about to be placed in a wait queue.
+
+Statics and thread locals that need to register themselve for destruction at
+program or thread exit are implemented as members of an intrusive list. This
+implementation avoid heap memory allocation caused by system library support
+(`libc::at_exit`, `glibc::__cxa_at_thread_exit`, pthread... registers use heap
+memory allocation), and it avoid to fall on system library implementation
+limits that may cause `thread_locals` declared with `std::thread_locals` not to
+be dropped. 
+
+Last but not least of the optimization, on windows and unixes (but not Mac yet)
+`dynamic` statics initialization is forced before main start. This fact unable
+a double check with a single boolean for all statics that is much faster other
+double check solution. 
+
+## Benchmark results
+
+# Thread local support
+
+On nightly `thread_local` support can be enable with the feature
+`thread_local`. The attribute `dynamic` can be used with thread locals as with
+regular statics. In this case, the mutable `thread_local` will behave similarly
+to a RefCell with the same syntax as mutable lazy statics.
+
+```rust
+#[dynamic(drop)] //guaranteed to be drop: no leak contrarily to std::thread_local
+#[thread_local]
+static V: Vec<i32> = vec![1,1,2,3,5];
+
+#[dynamic]
+#[thread_local]
+static mut W: Vec<i32> = V.clone();
+
+assert_ne!(W.read().len(), 0);
+assert_ne!(W.try_read().unwrap().len(), 0);
+```
+
+# Unsafe Low level 
+
+## Unchecked statics initiliazed at program start up
+
+The library also provides unchecked statics, whose initialization is run before main start. Those statics
+does not imply any memory overhead neither execution time overhead. This is the responsability of the coder
+to be sure not to access those static before they are initialized.
+
+```rust
 #[dynamic(10)]
-static D2: Vec<i32> = vec![1,2,3];
+static A: Vec<i32> = vec![1,2,3];
+
+#[dynamic(0,drop)]
+static mut B: Vec<i32> = unsafe {A.clone()};
 ```
 
-*Dynamic statics* can be dropped at program destruction phase: they are dropped after main
-exit:
+Even if A is not declared mutable, the attribute macro convert it into a mutable static to ensure that every
+access to it is unsafe.
+
+The number indicates the priority, the larger the number, the sooner the static will be initialized.
+
+Those statics can also be droped at program exit with the `drop` attribute argument.
+
+## Program constructor destructor 
+
+It is possible to register fonction for execution before main start/ after main returns.
 
 ```rust
-use static_init::{dynamic};
-
-// D2 initialization is sequenced before D1 initialization
-// D1 drop is sequenced before D2 drop.
-#[dynamic(init=0,drop=0)]
-static mut D1: Vec<i32> = unsafe {D2.clone()};
-
-#[dynamic(init=10,drop=10)]
-static D2: Vec<i32> = vec![1,2,3];
-```
-The priority act on drop in reverse order. *Dynamic statics* drops with a lower priority are
-sequenced before *dynamic statics* drops with higher priority.
-
-Finally, if the feature `atexit` is enabled, *dynamic statics* drop can be registered with
-`libc::atexit`. *lazy dynamic statics* and *dynamic statics* with `drop_reverse` attribute
-argument are destroyed in the reverse order of their construction. Functions registered with
-`atexit` are executed before program destructors and drop of *dynamic statics* that use the
-`drop` attribute argument. Drop is registered with at `atexit` if no priority if given to the
-`drop` attribute argument.
-
-```rust
-use static_init::{dynamic};
-
-//D1 is dropped before D2 because
-//it is initialized before D2
-#[dynamic(lazy,drop)]
-static D1: Vec<i32> = vec![0,1,2];
-
-#[dynamic(10,drop)]
-static D2: Vec<i32> = unsafe{D1.clone()};
-
-//D3 is initilized after D1 and D2 initializations
-//and it is dropped after D1 and D2 drops
-#[dynamic(5,drop)]
-static D3: Vec<i32> = unsafe{D1.clone()};
-```
-
-# Constructor and Destructor
-
-On plateforms that support it (unixes, mac, windows), this crate provides a way to declare
-*constructors*: a function called before main is called. This feature is `no_std`.
-
-```rust
-use static_init::{constructor};
-
-//called before main
-#[constructor] //equivalent to #[constructor(0)]
-extern "C" fn some_init() {}
-```
-
-Constructors also support priorities. Sequencement rules applies also between constructor calls and
-between *dynamic statics* initialization and *constructor* calls.
-
-*destructors* are called at program destruction. They also support priorities.
-
-```rust
-use static_init::{constructor, destructor};
-
-//called before some_init
 #[constructor(10)]
-extern "C" fn pre_init() {}
+extern "C" fn run_first() {}
 
-//called before main
-#[constructor]
-extern "C" fn some_init() {}
+#[constructor(0)]
+extern "C" fn then_run() {}
 
-//called after main
-#[destructor]
-extern "C" fn first_destructor() {}
+#[destructor(0)]
+extern "C" fn pre_finish() {}
 
-//called after first_destructor
 #[destructor(10)]
-extern "C" fn last_destructor() {}
+extern "C" fn finaly() {}
 ```
 
-# Thread Local Support
-
-Variable declared with `#[dynamic(lazy)]` can also be declared `#[thread_local]`. These
-variable will behave as regular *lazy statics*.
-
-```rust
-#[thread_local]
-#[dynamic(lazy)]
-static mut X: Vec<i32> = vec![1,2,3];
-```
-
-These variables can also be droped on thread exit.
-
-```rust
-#[thread_local]
-#[dynamic(lazy,drop)]
-static X: Vec<i32> = vec![1,2,3];
-
-assert!(unsafe{X[1] == 2});
-```
-
-Accessing a thread local *lazy statics* that should drop during the phase where thread_locals are
-droped may cause *undefined behavior*. For this reason any access to a thread local lazy static
-that is dropped will require an unsafe block, even if the static is const.
-
-# Debuging initialization order
-
-If the feature `debug_order` is enabled, attempts to access `dynamic statics` that are
-uninitialized or whose initialization is undeterminately sequenced with the access will cause
-a panic with a message specifying which statics was tentatively accessed and how to change this
-*dynamic static* priority to fix this issue.
-
-Run `cargo test` in this crate directory to see message examples.
-
-All implementations of lazy statics may suffer from circular initialization dependencies. Those
-circular dependencies will cause either a dead lock or an infinite loop. If the feature `debug_order` is
-enabled, atemp are made to detect those circular dependencies. In most case they will be detected.
-
-
-
-# Comparisons with other crates
-
-## Comparison of *Lesser lazy statics* with [lazy_static][1] or `std::lazy::Lazy`.
- - lazy_static only provides const statics;
- - there are no cyclic initialization detection;
- - Each access to lazy_static statics costs 2ns;
- - syntax is more verbose.
-
-## *dynamic statics* with [ctor][2]
- - ctor only provides const statics;
- - ctor does not provide priorities;
- - ctor unsafety is unsound;
- - ctor does not support mutable statics;
- - ctor does not provide a way to detect access to uninitialized data.
-
-[1]: https://crates.io/crates/lazy_static
-[2]: https://crates.io/crates/ctor

@@ -17,7 +17,6 @@ use std::panic::RefUnwindSafe;
 
 /// Policy for lazy initialization
 pub trait LazyPolicy {
-    const INITIALIZED: Phase;
     /// shall the initialization be performed (tested at each access)
     fn shall_init(_: Phase) -> bool;
     /// Is the object accessible in phase `p`
@@ -601,7 +600,7 @@ where
         <M as Sequentializer<'a, GenericLockedLazySeq<T, M>>>::try_lock(&this.seq, |_| {
             LockNature::Read
         },
-        S::INITIALIZED
+        M::INITIALIZED_HINT
         )
         .map(|l| {
             if let LockResult::Read(l) = l {
@@ -645,7 +644,7 @@ where
             <M as Sequentializer<'a, GenericLockedLazySeq<T, M>>>::lock(&this.seq, |_| {
                 LockNature::Read
             },
-            S::INITIALIZED
+            M::INITIALIZED_HINT
             )
         {
             ReadGuard(l)
@@ -683,7 +682,7 @@ where
         <M as Sequentializer<'a, GenericLockedLazySeq<T, M>>>::try_lock(&this.seq, |_| {
             LockNature::Write
         },
-        S::INITIALIZED
+        M::INITIALIZED_HINT
         )
         .map(|l| {
             if let LockResult::Write(l) = l {
@@ -728,7 +727,7 @@ where
             <M as Sequentializer<'a, GenericLockedLazySeq<T, M>>>::lock(&this.seq, |_| {
                 LockNature::Write
             },
-            S::INITIALIZED
+            M::INITIALIZED_HINT
             )
         {
             WriteGuard(l)

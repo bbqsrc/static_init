@@ -29,7 +29,7 @@ spin_loop = []
 test_no_global_lazy_hint = []
 
 
-default = ["thread_local","debug_order","spin_loop"]
+default = ["thread_local"]
 
 [dependencies]
 bitflags = "1"
@@ -47,6 +47,7 @@ libc = "0.2"
 parking_lot = "0.11"
 criterion = {version = "0.3", features = ["html_reports", "real_blackbox"]}
 crossbeam = "0.8"
+double-checked-cell = {version = "2.1", features = ["parking_lot_mutex"]}
 
 [[bench]]
 name = "multi_threaded"
