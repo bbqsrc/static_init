@@ -54,14 +54,14 @@ where
 
     if !Tol::INIT_FAILURE || cur.is_empty() {
 
-        debug_assert!(!cur.intersects(Phase::INITIALIZATION_SKIPED));
+        debug_assert!(cur.is_empty());
 
-        let registration_failed = cur | Phase::REGISTRATION_PANICKED | Phase::INITIALIZATION_SKIPED;
+        let registration_failed = Phase::REGISTRATION_PANICKED | Phase::INITIALIZATION_SKIPED;
 
         if unsafe { phase_guard.transition(reg, cur, registration_failed) } {
-            registration_finished = cur | Phase::REGISTERED;
+            registration_finished = Phase::REGISTERED;
         } else {
-            registration_finished = cur | Phase::REGISTRATION_REFUSED;
+            registration_finished = Phase::REGISTRATION_REFUSED;
         }
 
     } else {

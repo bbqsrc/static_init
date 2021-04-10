@@ -4,12 +4,11 @@ use crate::phase_locker::{
 };
 use crate::{
     generic_lazy::{
-        AccessError, DropedUnInited, GenericLazy, GenericLockedLazy, LazyData, LazyPolicy, ReadGuard,
-        UnInited, WriteGuard, Primed, 
+        AccessError, DropedUnInited, GenericLazy, GenericLockedLazy, LazyData, LazyPolicy, Primed,
+        ReadGuard, UnInited, WriteGuard,
     },
     lazy_sequentializer::UnSyncSequentializer,
-    Finaly, Generator, Phase, Phased, StaticInfo,
-    GeneratorTolerance, Uninit
+    Finaly, Generator, GeneratorTolerance, Phase, Phased, StaticInfo, Uninit,
 };
 
 #[cfg(feature = "thread_local")]
@@ -17,18 +16,20 @@ use crate::exit_sequentializer::ThreadExitSequentializer;
 
 use crate::{exit_sequentializer::ExitSequentializer, lazy_sequentializer::SyncSequentializer};
 
-use core::ops::{Deref, DerefMut};
 use core::marker::PhantomData;
+use core::ops::{Deref, DerefMut};
 
-pub struct InitializedChecker<T>(PhantomData<T>);
+pub struct InitializedCheckerGeneric<T, const REG_ALWAYS: bool>(PhantomData<T>);
 
-impl<T:GeneratorTolerance> LazyPolicy for InitializedChecker<T> {
+impl<Tol: GeneratorTolerance, const REG_ALWAYS: bool> LazyPolicy
+    for InitializedCheckerGeneric<Tol, REG_ALWAYS>
+{
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
-        if T::INIT_FAILURE {
+        if Tol::INIT_FAILURE {
             !p.intersects(Phase::INITIALIZED)
         } else {
-            p.is_empty() 
+            p.is_empty()
         }
     }
     #[inline(always)]
@@ -37,12 +38,10 @@ impl<T:GeneratorTolerance> LazyPolicy for InitializedChecker<T> {
     }
     #[inline(always)]
     fn post_init_is_accessible(p: Phase) -> bool {
-        if T::INIT_FAILURE {
-            true //Otherwise the thread has attempted initialization
-                 //and a panic was thrown, so that this point is not
-                 //reached
+        if Tol::INIT_FAILURE && (REG_ALWAYS || Tol::FINAL_REGISTRATION_FAILURE) {
+            Self::initialized_is_accessible(p)
         } else {
-            p.intersects(Phase::INITIALIZED)
+            Self::is_accessible(p)
         }
     }
     #[inline(always)]
@@ -51,46 +50,49 @@ impl<T:GeneratorTolerance> LazyPolicy for InitializedChecker<T> {
     }
 }
 
-pub struct InitializedAndNonFinalizedChecker<T>(PhantomData<T>);
+pub struct InitializedAndNonFinalizedCheckerGeneric<T, const REG_ALWAYS: bool>(PhantomData<T>);
 
-impl<Tol:GeneratorTolerance> LazyPolicy for InitializedAndNonFinalizedChecker<Tol> {
+impl<Tol: GeneratorTolerance, const REG_ALWAYS: bool> LazyPolicy
+    for InitializedAndNonFinalizedCheckerGeneric<Tol, REG_ALWAYS>
+{
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
         if Tol::INIT_FAILURE {
             !p.intersects(Phase::INITIALIZED)
         } else {
-            p.is_empty() 
+            p.is_empty()
         }
     }
     #[inline(always)]
     fn is_accessible(p: Phase) -> bool {
-        !p.intersects(Phase::FINALIZED|Phase::FINALIZATION_PANICKED) && p.intersects(Phase::INITIALIZED)
+        p.intersects(Phase::INITIALIZED) && Self::initialized_is_accessible(p)
     }
     #[inline(always)]
     fn post_init_is_accessible(p: Phase) -> bool {
-        if Tol::INIT_FAILURE {
-            !p.intersects(Phase::FINALIZED|Phase::FINALIZATION_PANICKED)
+        if Tol::INIT_FAILURE && (REG_ALWAYS || Tol::FINAL_REGISTRATION_FAILURE) {
+            Self::initialized_is_accessible(p)
         } else {
-            !p.intersects(Phase::FINALIZED|Phase::FINALIZATION_PANICKED) && p.intersects(Phase::INITIALIZED)
+            Self::is_accessible(p)
         }
     }
     #[inline(always)]
     fn initialized_is_accessible(p: Phase) -> bool {
-        !p.intersects(Phase::FINALIZED|Phase::FINALIZATION_PANICKED)
+        !p.intersects(Phase::FINALIZED | Phase::FINALIZATION_PANICKED)
     }
 }
-//pub struct InitializedRearmingChecker;
-//impl LazyPolicy for InitializedRearmingChecker {
-//    #[inline(always)]
-//    fn lock_nature(p: Phase) -> bool {
-//        if p.intersects(Phase::INITIALIZED) && !p.intersects(Phase::FINALIZED) {
-//            false
-//        } else {
-//            assert!(!p.intersects(Phase::INITIALIZATION_SKIPED));
-//            true
-//        }
-//    }
-//}
+
+type InitializedChecker<T> = InitializedCheckerGeneric<T, true>;
+
+#[cfg(feature="thread_local")]
+type InitializedSoftFinalizedChecker<T> = InitializedCheckerGeneric<T, false>;
+
+#[cfg(feature="thread_local")]
+type InitializedHardFinalizedChecker<T> = InitializedAndNonFinalizedCheckerGeneric<T, false>;
+
+type InitializedSoftFinalizedRegAlwaysChecker<T> = InitializedCheckerGeneric<T, true>;
+
+type InitializedHardFinalizedRegAlwaysChecker<T> = InitializedAndNonFinalizedCheckerGeneric<T, true>;
+
 
 /// Helper to access static lazy associated functions
 pub trait LazyAccess: Sized {
@@ -421,13 +423,13 @@ The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
-impl_lazy! {static LazyFinalize,ExitSequentializer<G>,InitializedChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
+impl_lazy! {static LazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedRegAlwaysChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable static."
 }
 
-impl_lazy! {global LesserLazyFinalize,ExitSequentializer<G>,InitializedChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
+impl_lazy! {global LesserLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedRegAlwaysChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_lazy,finalize)]. \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -439,13 +441,13 @@ impl_lazy! {UnSyncLazy,UnSyncSequentializer<G>,InitializedChecker,UnInited::<T>,
 }
 
 #[cfg(feature = "thread_local")]
-impl_lazy! {static UnSyncLazyFinalize,ThreadExitSequentializer<G>,InitializedChecker,UnInited::<T>,UnSyncPhaseLocker,T:Finaly,
+impl_lazy! {static UnSyncLazyFinalize,ThreadExitSequentializer<G>,InitializedSoftFinalizedChecker,UnInited::<T>,UnSyncPhaseLocker,T:Finaly,
 "The actual type of thread_local statics attributed with #[dynamic(lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
 }
 #[cfg(feature = "thread_local")]
-impl_lazy! {static UnSyncLazyDroped,ThreadExitSequentializer<G>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>,UnSyncPhaseLocker,
+impl_lazy! {static UnSyncLazyDroped,ThreadExitSequentializer<G>,InitializedHardFinalizedChecker,DropedUnInited::<T>,UnSyncPhaseLocker,
 "The actual type of thread_local statics attributed with #[dynamic(lazy,drop)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
@@ -968,7 +970,6 @@ macro_rules! impl_mut_lazy {
             pub fn primed_read_non_initializing(&self) -> Result<ReadGuard<$gd::<'_,$data>>,ReadGuard<$gd::<'_,$data>>> {
                let l = unsafe{GenericLockedLazy::read_lock_unchecked(as_static(&self.__private))};
                let p = Phased::phase(&l);
-               dbg!(p);
                if <$checker::<G>>::is_accessible(p) {
                    Ok(l)
                } else {
@@ -1121,29 +1122,29 @@ The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
-impl_mut_lazy! {static LockedLazyFinalize,ExitSequentializer<G>,InitializedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard, T:Finaly,G:Sync,
+impl_mut_lazy! {static LockedLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedRegAlwaysChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard, T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(mut_lazy,finalize)]"
 }
 
-impl_mut_lazy! {global LesserLockedLazyFinalize,ExitSequentializer<G>,InitializedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
+impl_mut_lazy! {global LesserLockedLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedRegAlwaysChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
-impl_mut_lazy! {static LockedLazyDroped,ExitSequentializer<G>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+impl_mut_lazy! {static LockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedRegAlwaysChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
 "The actual type of statics attributed with #[dynamic(mut_lazy,finalize)]"
 }
 
-impl_mut_lazy! {primed_static PrimedLockedLazyDroped,ExitSequentializer<G>,InitializedAndNonFinalizedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Uninit, G:Sync,
+impl_mut_lazy! {primed_static PrimedLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedRegAlwaysChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Uninit, G:Sync,
 "The actual type of statics attributed with #[dynamic(primed,drop)]"
 }
 
-impl_mut_lazy! {const_static ConstLockedLazyDroped,ExitSequentializer<G>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+impl_mut_lazy! {const_static ConstLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedRegAlwaysChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
 "The actual type of statics attributed with #[dynamic(mut_lazy,finalize)]"
 }
 
-impl_mut_lazy! {global LesserLockedLazyDroped,ExitSequentializer<G>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+impl_mut_lazy! {global LesserLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedRegAlwaysChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
 "The actual type of statics attributed with #[dynamic(quasi_mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe because this kind of static \
@@ -1161,20 +1162,20 @@ impl_mut_lazy! {primed_thread_local UnSyncPrimedLockedLazy,UnSyncSequentializer<
 The method (new)[Self::new] is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
 }
 #[cfg(feature = "thread_local")]
-impl_mut_lazy! {primed_thread_local UnSyncPrimedLockedLazyDroped,ThreadExitSequentializer<G>,InitializedAndNonFinalizedChecker,Primed::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard, T:Uninit,
+impl_mut_lazy! {primed_thread_local UnSyncPrimedLockedLazyDroped,ThreadExitSequentializer<G>,InitializedHardFinalizedChecker,Primed::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard, T:Uninit,
 "The actual type of thread_local statics attributed with #[dynamic(primed,drop)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
 }
 
 #[cfg(feature = "thread_local")]
-impl_mut_lazy! {thread_local UnSyncLockedLazyFinalize,ThreadExitSequentializer<G>,InitializedChecker,UnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,T:Finaly,
+impl_mut_lazy! {thread_local UnSyncLockedLazyFinalize,ThreadExitSequentializer<G>,InitializedSoftFinalizedChecker,UnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,T:Finaly,
 "The actual type of thread_local statics attributed with #[dynamic(mut_lazy,finalize)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
 }
 #[cfg(feature = "thread_local")]
-impl_mut_lazy! {thread_local UnSyncLockedLazyDroped,ThreadExitSequentializer<G>,InitializedAndNonFinalizedChecker,DropedUnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,
+impl_mut_lazy! {thread_local UnSyncLockedLazyDroped,ThreadExitSequentializer<G>,InitializedHardFinalizedChecker,DropedUnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,
 "The actual type of thread_local statics attributed with #[dynamic(mut_lazy,drop)] \
 \
 The method (new)[Self::new] is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
@@ -1326,7 +1327,8 @@ mod test_quasi_lazy_finalize {
     impl Finaly for A {
         fn finaly(&self) {}
     }
-    static _X: LesserLazyFinalize<A, fn() -> A> = unsafe { LesserLazyFinalize::new_static(|| A(22)) };
+    static _X: LesserLazyFinalize<A, fn() -> A> =
+        unsafe { LesserLazyFinalize::new_static(|| A(22)) };
     #[test]
     fn test() {
         assert_eq!((*_X).0, 22);
@@ -1384,12 +1386,12 @@ mod test_primed_mut_lazy_droped {
             self.0 = 0
         }
     }
-    static _X: PrimedLockedLazyDroped<A> = PrimedLockedLazyDroped::new_static(A(42),|| A(22));
+    static _X: PrimedLockedLazyDroped<A> = PrimedLockedLazyDroped::new_static(A(42), || A(22));
     #[test]
     fn test() {
         match _X.primed_read_non_initializing() {
             Ok(_) => panic!("Unexpected"),
-            Err(l) => assert_eq!(l.0,42),
+            Err(l) => assert_eq!(l.0, 42),
         }
         assert_eq!(_X.read().0, 22);
         _X.write().0 = 33;
@@ -1400,12 +1402,12 @@ mod test_primed_mut_lazy_droped {
 #[cfg(test)]
 mod test_primed_mut_lazy {
     use super::PrimedLockedLazy;
-    static _X: PrimedLockedLazy<u32> = PrimedLockedLazy::new_static(42,|| 22);
+    static _X: PrimedLockedLazy<u32> = PrimedLockedLazy::new_static(42, || 22);
     #[test]
     fn test() {
         match _X.primed_read_non_initializing() {
             Ok(_) => panic!("Unexpected"),
-            Err(l) => assert_eq!(*l,42),
+            Err(l) => assert_eq!(*l, 42),
         }
         assert_eq!(*_X.read(), 22);
         *_X.write() = 33;
@@ -1504,12 +1506,13 @@ mod test_unsync_mut_lazy {
 mod test_unsync_mut_primed_lazy {
     use super::UnSyncPrimedLockedLazy;
     #[thread_local]
-    static _X: UnSyncPrimedLockedLazy<u32> = unsafe{UnSyncPrimedLockedLazy::new_static(42,|| 22)};
+    static _X: UnSyncPrimedLockedLazy<u32> =
+        unsafe { UnSyncPrimedLockedLazy::new_static(42, || 22) };
     #[test]
     fn test() {
         match _X.primed_read_non_initializing() {
             Ok(x) => panic!("Unexpected {}", *x),
-            Err(l) => assert_eq!(*l,42),
+            Err(l) => assert_eq!(*l, 42),
         }
         assert_eq!(*_X.read(), 22);
         *_X.write() = 33;
@@ -1528,12 +1531,13 @@ mod test_unsync_mut_primed_lazy_droped {
         }
     }
     #[thread_local]
-    static _X: UnSyncPrimedLockedLazyDroped<A> = unsafe{UnSyncPrimedLockedLazyDroped::new_static(A(42),|| A(22))};
+    static _X: UnSyncPrimedLockedLazyDroped<A> =
+        unsafe { UnSyncPrimedLockedLazyDroped::new_static(A(42), || A(22)) };
     #[test]
     fn test() {
         match _X.primed_read_non_initializing() {
             Ok(_) => panic!("Unexpected"),
-            Err(l) => assert_eq!(l.0,42),
+            Err(l) => assert_eq!(l.0, 42),
         }
         assert_eq!(_X.read().0, 22);
         _X.write().0 = 33;
