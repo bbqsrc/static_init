@@ -1,17 +1,32 @@
+//TODO: this adjustement may be adapted to
+//      plateform processor
+//
+/// The lock gives priority to write locks when
+/// one is waiting to be fair with write locks. This
+/// fairness somehow equilibrate with the fact read locks
+/// are extremely fair with other read locks.
+///
+/// But this mitigation can lead to the opposite. If there
+/// are many attempts to get a write lock, read locks will 
+/// never be awaken. So if concecutive `READ_FAIRNESS_PERIOD`
+/// write locks are awaked, gives priority to awake read locks
+const READ_FAIRNESS_PERIOD:u16 = 32;
 #[cfg(all(
     not(feature = "parking_lot_core"),
     any(target_os = "linux", target_os = "android")
 ))]
 mod linux {
+    use super::READ_FAIRNESS_PERIOD;
     use crate::phase::*;
     use core::ops::Deref;
     use core::ptr;
-    use core::sync::atomic::{compiler_fence, AtomicU32, Ordering};
+    use core::sync::atomic::{compiler_fence, AtomicU32, AtomicU16, Ordering};
     use libc::{syscall, SYS_futex, FUTEX_PRIVATE_FLAG, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET};
 
     pub(crate) struct Futex {
         futex:        AtomicU32,
         writer_count: AtomicU32,
+        fairness:     AtomicU16,
     }
 
     const READER_BIT: u32 = 0b01;
@@ -22,7 +37,15 @@ mod linux {
             Self {
                 futex:        AtomicU32::new(value),
                 writer_count: AtomicU32::new(0),
+                fairness:     AtomicU16::new(0),
+                //to allow the static to be placed zeroed segment
+                //and fairness with threads who attempted but failed to
+                //initialize the static
             }
+        }
+
+        pub(crate) fn prefer_wake_one_writer(&self) -> bool {
+            self.fairness.load(Ordering::Relaxed) % READ_FAIRNESS_PERIOD != 0
         }
 
         pub(crate) fn compare_and_wait_as_reader(&self, value: u32) -> bool {
@@ -65,6 +88,7 @@ mod linux {
             res
         }
         pub(crate) fn wake_readers(&self) -> usize {
+            self.fairness.store(1, Ordering::Relaxed);
             let count = unsafe {
                 syscall(
                     SYS_futex,
@@ -82,6 +106,7 @@ mod linux {
             count
         }
         pub(crate) fn wake_one_writer(&self) -> bool {
+            self.fairness.fetch_add(1, Ordering::Relaxed);
             unsafe {
                 syscall(
                     SYS_futex,
@@ -111,9 +136,10 @@ pub(crate) use linux::Futex;
 
 #[cfg(feature = "parking_lot_core")]
 mod other {
+    use super::READ_FAIRNESS_PERIOD;
     use crate::phase::*;
     use core::ops::Deref;
-    use core::sync::atomic::{compiler_fence, AtomicU32, Ordering};
+    use core::sync::atomic::{compiler_fence, AtomicU32, AtomicU16, Ordering};
     use parking_lot_core::{
         park, unpark_filter, unpark_one, FilterOp, ParkResult, DEFAULT_PARK_TOKEN,
         DEFAULT_UNPARK_TOKEN,
@@ -122,6 +148,7 @@ mod other {
     pub(crate) struct Futex {
         futex:        AtomicU32,
         writer_count: AtomicU32,
+        fairness:     AtomicU16,
     }
 
     impl Futex {
@@ -129,7 +156,12 @@ mod other {
             Self {
                 futex:        AtomicU32::new(value),
                 writer_count: AtomicU32::new(0),
+                fairness:     AtomicU16::new(0),
             }
+        }
+
+        pub(crate) fn prefer_wake_one_writer(&self) -> bool {
+            self.fairness.load(Ordering::Relaxed) % READ_FAIRNESS_PERIOD == 0
         }
 
         pub(crate) fn compare_and_wait_as_reader(&self, value: u32) -> bool {
@@ -176,6 +208,7 @@ mod other {
             res
         }
         pub(crate) fn wake_readers(&self) -> usize {
+            self.fairness.store(1, Ordering::Relaxed);
             let mut c = 0;
             let r = unsafe {
                 unpark_filter(
@@ -199,6 +232,7 @@ mod other {
             r.unparked_threads
         }
         pub(crate) fn wake_one_writer(&self) -> bool {
+            self.fairness.fetch_add(1, Ordering::Relaxed);
             let r = unsafe { unpark_one(self.writer_key(), |_| DEFAULT_UNPARK_TOKEN) };
             r.unparked_threads == 1
         }
