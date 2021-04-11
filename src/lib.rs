@@ -87,7 +87,10 @@
 ///  those with a priority `p` in `format!(".CRT$XCTZ{:05}",65535-p)`. Destructors without priority
 ///  are placed in ".CRT$XPU" and those with a priority in `format!(".CRT$XPTZ{:05}",65535-p)`.
 ///
+///
 mod details {}
+
+use core::cell::Cell;
 
 /// A trait for objects that are intinded to transition between phasis.
 ///
@@ -138,7 +141,7 @@ where
 ///  - if the implementor is not Sync then the lock should panic if any attempt is made
 ///    to take another lock while a write lock is alive or to take a write lock while there
 ///    is already a read_lock.(the lock should behave as a RefCell).
-pub unsafe trait Sequentializer<'a, T: Sequential>: 'static + Sized + Phased {
+pub unsafe trait Sequentializer<'a, T: Sequential + 'a>: Sized + Phased {
     type ReadGuard;
     type WriteGuard;
     /// Lock the phases of an object in order to ensure atomic phase transition.
@@ -178,7 +181,7 @@ pub unsafe trait Sequentializer<'a, T: Sequential>: 'static + Sized + Phased {
 ///  - if the implementor is not Sync then the lock should panic if any attempt is made
 ///    to take another lock while a write lock is alive or to take a write lock while there
 ///    is already a read_lock.(the lock should behave as a RefCell).
-pub unsafe trait LazySequentializer<'a, T: Sequential>: Sequentializer<'a, T> {
+pub unsafe trait LazySequentializer<'a, T: Sequential + 'a>: Sequentializer<'a, T> {
     const INITIALIZED_HINT: Phase;
     /// if `shall_init` return true for the target [`Sequential`] object, it initialize
     /// the data of the target object using `init`
@@ -227,7 +230,22 @@ pub unsafe trait LazySequentializer<'a, T: Sequential>: Sequentializer<'a, T> {
     ) -> Option<Self::WriteGuard>;
 }
 
-//TODO: doc here
+pub trait UniqueLazySequentializer<T: Sequential> {
+    /// if `shall_init` return true for the target [`Sequential`] object, it initialize
+    /// the data of the target object using `init`
+    ///
+    /// The implementor may also proceed to registration of the finalizing method (drop)
+    /// in order to drop the object on the occurence of singular event (thread exit, or program
+    /// exit). If this registration fails and if `init_on_reg_failure` is `true` then the object
+    /// will be initialized, otherwise it will not.
+    fn init_unique<'a>(
+        target: &'a mut T,
+        shall_init: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&'a<T as Sequential>::Data),
+    ) -> Phase
+    where Self:'a;
+}
+
 
 /// A [FinalizableLazySequentializer] sequentialize the [phase](Phase) of an object to
 /// ensure atomic initialization and finalization.
@@ -242,7 +260,7 @@ pub unsafe trait LazySequentializer<'a, T: Sequential>: Sequentializer<'a, T> {
 ///  - either the implementor is Sync and the initialization is performed atomically
 ///  - or the implementor is not Sync and any attempt to perform an initialization while
 ///    an initialization is running will cause a panic.
-pub unsafe trait FinalizableLazySequentializer<'a, T: Sequential>:
+pub unsafe trait FinalizableLazySequentializer<'a, T: 'a + Sequential>:
     Sequentializer<'a, T>
 {
     /// if `shall_init` return true for the target [`Sequential`] object, it initialize
@@ -257,16 +275,6 @@ pub unsafe trait FinalizableLazySequentializer<'a, T: Sequential>:
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
         reg: impl FnOnce(&'a T) -> bool,
-    ) -> Phase;
-    fn only_init(
-        target: &'a T,
-        shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&'a <T as Sequential>::Data),
-    ) -> Phase;
-    fn only_init_unique(
-        target: &'a mut T,
-        shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Phase;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change (Read Lock). The returned lock may be shared.
@@ -322,6 +330,20 @@ impl<U, T: Fn() -> U> Generator<U> for T {
 
 impl<U, T: Fn() -> U> GeneratorTolerance for T {
     const INIT_FAILURE: bool = true;
+    const FINAL_REGISTRATION_FAILURE: bool = false;
+}
+
+impl<U, T: FnOnce() -> U> Generator<U> for Cell<Option<T>> {
+    fn generate(&self) -> U {
+        match self.take() {
+            Some(v) => v(),
+            None => panic!("Cannot call this generator twice"),
+        }
+    }
+}
+
+impl<U, T: FnOnce() -> U> GeneratorTolerance for Cell<Option<T>> {
+    const INIT_FAILURE: bool = false;
     const FINAL_REGISTRATION_FAILURE: bool = false;
 }
 
@@ -467,7 +489,7 @@ pub mod generic_lazy;
 /// Provides various implementation of lazily initialized types
 pub mod lazy;
 #[doc(inline)]
-pub use lazy::{Lazy, LockedLazy};
+pub use lazy::{Lazy, LockedLazy, LazyAccess};
 #[doc(inline)]
 pub use lazy::{UnSyncLazy, UnSyncLockedLazy};
 

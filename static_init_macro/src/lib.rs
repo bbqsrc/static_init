@@ -580,7 +580,7 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
             Err(generate_error!($id.span()=>
                 "Unexpected attribute argument `",
                 __unexpected,
-                "`. Expected either `init[=<u16>]`, `drop[=<u16>]`, `lazy` or `drop_only=<u16>`."
+                "`. Expected either `init[=<u16>]`, `drop[=<u16>]`, `lazy`, `lesser_lazy`, `drop_only=<u16>`, `prime`, `leak` or `try_init_once`."
                 ))
         }
         }
@@ -611,9 +611,11 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
                     opt.init = InitMode::LesserLazy;
                 } else if id == "try_init_once" {
                     opt.tolerance.init_fail = false;
-                } else if id == "leak" {
+                } else if id == "tolerate_leak" {
                     opt.tolerance.registration_fail = true;
                 } else if id == "prime" {
+                    check_no_init!(id);
+                    opt.init = InitMode::Lazy;
                     opt.priming = true;
                 } else {
                     return unexpected_arg!(id);
@@ -653,6 +655,12 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
             }
         }
     }
+    if opt.drop == DropMode::None && opt.tolerance.registration_fail {
+        return Err(generate_error!(
+            "Unusefull `tolerate_leak`: this static is not dropped, it will always leak. Add \
+             `drop` or `finalize` attribute argument if the intent is that this static is dropped."
+        ));
+    }
     if (opt.init == InitMode::Lazy || opt.init == InitMode::LesserLazy)
         && !(opt.drop == DropMode::None
             || opt.drop == DropMode::Finalize
@@ -660,15 +668,31 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
     {
         Err(generate_error!("Drop mode not supported for lazy statics."))
     } else if let InitMode::Dynamic(p) = opt.init {
-        match opt.drop {
-            DropMode::Drop => {
-                opt.drop = DropMode::Dynamic(p);
-                Ok(opt)
+        if !opt.tolerance.init_fail
+        /*was try_init_once attribute used*/
+        {
+            Err(generate_error!(
+                "Unusefull `try_init_once` attribute: raw statics initialization is attempted \
+                 only once."
+            ))
+        } else if opt.tolerance.registration_fail
+        /*was tolerate_leak attribute used*/
+        {
+            Err(generate_error!(
+                "Unusefull `tolerate_leak` attribute: raw statics are registered for drop at \
+                 compile time."
+            ))
+        } else {
+            match opt.drop {
+                DropMode::Drop => {
+                    opt.drop = DropMode::Dynamic(p);
+                    Ok(opt)
+                }
+                DropMode::Finalize => Err(generate_error!(
+                    "Drop mode finalize not supported for global dynamic statics."
+                )),
+                _ => Ok(opt),
             }
-            DropMode::Finalize => Err(generate_error!(
-                "Drop mode finalize not supported for global dynamic statics."
-            )),
-            _ => Ok(opt),
         }
     } else {
         Ok(opt)
@@ -714,6 +738,11 @@ fn has_thread_local(attrs: &[Attribute]) -> bool {
 }
 
 fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
+    //TODO: dropped static must be initialized by unsafe code because
+    //if initialization panic this will cause UB TBC.
+    //
+    //TODO: for lazy statics with leak tolerance => only usefull for thread locals.
+
     let stat_name = &stat.ident;
 
     let stat_generator_name = format!("__StaticInitGeneratorFor_{}", stat_name);
@@ -808,7 +837,6 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             stat.mutability = None
         };
     }
-
     let typ: Type = if !(options.init == InitMode::Lazy || options.init == InitMode::LesserLazy) {
         if stat.mutability.is_none() {
             into_mutable!();

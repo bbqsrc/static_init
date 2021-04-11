@@ -1,10 +1,8 @@
-use crate::phase_locker::SyncPhaseLocker;
-use crate::phase_locker::{PhaseGuard, UnSyncPhaseLocker};
+use crate::phase_locker::PhaseGuard;
 use crate::{GeneratorTolerance, Phase, Sequential};
 use core::marker::PhantomData;
 
-pub type SyncSequentializer<G> = generic::LazySequentializer<SyncPhaseLocker, G>;
-pub type UnSyncSequentializer<G> = generic::LazySequentializer<UnSyncPhaseLocker, G>;
+pub use generic::{SyncSequentializer, UnSyncSequentializer};
 
 #[inline]
 #[cold]
@@ -127,11 +125,12 @@ fn lazy_finalization<'a, T: 'a, P: PhaseGuard<'a, T>>(mut phase_guard: P, f: imp
 }
 
 mod generic {
+    use crate::phase_locker::{SyncPhaseLocker,UnSyncPhaseLocker};
     use super::{lazy_finalization, lazy_initialization, lazy_initialization_only, Unit};
     use crate::phase_locker::{LockNature, LockResult, Mappable, PhaseGuard, PhaseLocker};
     use crate::{
         FinalizableLazySequentializer, GeneratorTolerance,
-        LazySequentializer as LazySequentializerTrait, Phase, Phased, Sequential, Sequentializer,
+        LazySequentializer as LazySequentializerTrait, Phase, Phased, Sequential, Sequentializer,UniqueLazySequentializer
     };
 
     #[cfg(debug_mode)]
@@ -232,7 +231,7 @@ mod generic {
     }
 
     // SAFETY: it is safe because it does implement synchronized locks
-    unsafe impl<'a, T: Sequential + 'a, L: 'static, G: 'static + GeneratorTolerance>
+    unsafe impl<'a, T: Sequential + 'a, L: 'a, G: 'a + GeneratorTolerance>
         Sequentializer<'a, T> for LazySequentializer<L, G>
     where
         T::Sequentializer: AsRef<LazySequentializer<L, G>>,
@@ -278,7 +277,7 @@ mod generic {
     }
 
     #[inline(always)]
-    fn whole_lock<'a, T: Sequential + 'a, L: 'static, G: 'static>(
+    fn whole_lock<'a, T: Sequential + 'a, L:'a, G:'a>(
         s: &'a T,
         lock_nature: impl Fn(Phase) -> LockNature,
         hint: Phase,
@@ -294,7 +293,7 @@ mod generic {
     }
 
     #[inline(always)]
-    fn try_whole_lock<'a, T: Sequential + 'a, L: 'static, G: 'static>(
+    fn try_whole_lock<'a, T: Sequential + 'a, L:'a, G:'a>(
         s: &'a T,
         lock_nature: impl Fn(Phase) -> LockNature,
         hint: Phase,
@@ -353,7 +352,7 @@ mod generic {
         }
     }
     // SAFETY: it is safe because it does implement synchronized locks
-    unsafe impl<'a, T: Sequential + 'a, L: 'static, G: 'static> FinalizableLazySequentializer<'a, T>
+    unsafe impl<'a, T: Sequential + 'a, L:'a, G:'a> FinalizableLazySequentializer<'a, T>
         for LazySequentializer<L, G>
     where
         T::Sequentializer: AsRef<LazySequentializer<L, G>>,
@@ -400,54 +399,6 @@ mod generic {
             let ph = lazy_initialization(phase_guard, init, reg, Unit::<G>::new());
             debug_thread_zero(s);
             ph.phase()
-        }
-
-        #[inline(always)]
-        fn only_init(
-            s: &'a T,
-            shall_init: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&'a <T as Sequential>::Data),
-        ) -> Phase {
-            let this = Sequential::sequentializer(s).as_ref();
-
-            let phase_guard = match this.0.lock(
-                Sequential::data(s),
-                |p| {
-                    if shall_init(p) {
-                        debug_test(s);
-                        LockNature::Write
-                    } else {
-                        LockNature::None
-                    }
-                },
-                |_| LockNature::Read,
-                Phase::INITIALIZED,
-            ) {
-                LockResult::None(p) => return p,
-                LockResult::Write(l) => l,
-                LockResult::Read(l) => return Phased::phase(&l),
-            };
-
-            debug_save_thread(s);
-            let ph = lazy_initialization_only(phase_guard, init);
-            debug_thread_zero(s);
-            ph.phase()
-        }
-
-        #[inline(always)]
-        fn only_init_unique(
-            s: &'a mut T,
-            shall_init: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&'a <T as Sequential>::Data),
-        ) -> Phase {
-            let phase_guard = <Self as Sequentializer<'a, T>>::lock_mut(s);
-
-            if shall_init(phase_guard.phase()) {
-                let ph = lazy_initialization_only(phase_guard, init);
-                ph.phase()
-            } else {
-                phase_guard.phase()
-            }
         }
 
         #[inline(always)]
@@ -612,8 +563,9 @@ mod generic {
         }
     }
 
+
     // SAFETY: it is safe because it does implement synchronized locks
-    unsafe impl<'a, T: Sequential + 'a, L: 'static, G: 'static> LazySequentializerTrait<'a, T>
+    unsafe impl<'a, T: Sequential + 'a, L:'a, G:'a> LazySequentializerTrait<'a, T>
         for LazySequentializer<L, G>
     where
         T::Sequentializer: AsRef<LazySequentializer<L, G>>,
@@ -636,7 +588,30 @@ mod generic {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> Phase {
-            <Self as FinalizableLazySequentializer<'a, T>>::only_init(s, shall_init, init)
+            let this = Sequential::sequentializer(s).as_ref();
+
+            let phase_guard = match this.0.lock(
+                Sequential::data(s),
+                |p| {
+                    if shall_init(p) {
+                        debug_test(s);
+                        LockNature::Write
+                    } else {
+                        LockNature::None
+                    }
+                },
+                |_| LockNature::Read,
+                Phase::INITIALIZED,
+            ) {
+                LockResult::None(p) => return p,
+                LockResult::Write(l) => l,
+                LockResult::Read(l) => return Phased::phase(&l),
+            };
+
+            debug_save_thread(s);
+            let ph = lazy_initialization_only(phase_guard, init);
+            debug_thread_zero(s);
+            ph.phase()
         }
 
         #[inline(always)]
@@ -645,7 +620,14 @@ mod generic {
             shall_init: impl Fn(Phase) -> bool,
             init: impl FnOnce(&'a <T as Sequential>::Data),
         ) -> Phase {
-            <Self as FinalizableLazySequentializer<'a, T>>::only_init_unique(s, shall_init, init)
+            let phase_guard = <Self as Sequentializer<'a, T>>::lock_mut(s);
+
+            if shall_init(phase_guard.phase()) {
+                let ph = lazy_initialization_only(phase_guard, init);
+                ph.phase()
+            } else {
+                phase_guard.phase()
+            }
         }
 
         #[inline(always)]
@@ -762,4 +744,78 @@ mod generic {
                 })
         }
     }
+
+
+pub type SyncSequentializer<G> = LazySequentializer<SyncPhaseLocker, G>;
+
+pub type UnSyncSequentializer<G> = LazySequentializer<UnSyncPhaseLocker, G>;
+
+//no other options than copy past without requirements of the form "for<'b such that 'a:'b>  X: ..."
+impl<T: Sequential<Sequentializer=Self>, G:GeneratorTolerance> UniqueLazySequentializer<T> for SyncSequentializer<G> 
+    {
+    fn init_unique<'a>(
+        target: &'a mut T,
+        shall_init: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&'a<T as Sequential>::Data),
+    ) -> Phase where Self:'a
+    {
+        let (that, data) = Sequential::sequentializer_data_mut(target);
+
+        let phase_guard = that.0.lock_mut(data);
+
+        if shall_init(phase_guard.phase()) {
+            let ph = lazy_initialization_only(phase_guard, init);
+            ph.phase()
+        } else {
+            phase_guard.phase()
+        }
+
+    }
+}
+//no other options than copy past without requirements of the form "for<'b such that 'a:'b>  X: ..."
+impl<T: Sequential<Sequentializer=Self>, G:GeneratorTolerance> UniqueLazySequentializer<T> for UnSyncSequentializer<G> 
+    {
+    fn init_unique<'a>(
+        target: &'a mut T,
+        shall_init: impl Fn(Phase) -> bool,
+        init: impl FnOnce(&'a<T as Sequential>::Data),
+    ) -> Phase where Self:'a
+    {
+        let (that, data) = Sequential::sequentializer_data_mut(target);
+
+        let phase_guard = that.0.lock_mut(data);
+
+        if shall_init(phase_guard.phase()) {
+            let ph = lazy_initialization_only(phase_guard, init);
+            ph.phase()
+        } else {
+            phase_guard.phase()
+        }
+
+    }
+}
+
+
+//impl<T: Sequential<Sequentializer=Self>, G:GeneratorTolerance> UniqueLazySequentializer<T> for UnSyncSequentializer<G> 
+//    {
+//    const INITIALIZED_HINT:Phase = Phase::INITIALIZED;
+//    fn init_unique<'a>(
+//        target: &'a mut T,
+//        shall_init: impl Fn(Phase) -> bool,
+//        init: impl FnOnce(&'a<T as Sequential>::Data),
+//    ) -> Phase 
+//    where Self:'a + Sequentializer<'a,T>,
+//    <Self as Sequentializer<'a,T>>::WriteGuard: PhaseGuard<'a,T::Data>
+//    {
+//        let phase_guard = <Self as Sequentializer<'a,T>>::lock_mut(target);
+//
+//        if shall_init(phase_guard.phase()) {
+//            let ph = lazy_initialization_only(phase_guard, init);
+//            ph.phase()
+//        } else {
+//            phase_guard.phase()
+//        }
+//
+//    }
+//}
 }

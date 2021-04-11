@@ -18,6 +18,7 @@ use crate::{exit_sequentializer::ExitSequentializer, lazy_sequentializer::SyncSe
 
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
+use core::cell::Cell;
 
 pub struct InitializedChecker<T>(PhantomData<T>);
 
@@ -168,8 +169,8 @@ macro_rules! impl_lazy {
     };
     (@deref $tp:ident, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
         impl<T, G> $tp<T, G>
-        where $data: 'static + LazyData<Target=T>,
-        G: 'static + Generator<T>,
+        where $data: LazyData<Target=T>,
+        G: Generator<T>,
         $(G:$trg, T:Sync,)?
         $(T:$tr,)?
         {
@@ -191,8 +192,8 @@ macro_rules! impl_lazy {
             }
         }
         impl<T, G> Deref for $tp<T, G>
-        where $data: 'static + LazyData<Target=T>,
-        G: 'static + Generator<T>,
+        where $data: LazyData<Target=T>,
+        G: Generator<T>,
         $(G:$trg, T:Sync,)?
         $(T:$tr,)?
         {
@@ -204,8 +205,8 @@ macro_rules! impl_lazy {
         }
 
         impl<T, G> DerefMut for $tp<T, G>
-        where $data: 'static + LazyData<Target=T>,
-        G: 'static + Generator<T>,
+        where $data: LazyData<Target=T>,
+        G: Generator<T>,
         $(G:$trg, T:Sync,)?
         $(T:$tr,)?
         {
@@ -216,8 +217,8 @@ macro_rules! impl_lazy {
         }
 
         impl<'a,T,G> LazyAccess for &'a $tp<T,G>
-            where $data: 'static + LazyData<Target=T>,
-            G: 'static + Generator<T>,
+            where $data: LazyData<Target=T>,
+            G: Generator<T>,
             $(G:$trg, T:Sync,)?
             $(T:$tr,)?
             {
@@ -386,8 +387,8 @@ macro_rules! impl_lazy {
             __private: GenericLazy<$data, G, $man$(::<$x>)?, $checker::<G>>,
         }
         impl<T, G> Phased for $tp<T, G>
-        where $data: 'static + LazyData<Target=T>,
-        G: 'static + Generator<T>,
+        where $data: $($static +)? LazyData<Target=T>,
+        G: $($static +)? Generator<T>,
         $(G:$trg, T:Sync,)?
         $(T:$tr,)?
         {
@@ -427,8 +428,8 @@ macro_rules! impl_lazy {
         }
 
         impl<T, G> $tp<T, G>
-        where $data: 'static + LazyData<Target=T>,
-        G: 'static + Generator<T>,
+        where $data: $($static +)? LazyData<Target=T>,
+        G: $($static +)? Generator<T>,
         $(G:$trg, T:Sync,)?
         $(T:$tr,)?
         {
@@ -489,8 +490,8 @@ use core::fmt::{self, Debug, Formatter};
 macro_rules! non_static_debug {
     ($tp:ident, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
         impl<T:Debug, G> Debug for $tp<T, G>
-            where $data: 'static + LazyData<Target=T>,
-            G: 'static + Generator<T>,
+            where $data: LazyData<Target=T>,
+            G: Generator<T>,
             $(G:$trg, T:Sync,)?
             $(T:$tr,)?
         {
@@ -506,16 +507,18 @@ macro_rules! non_static_debug {
 }
 macro_rules! non_static_impls {
     ($tp:ident, $data:ty $(,T: $tr:ident)? $(,G: $trg:ident)?) => {
-        impl<T, G> $tp<T, G> {
+        impl<T, G> $tp<T, Cell<Option<G>>> 
+        where G: FnOnce() -> T
+        {
             #[inline(always)]
-            pub const fn new(g: G) -> Self {
-                Self::new_static(g)
+            pub fn new(g: G) -> Self {
+                Self::new_static(Cell::new(Some(g)))
             }
         }
         impl<T: Default> Default for $tp<T, fn() -> T> {
             #[inline(always)]
             fn default() -> Self {
-                Self::new(T::default)
+                Self::new_static(T::default)
             }
         }
     };
@@ -594,8 +597,8 @@ macro_rules! impl_mut_lazy {
     };
     (@lock $tp:ident, $data:ty, $gdw: ident, $gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)? $(,$static:lifetime)?) => {
         impl<T, G> $tp<T, G>
-        where $data: 'static + LazyData<Target=T>,
-        G: 'static + Generator<T>,
+        where $data: $($static+)? LazyData<Target=T>,
+        G:$($static +)? Generator<T>,
         $(G:$trg, T:Send,)?
         $(T:$tr,)?
         {
@@ -668,8 +671,8 @@ macro_rules! impl_mut_lazy {
     };
     (@const_lock $tp:ident, $data:ty, $gdw: ident, $gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)? $(,$static:lifetime)?) => {
         impl<T, G> $tp<T, G>
-        where $data: 'static + LazyData<Target=T>,
-        G: 'static + Generator<T>,
+        where $data: $($static +)?  LazyData<Target=T>,
+        G: $($static +)? Generator<T>,
         $(G:$trg, T:Send,)?
         $(T:$tr,)?
         {
@@ -1130,8 +1133,8 @@ macro_rules! impl_mut_lazy {
             __private: GenericLockedLazy<$data, G, $man$(<$x>)?, $checker::<G>>,
         }
         impl<T, G> Phased for $tp<T, G>
-        where T: 'static + LazyData,
-        G: 'static + Generator<T>
+        where T: $($static +)? LazyData,
+        G: $($static +)? Generator<T>
         {
             #[inline(always)]
             fn phase(this: &Self) -> Phase {
@@ -1140,8 +1143,8 @@ macro_rules! impl_mut_lazy {
         }
 
         impl<T, G> $tp<T, G>
-        where $data: 'static + LazyData<Target=T>,
-        G: 'static + Generator<T>,
+        where $data: $($static +)? LazyData<Target=T>,
+        G: $($static +)? Generator<T>,
         $(G:$trg, T:Send,)?
         $(T:$tr,)?
         {
@@ -1230,8 +1233,8 @@ The method (new)[Self::new] is unsafe as the object must be a non mutable thread
 macro_rules! non_static_mut_debug {
     ($tp:ident, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
         impl<T:Debug, G> Debug for $tp<T, G>
-            where $data: 'static + LazyData<Target=T>,
-            G: 'static + Generator<T>,
+            where $data: LazyData<Target=T>,
+            G: Generator<T>,
             $(G:$trg, T:Sync,)?
             $(T:$tr,)?
         {
@@ -1250,7 +1253,7 @@ non_static_mut_debug! {LockedLazy,UnInited::<T>}
 non_static_impls! {UnSyncLockedLazy,UnInited::<T>}
 non_static_mut_debug! {UnSyncLockedLazy,UnInited::<T>}
 
-impl<T: Send + 'static, G: Generator<T> + 'static> LockedLazy<T, G> {
+impl<T: Send, G: Generator<T>> LockedLazy<T, G> {
     #[inline(always)]
     pub fn get_mut(&mut self) -> &mut T {
         self.__private.only_init_then_get_mut()
@@ -1260,7 +1263,7 @@ impl<T: Send + 'static, G: Generator<T> + 'static> LockedLazy<T, G> {
         self.__private.try_get_mut()
     }
 }
-impl<T: 'static, G: Generator<T> + 'static> UnSyncLockedLazy<T, G> {
+impl<T, G: Generator<T>> UnSyncLockedLazy<T, G> {
     #[inline(always)]
     pub fn get_mut(&mut self) -> &mut T {
         self.__private.only_init_then_get_mut()
@@ -1320,7 +1323,7 @@ mod inited {
 #[cfg(test)]
 mod test_lazy {
     use super::Lazy;
-    static _X: Lazy<u32, fn() -> u32> = Lazy::new(|| 22);
+    static _X: Lazy<u32, fn() -> u32> = Lazy::new_static(|| 22);
 
     #[test]
     fn test() {
