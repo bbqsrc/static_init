@@ -68,7 +68,8 @@ impl SpinWait {
 }
 
 #[cfg(all(
-    not(feature = "parking_lot_core"), not(feature = "spin_loop"),
+    not(feature = "parking_lot_core"),
+    not(feature = "spin_loop"),
     any(target_os = "linux", target_os = "android")
 ))]
 fn yield_now() {
@@ -76,8 +77,11 @@ fn yield_now() {
         libc::sched_yield();
     }
 }
-#[cfg(all(not(feature = "spin_loop"),not(all(
-    not(feature = "parking_lot_core"),
-    any(target_os = "linux", target_os = "android")
-))))]
+#[cfg(all(
+    not(feature = "spin_loop"),
+    not(all(
+        not(feature = "parking_lot_core"),
+        any(target_os = "linux", target_os = "android")
+    ))
+))]
 use std::thread::yield_now;

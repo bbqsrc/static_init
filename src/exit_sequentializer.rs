@@ -1,16 +1,17 @@
 #![cfg(any(elf, mach_o, coff))]
 
 mod exit_manager {
+    use crate::lazy_sequentializer::SyncSequentializer as SubSequentializer;
     use crate::phase_locker::{LockNature, LockResult, SyncPhaseGuard, SyncReadPhaseGuard};
     use crate::phase_locker::{Mutex, SyncPhaseLocker};
-    use crate::lazy_sequentializer::SyncSequentializer as SubSequentializer;
     use crate::Finaly;
     use crate::{
-        LazySequentializer, Phase, Phased, Sequential, Sequentializer, FinalizableLazySequentializer,GeneratorTolerance
+        FinalizableLazySequentializer, GeneratorTolerance, LazySequentializer, Phase, Phased,
+        Sequential, Sequentializer,
     };
 
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
-    use std::panic::{RefUnwindSafe,UnwindSafe};
+    use std::panic::{RefUnwindSafe, UnwindSafe};
 
     trait OnExit {
         fn take_next(&self) -> Option<&'static Node>;
@@ -24,15 +25,13 @@ mod exit_manager {
         next: Mutex<Option<&'static Node>>,
     }
 
-
     // if a panic is launched during a finalization
     // static that have not yet been finalized will not
-    // be finalized 
+    // be finalized
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
     impl<G> RefUnwindSafe for ExitSequentializerBase<G> {}
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
     impl<G> UnwindSafe for ExitSequentializerBase<G> {}
-
 
     /// A sequentializer that store finalize_callback  
     /// for execution at program exit
@@ -41,7 +40,7 @@ mod exit_manager {
     mod reg {
 
         use super::{ExitSequentializer, Node};
-        use crate::{destructor, Finaly, Sequential, GeneratorTolerance};
+        use crate::{destructor, Finaly, GeneratorTolerance, Sequential};
 
         use crate::phase_locker::Mutex;
 
@@ -136,7 +135,7 @@ mod exit_manager {
         }
     }
     // SAFETY: it is safe because it does implement synchronized locks
-    unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>, Tol: GeneratorTolerance+'static>
+    unsafe impl<'a, T: 'a + Sequential<Sequentializer = Self>, Tol: GeneratorTolerance + 'static>
         Sequentializer<'a, T> for ExitSequentializer<Tol>
     where
         T: 'static + Sync,
@@ -148,17 +147,17 @@ mod exit_manager {
         fn lock(
             st: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
-            hint:Phase
+            hint: Phase,
         ) -> LockResult<SyncReadPhaseGuard<'a, T::Data>, SyncPhaseGuard<'a, T::Data>> {
-            <SubSequentializer<Tol> as Sequentializer<T>>::lock(st, lock_nature,hint)
+            <SubSequentializer<Tol> as Sequentializer<T>>::lock(st, lock_nature, hint)
         }
         #[inline(always)]
         fn try_lock(
             st: &'a T,
             lock_nature: impl Fn(Phase) -> LockNature,
-            hint:Phase
+            hint: Phase,
         ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>> {
-            <SubSequentializer<Tol> as Sequentializer<T>>::try_lock(st, lock_nature,hint)
+            <SubSequentializer<Tol> as Sequentializer<T>>::try_lock(st, lock_nature, hint)
         }
         #[inline(always)]
         fn lock_mut(st: &'a mut T) -> SyncPhaseGuard<'a, T::Data> {
@@ -167,7 +166,7 @@ mod exit_manager {
     }
 
     // SAFETY: it is safe because it does implement synchronized locks
-    unsafe impl<T: 'static + Sequential<Sequentializer = Self>, Tol: GeneratorTolerance+'static>
+    unsafe impl<T: 'static + Sequential<Sequentializer = Self>, Tol: GeneratorTolerance + 'static>
         LazySequentializer<'static, T> for ExitSequentializer<Tol>
     where
         T: 'static + Sync,
@@ -250,7 +249,10 @@ mod exit_manager {
         }
     }
 
-    impl<T: Sequential<Sequentializer = ExitSequentializer<Tol>>, Tol: 'static + GeneratorTolerance> OnExit for T
+    impl<
+            T: Sequential<Sequentializer = ExitSequentializer<Tol>>,
+            Tol: 'static + GeneratorTolerance,
+        > OnExit for T
     where
         T::Data: 'static + Finaly,
     {
@@ -275,14 +277,14 @@ mod local_manager {
 
     use crate::lazy_sequentializer::UnSyncSequentializer as SubSequentializer;
     use crate::{
-        Finaly, LazySequentializer, Phase, Phased, Sequential, Sequentializer,
-        FinalizableLazySequentializer, GeneratorTolerance
+        FinalizableLazySequentializer, Finaly, GeneratorTolerance, LazySequentializer, Phase,
+        Phased, Sequential, Sequentializer,
     };
 
     use core::cell::Cell;
 
     use crate::phase_locker::{
-        LockNature, LockResult, UnSyncPhaseGuard, UnSyncPhaseLocker, UnSyncReadPhaseGuard
+        LockNature, LockResult, UnSyncPhaseGuard, UnSyncPhaseLocker, UnSyncReadPhaseGuard,
     };
 
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
@@ -304,7 +306,7 @@ mod local_manager {
 
     // if a panic is launched during a finalization
     // static that have not yet been finalized will not
-    // be finalized 
+    // be finalized
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
     impl<G> RefUnwindSafe for ThreadExitSequentializerBase<G> {}
     #[cfg(any(feature = "parking_lot_core", debug_mode))]
@@ -313,9 +315,7 @@ mod local_manager {
     #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
     /// A sequentializer that store finalize_callback  
     /// for execution at thread exit
-    pub struct ThreadExitSequentializer<Tol>(
-        ThreadExitSequentializerBase<Tol>,
-    );
+    pub struct ThreadExitSequentializer<Tol>(ThreadExitSequentializerBase<Tol>);
 
     #[allow(clippy::declare_interior_mutable_const)]
     /// This object is only used to be copied
@@ -367,7 +367,7 @@ mod local_manager {
             lock_nature: impl Fn(Phase) -> LockNature,
             hint: Phase,
         ) -> LockResult<UnSyncReadPhaseGuard<'a, T::Data>, UnSyncPhaseGuard<'a, T::Data>> {
-            <SubSequentializer<Tol> as Sequentializer<T>>::lock(st, lock_nature,hint)
+            <SubSequentializer<Tol> as Sequentializer<T>>::lock(st, lock_nature, hint)
         }
         #[inline(always)]
         fn try_lock(
@@ -375,7 +375,7 @@ mod local_manager {
             lock_nature: impl Fn(Phase) -> LockNature,
             hint: Phase,
         ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>> {
-            <SubSequentializer<Tol> as Sequentializer<T>>::try_lock(st, lock_nature,hint)
+            <SubSequentializer<Tol> as Sequentializer<T>>::try_lock(st, lock_nature, hint)
         }
         #[inline(always)]
         fn lock_mut(st: &'a mut T) -> UnSyncPhaseGuard<'a, T::Data> {
@@ -384,7 +384,7 @@ mod local_manager {
     }
 
     // SAFETY: it is safe because it does implement circular initialization panic
-    unsafe impl<T: 'static + Sequential<Sequentializer = Self>, Tol: GeneratorTolerance+'static>
+    unsafe impl<T: 'static + Sequential<Sequentializer = Self>, Tol: GeneratorTolerance + 'static>
         LazySequentializer<'static, T> for ThreadExitSequentializer<Tol>
     where
         T::Data: 'static + Finaly,
@@ -486,7 +486,7 @@ mod local_manager {
     #[cfg(coff_thread_at_exit)]
     mod windows {
         use super::{Node, ThreadExitSequentializer};
-        use crate::{Finaly, Sequential,GeneratorTolerance};
+        use crate::{Finaly, GeneratorTolerance, Sequential};
         use core::cell::Cell;
         use core::ptr::NonNull;
 
@@ -565,7 +565,7 @@ mod local_manager {
     #[cfg(cxa_thread_at_exit)]
     mod cxa {
         use super::{Node, ThreadExitSequentializer};
-        use crate::{Finaly, Sequential, GeneratorTolerance};
+        use crate::{Finaly, GeneratorTolerance, Sequential};
         use core::cell::Cell;
         use core::ptr::null_mut;
 
@@ -613,7 +613,7 @@ mod local_manager {
         /// finalize call back at thread exit
         pub fn finalize_at_thread_exit<
             T: 'static + Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
-            Tol: 'static+GeneratorTolerance,
+            Tol: 'static + GeneratorTolerance,
         >(
             st: &'static T,
         ) -> bool
@@ -636,7 +636,7 @@ mod local_manager {
     #[cfg(pthread_thread_at_exit)]
     mod pthread {
         use super::{Node, ThreadExitSequentializer};
-        use crate::{Finaly, Sequential, GeneratorTolerance};
+        use crate::{Finaly, GeneratorTolerance, Sequential};
 
         use core::cell::Cell;
         use core::ffi::c_void;

@@ -1,6 +1,6 @@
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
-use std::sync::atomic::{AtomicUsize, Ordering,compiler_fence};
+use std::sync::atomic::{compiler_fence, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::time::Duration;
 
@@ -64,7 +64,11 @@ pub fn synchro_bench_input<
         let test_init = {
             |sender: SyncSender<Option<Duration>>| loop {
                 let mut expect = 0;
-                let deb_prempted_count = if TOL_SWITCH { 0 } else { get_involontary_context_switch() };
+                let deb_prempted_count = if TOL_SWITCH {
+                    0
+                } else {
+                    get_involontary_context_switch()
+                };
                 loop {
                     match started.compare_exchange_weak(
                         expect,
@@ -102,7 +106,11 @@ pub fn synchro_bench_input<
                     compiler_fence(Ordering::AcqRel);
                     d
                 };
-                let end_prempted_count = if TOL_SWITCH { 0 } else { get_involontary_context_switch() };
+                let end_prempted_count = if TOL_SWITCH {
+                    0
+                } else {
+                    get_involontary_context_switch()
+                };
                 if end_prempted_count == deb_prempted_count {
                     sender.send(duration).unwrap();
                 } else {

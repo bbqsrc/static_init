@@ -169,7 +169,6 @@ fn dynamic_init() {
     }
 }
 
-
 mod lazy {
     #[cfg(any(feature = "thread_local"))]
     use super::A;
@@ -194,7 +193,7 @@ mod lazy {
 
         match L4.primed_read_non_initializing() {
             Ok(_) => panic!("Unexpected"),
-            Err(x) => assert_eq!(*x,42),
+            Err(x) => assert_eq!(*x, 42),
         }
         assert_eq!(*L4.read(), 33);
 
@@ -206,7 +205,7 @@ mod lazy {
             assert_eq!(TH_LOCAL.read().0, 3);
             match L4.primed_read_non_initializing() {
                 Ok(_) => panic!("Unexpected"),
-                Err(x) => assert_eq!(*x,42),
+                Err(x) => assert_eq!(*x, 42),
             }
             assert_eq!(*L4.read(), 33);
         })
@@ -270,7 +269,7 @@ mod lazy {
         #[dynamic(finalize)]
         static L3: A = A::new(33);
 
-        #[dynamic(lesser_lazy,finalize)]
+        #[dynamic(lesser_lazy, finalize)]
         static mut L2: A = A::new(L3.0);
 
         #[dynamic(prime)]
@@ -279,7 +278,7 @@ mod lazy {
             DYN => 33,
         };
 
-        #[dynamic(prime,drop)]
+        #[dynamic(prime, drop)]
         static mut L5: A = match INIT {
             PRIME => A(33),
             DYN => A::new(12),
@@ -293,16 +292,15 @@ mod lazy {
             assert_eq!(L3.0, 33);
             match L4.primed_read_non_initializing() {
                 Ok(_) => panic!("Unexpected"),
-                Err(x) => assert_eq!(*x,42),
+                Err(x) => assert_eq!(*x, 42),
             }
             assert_eq!(*L4.read(), 33);
             match L5.primed_read_non_initializing() {
                 Ok(_) => panic!("Unexpected"),
-                Err(x) => assert_eq!(x.0,33),
+                Err(x) => assert_eq!(x.0, 33),
             }
             assert_eq!(L5.read().0, 12);
             L5.write().0 = 33;
         }
-
     }
 }

@@ -5,7 +5,7 @@ use synchronised_bench::{synchro_bench_input, Config};
 
 mod tick_counter;
 
-use static_init::{dynamic, Generator, Lazy, LockedLazy, GeneratorTolerance};
+use static_init::{dynamic, Generator, GeneratorTolerance, Lazy, LockedLazy};
 
 use parking_lot::{
     lock_api::{MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLockReadGuard, RwLockWriteGuard},
@@ -263,7 +263,12 @@ fn bench_init(c: &mut Criterion) {
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    do_bench(&mut gp, "Locked Lazy read", || LockedLazy::new(Xx), |l| *l.read());
+    do_bench(
+        &mut gp,
+        "Locked Lazy read",
+        || LockedLazy::new(Xx),
+        |l| *l.read(),
+    );
 
     do_bench(
         &mut gp,
@@ -297,14 +302,11 @@ fn bench_init(c: &mut Criterion) {
 
     let init = || DoubleCheckedCell::<i32>::new();
 
-    let access = |l: &DoubleCheckedCell<i32>| {
-        *l.get_or_init(|| 33)
-    };
+    let access = |l: &DoubleCheckedCell<i32>| *l.get_or_init(|| 33);
 
     do_bench(&mut gp, "double_checked_cell", init, access);
 
     gp.finish();
-
 
     let mut gp = c.benchmark_group("Init (1us) Locked Thread Scaling");
 
@@ -337,7 +339,6 @@ fn bench_init(c: &mut Criterion) {
 
     gp.finish();
 
-
     let mut gp = c.benchmark_group("Init (5us) Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
@@ -368,7 +369,6 @@ fn bench_init(c: &mut Criterion) {
     do_bench(&mut gp, "Locked Lazy PkLot write", init, |l| *l.write());
 
     gp.finish();
-
 
     let mut gp = c.benchmark_group("Init (10us) Locked Thread Scaling");
 
@@ -401,7 +401,6 @@ fn bench_init(c: &mut Criterion) {
 
     gp.finish();
 
-
     let mut gp = c.benchmark_group("Init (20us) Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
@@ -433,7 +432,6 @@ fn bench_init(c: &mut Criterion) {
 
     gp.finish();
 
-
     let mut gp = c.benchmark_group("Init (1us) Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
@@ -463,13 +461,12 @@ fn bench_init(c: &mut Criterion) {
         *l.get_or_init(|| {
             occupy_for(Duration::from_micros(1));
             33
-            })
+        })
     };
 
     do_bench(&mut gp, "double_checked_cell", init, access);
 
     gp.finish();
-
 
     let mut gp = c.benchmark_group("Init (5us) Thread Scaling");
 
@@ -500,13 +497,12 @@ fn bench_init(c: &mut Criterion) {
         *l.get_or_init(|| {
             occupy_for(Duration::from_micros(5));
             33
-            })
+        })
     };
 
     do_bench(&mut gp, "double_checked_cell", init, access);
 
     gp.finish();
-
 
     let mut gp = c.benchmark_group("Init (20us) Thread Scaling");
 
@@ -537,7 +533,7 @@ fn bench_init(c: &mut Criterion) {
         *l.get_or_init(|| {
             occupy_for(Duration::from_micros(20));
             33
-            })
+        })
     };
 
     do_bench(&mut gp, "double_checked_cell", init, access);
@@ -588,7 +584,6 @@ fn bench_access(c: &mut Criterion) {
         }};
     }
 
-
     let mut gp = c.benchmark_group("Access Read Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
@@ -602,7 +597,6 @@ fn bench_access(c: &mut Criterion) {
     do_bench(&mut gp, "Locked Lazy PkLot", rw_init, |l| *l.read());
 
     gp.finish();
-
 
     let mut gp = c.benchmark_group("Access Write Locked Thread Scaling");
 
@@ -618,14 +612,16 @@ fn bench_access(c: &mut Criterion) {
 
     gp.finish();
 
-
     let mut gp = c.benchmark_group("Fast Read Access Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    do_bench(&mut gp, "Locked Lazy", init, |l| {
-        fast_access!(l.fast_read())
-    });
+    do_bench(
+        &mut gp,
+        "Locked Lazy",
+        init,
+        |l| fast_access!(l.fast_read()),
+    );
 
     do_bench(
         &mut gp,
@@ -646,7 +642,6 @@ fn bench_access(c: &mut Criterion) {
     });
 
     gp.finish();
-
 
     let mut gp = c.benchmark_group("Fast Write Access Locked Thread Scaling");
 
@@ -675,7 +670,6 @@ fn bench_access(c: &mut Criterion) {
     });
 
     gp.finish();
-
 
     let mut gp = c.benchmark_group("Access Thread Scaling");
 
@@ -714,9 +708,7 @@ fn bench_access(c: &mut Criterion) {
         v
     };
 
-    let access = |l: &DoubleCheckedCell<i32>| {
-        *l.get_or_init(|| 33)
-    };
+    let access = |l: &DoubleCheckedCell<i32>| *l.get_or_init(|| 33);
 
     do_bench(&mut gp, "double_checked_cell", init, access);
 
@@ -770,7 +762,7 @@ macro_rules! heavy_bench {
 
             static THREAD_IDS: AtomicUsize = AtomicUsize::new(0);
 
-            thread_local!{
+            thread_local! {
             static THREAD_ID: usize = THREAD_IDS.fetch_add(1, Ordering::Relaxed);
             }
 
@@ -842,7 +834,10 @@ macro_rules! heavy_bench {
                                 );
                                 std::process::exit(1);
                             }
-                            *v = i + k * 1000 + 1000000 * c0 + THREAD_ID.with(|f| *f) * 1_000_000_000;
+                            *v = i
+                                + k * 1000
+                                + 1000000 * c0
+                                + THREAD_ID.with(|f| *f) * 1_000_000_000;
                         }
                     }
                     k += 1;

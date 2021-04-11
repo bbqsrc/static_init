@@ -11,7 +11,7 @@ mod inner {
     // Cpuid is used to serialize instructions see:
     //https://www.intel.com/content/dam/www/public/us/en/documents/white-papers/ia-32-ia-64-benchmark-code-execution-paper.pdf
     use core::arch::x86_64::{__cpuid, __rdtscp, _rdtsc};
-    use core::sync::atomic::{compiler_fence,Ordering};
+    use core::sync::atomic::{compiler_fence, Ordering};
     use criterion::black_box;
     use std::time::{Duration, Instant};
 
@@ -46,11 +46,11 @@ mod inner {
             }
 
             arr.sort_unstable();
-            for k in 0..n/10 {
-                arr[k] = arr[n/10];
+            for k in 0..n / 10 {
+                arr[k] = arr[n / 10];
             }
-            for k in n-n/10..n {
-                arr[k] = arr[n-n/10 - 1];
+            for k in n - n / 10..n {
+                arr[k] = arr[n - n / 10 - 1];
             }
             let s = arr.iter().fold(0, |cur, v| cur + *v);
             let zero = s / 10000;
@@ -65,7 +65,7 @@ mod inner {
                 Instant::now().elapsed();
             }
 
-            std::thread::yield_now(); 
+            std::thread::yield_now();
 
             for _ in 1..10 {
                 Instant::now().elapsed();
@@ -75,7 +75,7 @@ mod inner {
             while i < n {
                 let e = Instant::now();
                 let e0 = black_box(Self::raw_start());
-                for _ in 0..i+1 {
+                for _ in 0..i + 1 {
                     black_box(Self::raw_start());
                     black_box(Self::raw_end());
                 }
@@ -84,41 +84,40 @@ mod inner {
                 if e1 < e0 {
                     continue;
                 } else {
-                    i+=1;
+                    i += 1;
                 }
-                let dx = e1-e0;
-                let x = if dx > zero {
-                    dx - zero
-                } else {
-                    0
-                };
-                arr.push((x as u32,y));
+                let dx = e1 - e0;
+                let x = if dx > zero { dx - zero } else { 0 };
+                arr.push((x as u32, y));
             }
 
             //Regularize
             let mut arr_1 = vec![];
             for v in arr.into_iter() {
                 let v0 = v.0 as f64;
-                arr_1.push((v0,v.1.as_nanos() as f64 / v0));
+                arr_1.push((v0, v.1.as_nanos() as f64 / v0));
             }
 
             //Windsorize
-            arr_1.sort_unstable_by(|a,b| PartialOrd::partial_cmp(&a.1,&b.1).unwrap());
+            arr_1.sort_unstable_by(|a, b| PartialOrd::partial_cmp(&a.1, &b.1).unwrap());
 
-            for k in 0..n/10 {
-                arr_1[k].1 = arr_1[n/10].1;
+            for k in 0..n / 10 {
+                arr_1[k].1 = arr_1[n / 10].1;
             }
-            for k in n-n/10..n {
-                arr_1[k].1 = arr_1[n-n/10-1].1;
+            for k in n - n / 10..n {
+                arr_1[k].1 = arr_1[n - n / 10 - 1].1;
             }
 
             //the linear function that minimize quadratic error sum goes
-            //through the middle point yeah!! 
-            let xm = arr_1.iter().fold(0f64, |v,x| v+x.0);
-            let ym = arr_1.iter().fold(0f64, |v,x| v+(x.0 * x.1));
-            
-            let ns_per_tick = ym/xm;
-            println!("Estimated processor frequency: {}",(100f64/ns_per_tick).round()/100f64);
+            //through the middle point yeah!!
+            let xm = arr_1.iter().fold(0f64, |v, x| v + x.0);
+            let ym = arr_1.iter().fold(0f64, |v, x| v + (x.0 * x.1));
+
+            let ns_per_tick = ym / xm;
+            println!(
+                "Estimated processor frequency: {}",
+                (100f64 / ns_per_tick).round() / 100f64
+            );
             TickCounter(zero, ns_per_tick)
         }
         #[inline(always)]
@@ -142,7 +141,7 @@ mod inner {
         fn raw_start() -> u64 {
             compiler_fence(Ordering::AcqRel);
             let r = unsafe {
-                //__cpuid(0); 
+                //__cpuid(0);
                 _rdtsc()
             };
             compiler_fence(Ordering::AcqRel);
@@ -254,4 +253,3 @@ mod inner {
         }
     }
 }
-

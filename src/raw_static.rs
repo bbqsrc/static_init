@@ -5,8 +5,8 @@ mod static_impl {
 
     use crate::{FinalyMode, InitMode, StaticInfo};
 
-    use core::mem::MaybeUninit;
     use core::cmp::Ordering::*;
+    use core::mem::MaybeUninit;
     use core::ops::{Deref, DerefMut};
     use core::sync::atomic::{AtomicI32, Ordering};
 
@@ -25,7 +25,6 @@ mod static_impl {
     /// All associated functions are only usefull for the implementation of
     /// the `dynamic` proc macro attribute
     pub struct ConstStatic<T>(Static<T>);
-
 
     static CUR_INIT_PRIO: AtomicI32 = AtomicI32::new(i32::MIN);
 
@@ -50,11 +49,7 @@ mod static_impl {
         }
         #[inline]
         pub const fn from(v: T, info: StaticInfo) -> Self {
-            Static(
-                MaybeUninit::new(v),
-                info,
-                AtomicI32::new(1),
-            )
+            Static(MaybeUninit::new(v), info, AtomicI32::new(1))
         }
 
         #[inline]

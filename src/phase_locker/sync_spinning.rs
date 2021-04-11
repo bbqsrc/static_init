@@ -254,7 +254,6 @@ impl<'a> Drop for Lock<'a> {
             Ok(_) => (),
             Err(_) => unreachable!(),
         };
-
     }
 }
 
@@ -573,7 +572,6 @@ impl SyncPhaseLocker {
         how: impl Fn(Phase) -> LockNature,
         mut cur: u32,
     ) -> LockResult<ReadLock<'_>, Lock<'_>> {
-
         let mut spin_wait = SpinWait::new();
         loop {
             let p = Phase::from_bits_truncate(cur);

@@ -320,11 +320,10 @@ impl<U, T: Fn() -> U> Generator<U> for T {
     }
 }
 
-impl<U, T:Fn() -> U> GeneratorTolerance for T {
+impl<U, T: Fn() -> U> GeneratorTolerance for T {
     const INIT_FAILURE: bool = true;
     const FINAL_REGISTRATION_FAILURE: bool = false;
 }
-
 
 /// A Drop replacement that does not change the state of the object
 pub trait Finaly {
@@ -335,7 +334,6 @@ pub trait Finaly {
 pub trait Uninit {
     fn uninit(&mut self);
 }
-
 
 #[cfg_attr(docsrs, doc(cfg(debug_mode)))]
 #[cfg(debug_mode)]
@@ -354,7 +352,7 @@ pub mod phase {
     pub(crate) const WRITE_WAITER_BIT: u32 = 0b1000_0000_0000_0000_0000_0000_0000_0000;
     #[cfg(not(feature = "spin_loop"))]
     pub(crate) const READ_WAITER_BIT: u32 = 0b0100_0000_0000_0000_0000_0000_0000_0000;
-    pub(crate) const LOCKED_BIT: u32 = 0b0010_0000_0000_0000_0000_0000_0000_0000; 
+    pub(crate) const LOCKED_BIT: u32 = 0b0010_0000_0000_0000_0000_0000_0000_0000;
     pub(crate) const READER_BITS: u32 = 0b0000_1111_1111_1111_1111_1111_0000_0000;
     pub(crate) const READER_OVERF: u32 = 0b0001_0000_0000_0000_0000_0000_0000_0000;
     pub(crate) const READER_UNITY: u32 = 0b0000_0000_0000_0000_0000_0001_0000_0000;
@@ -383,7 +381,7 @@ pub mod phase {
             const FINALIZED                 = 0b0000_0000_0000_0000_0000_0000_0100_0000;
             const FINALIZATION_PANICKED     = 0b0000_0000_0000_0000_0000_0000_1000_0000;
 
-            const INITIALIZED_AND_REGISTERED     = Self::INITIALIZED.bits | Self::REGISTERED.bits; 
+            const INITIALIZED_AND_REGISTERED     = Self::INITIALIZED.bits | Self::REGISTERED.bits;
         }
     }
 
@@ -448,7 +446,7 @@ pub use static_init_macro::dynamic;
 /// is attempted to be taken variates depending on the phase.
 ///
 /// The major difference with a RwLock is that decision to read lock, to write lock or not to lock
-/// is taken within the lock loop: on each attempt to take the lock, 
+/// is taken within the lock loop: on each attempt to take the lock,
 /// the PhaseLocker may change its locking strategy or abandon any further attempt to take the lock.
 pub mod phase_locker;
 pub use phase_locker::{LockNature, LockResult, PhaseGuard};

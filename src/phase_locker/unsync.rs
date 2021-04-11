@@ -79,7 +79,7 @@ unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for UnSyncPhaseGuard<'a, T> {
 }
 
 #[cfg(any(feature = "parking_lot_core", debug_mode))]
-impl<'a,T: RefUnwindSafe> RefUnwindSafe for UnSyncPhaseGuard<'a,T> {}
+impl<'a, T: RefUnwindSafe> RefUnwindSafe for UnSyncPhaseGuard<'a, T> {}
 
 impl<'a, T: ?Sized> From<UnSyncPhaseGuard<'a, T>> for UnSyncReadPhaseGuard<'a, T> {
     #[inline(always)]
@@ -136,7 +136,7 @@ impl<'a, T: 'a, U: 'a> Mappable<T, U, UnSyncReadPhaseGuard<'a, U>> for UnSyncRea
 }
 
 #[cfg(any(feature = "parking_lot_core", debug_mode))]
-impl<'a,T> RefUnwindSafe for UnSyncReadPhaseGuard<'a,T> {}
+impl<'a, T> RefUnwindSafe for UnSyncReadPhaseGuard<'a, T> {}
 
 impl<'a, T: ?Sized> Drop for UnSyncReadPhaseGuard<'a, T> {
     #[inline(always)]
@@ -280,4 +280,3 @@ impl UnSyncPhaseLocker {
 
 #[cfg(any(feature = "parking_lot_core", debug_mode))]
 impl RefUnwindSafe for UnSyncPhaseLocker {}
-

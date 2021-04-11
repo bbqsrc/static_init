@@ -1,4 +1,3 @@
-
 #[cfg(not(feature = "spin_loop"))]
 mod futex;
 
@@ -13,7 +12,6 @@ mod sync;
 
 pub(crate) use sync::Mutex;
 pub use sync::{SyncPhaseGuard, SyncPhaseLocker, SyncReadPhaseGuard};
-
 
 mod unsync;
 pub use unsync::UnSyncPhaseLocker;

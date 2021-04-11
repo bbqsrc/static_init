@@ -479,16 +479,16 @@ enum DropMode {
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct Tolerance {
-    init_fail: bool,
+    init_fail:         bool,
     registration_fail: bool,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct DynMode {
-    init: InitMode,
-    drop: DropMode,
+    init:      InitMode,
+    drop:      DropMode,
     tolerance: Tolerance,
-    priming: bool,
+    priming:   bool,
 }
 
 fn parse_priority(args: TokenStream) -> std::result::Result<u16, TokenStream2> {
@@ -542,10 +542,13 @@ fn parse_priority_literal(lit: &Lit) -> Result<u16, TokenStream2> {
 
 fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenStream2> {
     let mut opt = DynMode {
-        init: InitMode::Lazy,
-        drop: DropMode::None,
-        tolerance: Tolerance {init_fail: true, registration_fail: false},
-        priming : false,
+        init:      InitMode::Lazy,
+        drop:      DropMode::None,
+        tolerance: Tolerance {
+            init_fail:         true,
+            registration_fail: false,
+        },
+        priming:   false,
     };
 
     let mut init_set = false;
@@ -717,47 +720,53 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
 
     let stat_generator_name = Ident::new(&stat_generator_name, Span::call_site());
 
-    let err =  generate_error!(stat.expr.span()=>
-            "Expected an expression of the form `match INIT { PRIME => /*expr/*, DYN => /*expr*/}`"
-        );
+    let err = generate_error!(stat.expr.span()=>
+        "Expected an expression of the form `match INIT { PRIME => /*expr/*, DYN => /*expr*/}`"
+    );
 
     let (expr, prime_expr) = if !options.priming {
-        (&*stat.expr,None)
+        (&*stat.expr, None)
     } else if let Expr::Match(mexp) = &*stat.expr {
         if let Expr::Path(p) = &*mexp.expr {
             if !p.path.segments.len() == 1 && p.path.segments.first().unwrap().ident == "INIT" {
                 return generate_error!(mexp.expr.span()=>
-                    "Expected `INIT` because the static has `#[dynamic(prime)]` attribute."
-                    );
+                "Expected `INIT` because the static has `#[dynamic(prime)]` attribute."
+                );
             }
         } else {
             return generate_error!(mexp.expr.span()=>
-                "Expected `INIT` because the static has `#[dynamic(prime)]` attribute."
-                );
+            "Expected `INIT` because the static has `#[dynamic(prime)]` attribute."
+            );
         }
         if mexp.arms.len() != 2 {
             return generate_error!(mexp.span()=>
-                "Expected two match arms as the static has `#[dynamic(prime)]` attribute."
-                );
+            "Expected two match arms as the static has `#[dynamic(prime)]` attribute."
+            );
         }
         let mut expr = None;
         let mut prime_expr = None;
         for arm in &mexp.arms {
-           let p = match &arm.pat { 
-               Pat::Ident(p) if p.by_ref.is_none() && p.mutability.is_none() && p.subpat.is_none()=> p,
-               x => return generate_error!(x.span()=>
-                "Expected either `DYN` or `PRIME` as the static has `#[dynamic(prime)]` attribute."
-                ),
-           };
-           if p.ident == "PRIME" && prime_expr.is_none() {
-               prime_expr = Some(&*arm.body);
-           } else if p.ident == "DYN" && expr.is_none() {
-               expr = Some(&*arm.body);
-           } else {
-               return generate_error!(p.span()=>
+            let p = match &arm.pat {
+                Pat::Ident(p)
+                    if p.by_ref.is_none() && p.mutability.is_none() && p.subpat.is_none() =>
+                {
+                    p
+                }
+                x => {
+                    return generate_error!(x.span()=>
+                    "Expected either `DYN` or `PRIME` as the static has `#[dynamic(prime)]` attribute."
+                    )
+                }
+            };
+            if p.ident == "PRIME" && prime_expr.is_none() {
+                prime_expr = Some(&*arm.body);
+            } else if p.ident == "DYN" && expr.is_none() {
+                expr = Some(&*arm.body);
+            } else {
+                return generate_error!(p.span()=>
                 "Repeated match expression `", p, "`. There must be one arm that matches `PRIME` and the other `DYN`."
                 );
-           }
+            }
         }
         (expr.unwrap(), Some(prime_expr))
     } else {
@@ -768,23 +777,24 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
 
     let is_thread_local = has_thread_local(&stat.attrs);
 
-    if is_thread_local && !(options.init == InitMode::Lazy || options.init == InitMode::LesserLazy) {
+    if is_thread_local && !(options.init == InitMode::Lazy || options.init == InitMode::LesserLazy)
+    {
         return generate_error!(
             "Only statics with `#[dynamic(lazy)]` or `#[dynamic(lazy,drop)]` can also have \
              `#[thread_local]` attribute"
         );
     }
 
-    let stat_ref: Expr = if !(options.init == InitMode::Lazy || options.init == InitMode::LesserLazy)
-    {
-        parse_quote! {
-            &mut #stat_name
-        }
-    } else {
-        parse_quote! {
-            &#stat_name
-        }
-    };
+    let stat_ref: Expr =
+        if !(options.init == InitMode::Lazy || options.init == InitMode::LesserLazy) {
+            parse_quote! {
+                &mut #stat_name
+            }
+        } else {
+            parse_quote! {
+                &#stat_name
+            }
+        };
 
     macro_rules! into_mutable {
         () => {
@@ -1068,8 +1078,8 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 }
             }
             impl ::static_init::GeneratorTolerance for #stat_generator_name {
-                const INIT_FAILURE: bool = #init_fail_tol; 
-                const FINAL_REGISTRATION_FAILURE: bool = #reg_fail_tol; 
+                const INIT_FAILURE: bool = #init_fail_tol;
+                const FINAL_REGISTRATION_FAILURE: bool = #reg_fail_tol;
             }
         })
     } else {
