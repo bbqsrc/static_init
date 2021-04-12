@@ -8,7 +8,7 @@ use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{fence, AtomicU32, Ordering};
 
 /// A synchronised phase locker.
-pub struct SyncPhaseLocker(AtomicU32);
+pub(crate) struct SyncPhaseLocker(AtomicU32);
 
 pub(crate) struct Lock<'a> {
     futex:      &'a AtomicU32,
@@ -18,7 +18,7 @@ pub(crate) struct Lock<'a> {
 
 /// A phase guard that allow atomic phase transition that
 /// can be turned fastly into a [SyncReadPhaseGuard].
-pub struct SyncPhaseGuard<'a, T: ?Sized>(&'a T, Lock<'a>);
+pub(crate) struct SyncPhaseGuard<'a, T: ?Sized>(&'a T, Lock<'a>);
 
 pub(crate) struct ReadLock<'a> {
     futex:      &'a AtomicU32,
@@ -26,7 +26,7 @@ pub(crate) struct ReadLock<'a> {
 }
 
 /// A kind of read lock.
-pub struct SyncReadPhaseGuard<'a, T: ?Sized>(&'a T, ReadLock<'a>);
+pub(crate) struct SyncReadPhaseGuard<'a, T: ?Sized>(&'a T, ReadLock<'a>);
 
 pub(crate) struct Mutex<T>(UnsafeCell<T>, SyncPhaseLocker);
 
@@ -112,10 +112,6 @@ impl<'a, T: ?Sized> SyncReadPhaseGuard<'a, T> {
     #[inline(always)]
     fn new(r: &'a T, lock: ReadLock<'a>) -> Self {
         Self(r, lock)
-    }
-    #[inline(always)]
-    pub fn phase(&self) -> Phase {
-        self.1.init_phase
     }
 
     #[inline(always)]

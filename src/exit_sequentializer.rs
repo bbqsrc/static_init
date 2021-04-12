@@ -20,7 +20,7 @@ mod exit_manager {
 
     type Node = dyn 'static + OnExit + Sync;
 
-    pub struct ExitSequentializerBase<G> {
+    struct ExitSequentializerBase<G> {
         sub:  SubSequentializer<G>,
         next: Mutex<Option<&'static Node>>,
     }
@@ -35,7 +35,7 @@ mod exit_manager {
 
     /// A sequentializer that store finalize_callback  
     /// for execution at program exit
-    pub struct ExitSequentializer<Tol>(ExitSequentializerBase<Tol>);
+    pub(crate) struct ExitSequentializer<Tol>(ExitSequentializerBase<Tol>);
 
     mod reg {
 
@@ -78,7 +78,7 @@ mod exit_manager {
 
         /// Store a reference of the static for execution of the
         /// finalize call back at program exit
-        pub fn finalize_at_exit<
+        pub(crate) fn finalize_at_exit<
             T: 'static + Sequential<Sequentializer = ExitSequentializer<Tol>> + Sync,
             Tol: 'static + GeneratorTolerance,
         >(
@@ -101,7 +101,7 @@ mod exit_manager {
             }
         }
     }
-    pub use reg::finalize_at_exit;
+    pub(crate) use reg::finalize_at_exit;
 
     #[allow(clippy::declare_interior_mutable_const)]
     /// This object is only used to for const initialization
@@ -273,10 +273,10 @@ mod exit_manager {
         }
     }
 }
-pub use exit_manager::{finalize_at_exit, ExitSequentializer};
+pub(crate) use exit_manager::ExitSequentializer;
 
 #[cfg(feature = "thread_local")]
-pub use local_manager::{finalize_at_thread_exit, ThreadExitSequentializer};
+pub(crate) use local_manager::ThreadExitSequentializer;
 
 #[cfg(feature = "thread_local")]
 mod local_manager {
@@ -321,7 +321,7 @@ mod local_manager {
     #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
     /// A sequentializer that store finalize_callback  
     /// for execution at thread exit
-    pub struct ThreadExitSequentializer<Tol>(ThreadExitSequentializerBase<Tol>);
+    pub(crate) struct ThreadExitSequentializer<Tol>(ThreadExitSequentializerBase<Tol>);
 
     #[allow(clippy::declare_interior_mutable_const)]
     /// This object is only used to be copied
@@ -547,7 +547,7 @@ mod local_manager {
         #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
-        pub fn finalize_at_thread_exit<
+        pub(crate) fn finalize_at_thread_exit<
             T: Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
             Tol: GeneratorTolerance,
         >(
@@ -566,7 +566,7 @@ mod local_manager {
         }
     }
     #[cfg(coff_thread_at_exit)]
-    pub use windows::finalize_at_thread_exit;
+    use windows::finalize_at_thread_exit;
 
     #[cfg(cxa_thread_at_exit)]
     mod cxa {
@@ -617,7 +617,7 @@ mod local_manager {
         #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
-        pub fn finalize_at_thread_exit<
+        pub(crate) fn finalize_at_thread_exit<
             T: 'static + Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
             Tol: 'static + GeneratorTolerance,
         >(
@@ -637,7 +637,7 @@ mod local_manager {
         }
     }
     #[cfg(cxa_thread_at_exit)]
-    pub use cxa::finalize_at_thread_exit;
+    use cxa::finalize_at_thread_exit;
 
     #[cfg(pthread_thread_at_exit)]
     mod pthread {
@@ -748,7 +748,7 @@ mod local_manager {
         #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
-        pub fn finalize_at_thread_exit<
+        pub(crate) fn finalize_at_thread_exit<
             T: Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
             Tol: GeneratorTolerance,
         >(
@@ -764,5 +764,5 @@ mod local_manager {
         }
     }
     #[cfg(pthread_thread_at_exit)]
-    pub use pthread::finalize_at_thread_exit;
+    use pthread::finalize_at_thread_exit;
 }

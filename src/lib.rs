@@ -133,7 +133,7 @@ use core::cell::Cell;
 /// The trait is unsafe because the implementor should ensure that the reference returned by
 /// [`sequentializer`](Self::sequentializer) and the reference returned by [`data`](Self::data) refer to two subobject of a same object.
 ///
-pub unsafe trait Sequential {
+unsafe trait Sequential {
     type Data;
     type Sequentializer;
     fn sequentializer(this: &Self) -> &Self::Sequentializer;
@@ -145,16 +145,6 @@ pub unsafe trait Sequential {
 pub trait Phased {
     /// return the current phase
     fn phase(this: &Self) -> Phase;
-}
-
-impl<T> Phased for T
-where
-    T: Sequential,
-    T::Sequentializer: Phased,
-{
-    fn phase(this: &Self) -> Phase {
-        Phased::phase(Sequential::sequentializer(this))
-    }
 }
 
 /// A type that implement Sequentializer aims at [phase](Phase) sequencement.
@@ -171,7 +161,7 @@ where
 ///  - if the implementor is not Sync then the lock should panic if any attempt is made
 ///    to take another lock while a write lock is alive or to take a write lock while there
 ///    is already a read_lock.(the lock should behave as a RefCell).
-pub unsafe trait Sequentializer<'a, T: Sequential + 'a>: Sized + Phased {
+unsafe trait Sequentializer<'a, T: Sequential + 'a>: Sized + Phased {
     type ReadGuard;
     type WriteGuard;
     /// Lock the phases of an object in order to ensure atomic phase transition.
@@ -211,7 +201,7 @@ pub unsafe trait Sequentializer<'a, T: Sequential + 'a>: Sized + Phased {
 ///  - if the implementor is not Sync then the lock should panic if any attempt is made
 ///    to take another lock while a write lock is alive or to take a write lock while there
 ///    is already a read_lock.(the lock should behave as a RefCell).
-pub unsafe trait LazySequentializer<'a, T: Sequential + 'a>: Sequentializer<'a, T> {
+unsafe trait LazySequentializer<'a, T: Sequential + 'a>: Sequentializer<'a, T> {
     const INITIALIZED_HINT: Phase;
     /// if `shall_init` return true for the target [`Sequential`] object, it initialize
     /// the data of the target object using `init`
@@ -260,7 +250,7 @@ pub unsafe trait LazySequentializer<'a, T: Sequential + 'a>: Sequentializer<'a, 
     ) -> Option<Self::WriteGuard>;
 }
 
-pub trait UniqueLazySequentializer<T: Sequential> {
+trait UniqueLazySequentializer<T: Sequential> {
     /// if `shall_init` return true for the target [`Sequential`] object, it initialize
     /// the data of the target object using `init`
     ///
@@ -290,7 +280,7 @@ pub trait UniqueLazySequentializer<T: Sequential> {
 ///  - either the implementor is Sync and the initialization is performed atomically
 ///  - or the implementor is not Sync and any attempt to perform an initialization while
 ///    an initialization is running will cause a panic.
-pub unsafe trait FinalizableLazySequentializer<'a, T: 'a + Sequential>:
+unsafe trait FinalizableLazySequentializer<'a, T: 'a + Sequential>:
     Sequentializer<'a, T>
 {
     /// if `shall_init` return true for the target [`Sequential`] object, it initialize
@@ -500,21 +490,21 @@ pub use static_init_macro::dynamic;
 /// The major difference with a RwLock is that decision to read lock, to write lock or not to lock
 /// is taken within the lock loop: on each attempt to take the lock,
 /// the PhaseLocker may change its locking strategy or abandon any further attempt to take the lock.
-pub mod phase_locker;
-pub use phase_locker::{LockNature, LockResult, PhaseGuard};
+mod phase_locker;
+use phase_locker::{LockNature, LockResult};
 
 /// Provides two lazy sequentializers, one that is Sync, and the other that is not Sync, that are
 /// able to sequentialize the target object initialization but cannot register its finalization
 /// callback.
-pub mod lazy_sequentializer;
+mod lazy_sequentializer;
 
 #[cfg(any(elf, mach_o, coff))]
 /// Provides two lazy sequentializers, one that will finalize the target object at program exit and
 /// the other at thread exit.
-pub mod exit_sequentializer;
+mod exit_sequentializer;
 
 /// Provides policy types for implementation of various lazily initialized types.
-pub mod generic_lazy;
+mod generic_lazy;
 
 /// Provides various implementation of lazily initialized types
 pub mod lazy;

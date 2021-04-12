@@ -11,11 +11,11 @@ mod sync;
 mod sync;
 
 pub(crate) use sync::Mutex;
-pub use sync::{SyncPhaseGuard, SyncPhaseLocker, SyncReadPhaseGuard};
+pub(crate) use sync::{SyncPhaseGuard, SyncPhaseLocker, SyncReadPhaseGuard};
 
 mod unsync;
-pub use unsync::UnSyncPhaseLocker;
-pub use unsync::{UnSyncPhaseGuard, UnSyncReadPhaseGuard};
+pub(crate) use unsync::UnSyncPhaseLocker;
+pub(crate) use unsync::{UnSyncPhaseGuard, UnSyncReadPhaseGuard};
 
 use super::{Phase, Phased};
 
@@ -26,7 +26,7 @@ use super::{Phase, Phased};
 ///
 /// The trait is unsafe because the implementation must fullfill the
 /// following requirement described in the documentation of the functions
-pub unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
+pub(crate) unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
     /// Set the phase at which will be the traget object
     /// when the phase guard will be dropped
     ///
@@ -58,11 +58,11 @@ pub unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
     ) -> R;
 }
 
-pub trait Mappable<T, V, U> {
+pub(crate) trait Mappable<T, V, U> {
     fn map<F: FnOnce(&T) -> &V>(self, f: F) -> U;
 }
 
-pub unsafe trait PhaseLocker<'a, T: 'a> {
+pub(crate) unsafe trait PhaseLocker<'a, T: 'a> {
     type ReadGuard: Phased;
     type WriteGuard: Phased + PhaseGuard<'a, T>;
 

@@ -1,3 +1,5 @@
+#![allow(unused)]//functions that are usefull for extension
+
 use crate::{
     Finaly, Generator, LazySequentializer, LockNature, LockResult, Phase, Phased, Sequential,
     Sequentializer, StaticInfo, Uninit,UniqueLazySequentializer
@@ -16,7 +18,7 @@ use crate::CyclicPanic;
 use std::panic::RefUnwindSafe;
 
 /// Policy for lazy initialization
-pub trait LazyPolicy {
+pub(crate) trait LazyPolicy {
     /// shall the initialization be performed (tested at each access)
     fn shall_init(_: Phase) -> bool;
     /// Is the object accessible in phase `p`
@@ -29,7 +31,7 @@ pub trait LazyPolicy {
 
 /// Generic lazy interior data storage, uninitialized with interior mutability data storage
 /// that call T::finaly when finalized
-pub struct UnInited<T>(UnsafeCell<MaybeUninit<T>>);
+pub(crate) struct UnInited<T>(UnsafeCell<MaybeUninit<T>>);
 
 impl<T: Finaly> Finaly for UnInited<T> {
     #[inline(always)]
@@ -49,7 +51,7 @@ impl<T> UnInited<T> {
 
 /// Generic lazy interior data storage, initialized with interior mutability data storage
 /// that call T::finaly when finalized
-pub struct Primed<T>(UnsafeCell<T>);
+pub(crate) struct Primed<T>(UnsafeCell<T>);
 
 impl<T: Uninit> Finaly for Primed<T> {
     #[inline(always)]
@@ -71,7 +73,7 @@ impl<T> Primed<T> {
 
 /// Generic lazy interior data storage, uninitialized with interior mutability data storage
 /// that call drop when finalized
-pub struct DropedUnInited<T>(UnsafeCell<MaybeUninit<T>>);
+pub(crate) struct DropedUnInited<T>(UnsafeCell<MaybeUninit<T>>);
 
 impl<T> Finaly for DropedUnInited<T> {
     #[inline(always)]
@@ -93,7 +95,7 @@ impl<T> DropedUnInited<T> {
 ///
 /// Dereferencement of generic lazy will return a reference to
 /// the inner data returned by the get method
-pub trait LazyData {
+pub(crate) trait LazyData {
     type Target;
     fn get(&self) -> *mut Self::Target;
     /// # Safety
@@ -153,12 +155,12 @@ impl Display for AccessError {
 #[cfg(feature = "parking_lot_core")]
 impl std::error::Error for AccessError {}
 
-pub struct GenericLazySeq<T, M> {
+pub(crate) struct GenericLazySeq<T, M> {
     value:          T,
     sequentializer: M,
 }
 
-pub struct GenericLockedLazySeq<T, M> {
+pub(crate) struct GenericLockedLazySeq<T, M> {
     value:          T,
     sequentializer: M,
 }
@@ -166,7 +168,7 @@ pub struct GenericLockedLazySeq<T, M> {
 /// A type that wrap a Sequentializer and a raw data, and that may
 /// initialize the data, at each access depending on the LazyPolicy
 /// provided as generic argument.
-pub struct GenericLazy<T, F, M, S> {
+pub(crate) struct GenericLazy<T, F, M, S> {
     seq:       GenericLazySeq<T, M>,
     generator: F,
     phantom:   PhantomData<S>,
@@ -492,7 +494,7 @@ unsafe impl<T: LazyData, M> Sequential for GenericLazySeq<T, M> {
 }
 
 #[must_use="If unused the write lock is immediatly released"]
-pub struct WriteGuard<T>(T);
+pub(crate) struct WriteGuard<T>(T);
 
 impl<T> Deref for WriteGuard<T>
 where
@@ -541,7 +543,7 @@ impl<T> Debug for WriteGuard<T>
 
 #[must_use="If unused the read lock is immediatly released"]
 #[derive(Clone)]
-pub struct ReadGuard<T>(T);
+pub(crate) struct ReadGuard<T>(T);
 
 impl<T> Deref for ReadGuard<T>
 where
@@ -597,7 +599,7 @@ impl<T: LazyData> RefUnwindSafe for WriteGuard<T> where <T as LazyData>::Target:
 /// A type that wrap a Sequentializer and a raw data, and that may
 /// initialize the data, at each access depending on the LazyPolicy
 /// provided as generic argument.
-pub struct GenericLockedLazy<T, F, M, S> {
+pub(crate) struct GenericLockedLazy<T, F, M, S> {
     seq:       GenericLockedLazySeq<T, M>,
     generator: F,
     phantom:   PhantomData<S>,

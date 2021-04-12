@@ -9,13 +9,13 @@ use core::ops::Deref;
 use std::panic::RefUnwindSafe;
 
 /// A kind of RefCell that is also phase locker.
-pub struct UnSyncPhaseLocker(Cell<u32>);
+pub(crate) struct UnSyncPhaseLocker(Cell<u32>);
 
 /// Equivalent to std::cell::Ref.
-pub struct UnSyncPhaseGuard<'a, T: ?Sized>(&'a T, &'a Cell<u32>, Phase);
+pub(crate) struct UnSyncPhaseGuard<'a, T: ?Sized>(&'a T, &'a Cell<u32>, Phase);
 
 /// Equivalent to std::cell::RefMut that implements PhaseLocker.
-pub struct UnSyncReadPhaseGuard<'a, T: ?Sized>(&'a T, &'a Cell<u32>);
+pub(crate) struct UnSyncReadPhaseGuard<'a, T: ?Sized>(&'a T, &'a Cell<u32>);
 
 impl<'a, T> Deref for UnSyncPhaseGuard<'a, T> {
     type Target = T;

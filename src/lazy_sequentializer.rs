@@ -2,7 +2,7 @@ use crate::phase_locker::PhaseGuard;
 use crate::{GeneratorTolerance, Phase, Sequential};
 use core::marker::PhantomData;
 
-pub use generic::{SyncSequentializer, UnSyncSequentializer};
+pub(crate) use generic::{SyncSequentializer, UnSyncSequentializer};
 
 
 #[inline]
@@ -744,9 +744,9 @@ mod generic {
     }
 
 
-pub type SyncSequentializer<G> = LazySequentializer<SyncPhaseLocker, G>;
+pub(crate) type SyncSequentializer<G> = LazySequentializer<SyncPhaseLocker, G>;
 
-pub type UnSyncSequentializer<G> = LazySequentializer<UnSyncPhaseLocker, G>;
+pub(crate) type UnSyncSequentializer<G> = LazySequentializer<UnSyncPhaseLocker, G>;
 
 //no other options than copy past without requirements of the form "for<'b such that 'a:'b>  X: ..."
 impl<T: Sequential<Sequentializer=Self>, G:GeneratorTolerance> UniqueLazySequentializer<T> for SyncSequentializer<G> 
