@@ -1,4 +1,4 @@
-use super::{LockNature, LockResult, Mappable, PhaseGuard, PhaseLocker};
+use super::{LockNature, LockResult, Mappable, PhaseGuard, PhaseLocker, MutPhaseLocker};
 use crate::phase::*;
 use crate::{Phase, Phased};
 use core::cell::Cell;
@@ -154,6 +154,26 @@ impl<'a, T: ?Sized> Drop for UnSyncReadPhaseGuard<'a, T> {
 // UnSyncPhasedLocker
 // ---------------
 //
+//
+unsafe impl MutPhaseLocker for UnSyncPhaseLocker {
+    #[inline(always)]
+    fn get_phase_unique(&mut self) -> Phase {
+       Phase::from_bits(self.0.get()).unwrap()
+    }
+
+    #[inline(always)]
+    fn set_phase(&mut self, p: Phase) {
+        *self.0.get_mut() = p.bits();
+    }
+
+    #[inline(always)]
+    fn transition<R>(&mut self,f: impl FnOnce() -> R, on_success: Phase, on_panic:Phase) -> R {
+        self.0.set(on_panic.bits());
+        let r = f();
+        self.0.set(on_success.bits());
+        r
+    }
+}
 unsafe impl<'a, T: 'a> PhaseLocker<'a, T> for UnSyncPhaseLocker {
     type ReadGuard = UnSyncReadPhaseGuard<'a, T>;
     type WriteGuard = UnSyncPhaseGuard<'a, T>;

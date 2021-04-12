@@ -1,6 +1,6 @@
 use super::futex::Futex;
 use super::spin_wait::SpinWait;
-use super::{LockNature, LockResult, Mappable, PhaseGuard, PhaseLocker};
+use super::{LockNature, LockResult, Mappable, PhaseGuard, PhaseLocker, MutPhaseLocker};
 use crate::phase::*;
 use crate::{Phase, Phased};
 use core::cell::UnsafeCell;
@@ -530,9 +530,36 @@ fn wake_readers(futex: &Futex, to_unactivate: u32, converting: bool) -> ReadLock
     ReadLock::new(futex, cur)
 }
 
+struct MutGuard<'a>(&'a mut Futex,Phase);
+impl<'a> Drop for MutGuard<'a> {
+    fn drop(&mut self) {
+        *self.0.get_mut() = self.1.bits();
+    }
+}
+
 // SyncPhaseLocker
 // ---------------
 //
+unsafe impl MutPhaseLocker for SyncPhaseLocker {
+    #[inline(always)]
+    fn get_phase_unique(&mut self) -> Phase {
+        Phase::from_bits(*self.0.get_mut()).unwrap()
+    }
+
+    #[inline(always)]
+    fn set_phase(&mut self, p: Phase) {
+        *self.0.get_mut() = p.bits();
+    }
+
+    #[inline(always)]
+    fn transition<R>(&mut self,f: impl FnOnce() -> R, on_success: Phase, on_panic:Phase) -> R {
+        let m = MutGuard(&mut self.0, on_panic);
+        let r = f();
+        forget(m);
+        Self::set_phase(self,on_success);
+        r
+    }
+}
 unsafe impl<'a, T: 'a> PhaseLocker<'a, T> for SyncPhaseLocker {
     type ReadGuard = SyncReadPhaseGuard<'a, T>;
     type WriteGuard = SyncPhaseGuard<'a, T>;

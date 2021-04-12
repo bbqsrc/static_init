@@ -194,14 +194,6 @@ mod exit_manager {
             )
         }
         #[inline(always)]
-        fn init_unique(
-            st: &'static mut T,
-            shall_init: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&'static <T as Sequential>::Data),
-        ) -> Phase {
-            <SubSequentializer<Tol> as LazySequentializer<T>>::init_unique(st, shall_init, init)
-        }
-        #[inline(always)]
         fn init_then_read_guard(
             st: &'static T,
             shall_init: impl Fn(Phase) -> bool,
@@ -408,14 +400,6 @@ mod local_manager {
                 init,
                 finalize_at_thread_exit,
             )
-        }
-        #[inline(always)]
-        fn init_unique(
-            st: &'static mut T,
-            shall_proceed: impl Fn(Phase) -> bool,
-            init: impl FnOnce(&'static <T as Sequential>::Data),
-        ) -> Phase {
-            <SubSequentializer<Tol> as LazySequentializer<T>>::init_unique(st, shall_proceed, init)
         }
         #[inline(always)]
         fn init_then_read_guard(

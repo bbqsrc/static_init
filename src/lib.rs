@@ -138,7 +138,7 @@ unsafe trait Sequential {
     type Sequentializer;
     fn sequentializer(this: &Self) -> &Self::Sequentializer;
     fn data(this: &Self) -> &Self::Data;
-    fn sequentializer_data_mut(this: &mut Self) -> (&mut Self::Sequentializer, &Self::Data);
+    fn sequentializer_data_mut(this: &mut Self) -> (&mut Self::Sequentializer, &mut Self::Data);
 }
 
 /// Trait for objects that know in which [phase](Phase) they are.
@@ -215,11 +215,11 @@ unsafe trait LazySequentializer<'a, T: Sequential + 'a>: Sequentializer<'a, T> {
         shall_init: impl Fn(Phase) -> bool,
         init: impl FnOnce(&'a <T as Sequential>::Data),
     ) -> Phase;
-    fn init_unique(
-        target: &'a mut T,
-        shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&'a <T as Sequential>::Data),
-    ) -> Phase;
+    //fn init_unique(
+    //    target: &'a mut T,
+    //    shall_init: impl Fn(Phase) -> bool,
+    //    init: impl FnOnce(&'a <T as Sequential>::Data),
+    //) -> Phase;
     /// Similar to [init](Self::init) but returns a lock that prevents the phase of the object
     /// to change (Read Lock). The returned lock may be shared.
     fn init_then_read_guard(
@@ -258,12 +258,11 @@ trait UniqueLazySequentializer<T: Sequential> {
     /// in order to drop the object on the occurence of singular event (thread exit, or program
     /// exit). If this registration fails and if `init_on_reg_failure` is `true` then the object
     /// will be initialized, otherwise it will not.
-    fn init_unique<'a>(
-        target: &'a mut T,
+    fn init_unique(
+        target: &mut T,
         shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&'a<T as Sequential>::Data),
-    ) -> Phase
-    where Self:'a;
+        init: impl FnOnce(&mut<T as Sequential>::Data),
+    ) -> Phase;
 }
 
 
@@ -367,13 +366,20 @@ impl<U, T: FnOnce() -> U> GeneratorTolerance for Cell<Option<T>> {
     const FINAL_REGISTRATION_FAILURE: bool = false;
 }
 
-/// A Drop replacement that does not change the state of the object
+/// Trait that must be implemented by #[dynamic(finalize)] statics. 
 pub trait Finaly {
+    /// This method is called when program or thread exit and the lazy
+    /// was initialized
     fn finaly(&self);
 }
 
-/// A Drop replacement that changes the value
+/// Trait that must be implemented by #[dynamic(prime)] mutable statics. 
 pub trait Uninit {
+    /// This method is called when program or thread exit and the lazy
+    /// was initialized
+    ///
+    /// It should leave the target objet in a valid state as it could
+    /// be accessed throud `primed_<read|write>` method familly.
     fn uninit(&mut self);
 }
 
@@ -505,6 +511,9 @@ mod exit_sequentializer;
 
 /// Provides policy types for implementation of various lazily initialized types.
 mod generic_lazy;
+
+#[doc(inline)]
+pub use generic_lazy::AccessError;
 
 /// Provides various implementation of lazily initialized types
 pub mod lazy;

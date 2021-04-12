@@ -45,11 +45,6 @@ pub(crate) unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
     ///   - if execution of f does not panic change, call Self::set_phase(on_success)
     ///   - if execution of f panics: set the phase of the target object to on_panic and
     ///   release the lock.
-    ///
-    /// # Safety
-    ///
-    /// The phase provided must be consistant with the transition otherwise
-    /// this will leads to unsoundness
     fn transition<R>(
         &mut self,
         f: impl FnOnce(&'a T) -> R,
@@ -81,6 +76,18 @@ pub(crate) unsafe trait PhaseLocker<'a, T: 'a> {
         hint: Phase,
     ) -> Option<LockResult<Self::ReadGuard, Self::WriteGuard>>;
     fn phase(&self) -> Phase;
+}
+
+pub(crate) unsafe trait MutPhaseLocker{
+    fn get_phase_unique(&mut self) -> Phase;
+    fn set_phase(&mut self, p: Phase);
+
+    fn transition<R>(
+        &mut self,
+        f: impl FnOnce() -> R,
+        on_success: Phase,
+        on_panic: Phase,
+    ) -> R;
 }
 
 /// Nature of the lock requested

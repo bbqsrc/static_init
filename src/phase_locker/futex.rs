@@ -18,7 +18,7 @@ const READ_FAIRNESS_PERIOD:u16 = 32;
 mod linux {
     use super::READ_FAIRNESS_PERIOD;
     use crate::phase::*;
-    use core::ops::Deref;
+    use core::ops::{Deref, DerefMut};
     use core::ptr;
     use core::sync::atomic::{compiler_fence, AtomicU32, AtomicU16, Ordering};
     use libc::{syscall, SYS_futex, FUTEX_PRIVATE_FLAG, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET};
@@ -127,6 +127,11 @@ mod linux {
             &self.futex
         }
     }
+    impl DerefMut for Futex {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.futex
+        }
+    }
 }
 #[cfg(all(
     not(feature = "parking_lot_core"),
@@ -138,7 +143,7 @@ pub(crate) use linux::Futex;
 mod other {
     use super::READ_FAIRNESS_PERIOD;
     use crate::phase::*;
-    use core::ops::Deref;
+    use core::ops::{Deref, DerefMut};
     use core::sync::atomic::{compiler_fence, AtomicU32, AtomicU16, Ordering};
     use parking_lot_core::{
         park, unpark_filter, unpark_one, FilterOp, ParkResult, DEFAULT_PARK_TOKEN,
@@ -249,6 +254,11 @@ mod other {
         type Target = AtomicU32;
         fn deref(&self) -> &Self::Target {
             &self.futex
+        }
+    }
+    impl DerefMut for Futex {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.futex
         }
     }
 }

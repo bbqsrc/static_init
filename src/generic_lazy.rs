@@ -102,6 +102,7 @@ pub(crate) trait LazyData {
     ///
     /// The reference to self should be unique
     unsafe fn init(&self, v: Self::Target);
+    fn init_mut(&mut self, v: Self::Target);
 }
 
 impl<T> LazyData for UnInited<T> {
@@ -113,6 +114,10 @@ impl<T> LazyData for UnInited<T> {
     #[inline(always)]
     unsafe fn init(&self, v: T) {
         self.get().write(v)
+    }
+    #[inline(always)]
+    fn init_mut(&mut self, v: T) {
+        *self.0.get_mut() = MaybeUninit::new(v)
     }
 }
 
@@ -126,6 +131,10 @@ impl<T> LazyData for DropedUnInited<T> {
     unsafe fn init(&self, v: T) {
         self.get().write(v)
     }
+    #[inline(always)]
+    fn init_mut(&mut self, v: T) {
+        *self.0.get_mut() = MaybeUninit::new(v)
+    }
 }
 
 impl<T> LazyData for Primed<T> {
@@ -138,9 +147,13 @@ impl<T> LazyData for Primed<T> {
     unsafe fn init(&self, v: T) {
         *self.get() = v
     }
+    #[inline(always)]
+    fn init_mut(&mut self, v: T) {
+        *self.0.get_mut() = v
+    }
 }
 
-/// Errors that happens when trying to get a readable access to a lazy
+/// Lazy access error
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct AccessError {
     pub phase: Phase,
@@ -464,12 +477,12 @@ impl<T, F, M, S> GenericLazy<T, F, M, S>
         <M as UniqueLazySequentializer<GenericLazySeq<T, M>>>::init_unique(
             seq,
             S::shall_init,
-            |data: &T| {
+            |data: &mut T| {
                 // SAFETY
                 // This function is called only once within the init function
                 // Only one thread can ever get this mutable access
                 let d = Generator::generate(generator);
-                unsafe { data.init(d) };
+                unsafe { data.init_mut(d) };
             },
         )
     }
@@ -484,8 +497,8 @@ unsafe impl<T: LazyData, M> Sequential for GenericLazySeq<T, M> {
         &this.sequentializer
     }
     #[inline(always)]
-    fn sequentializer_data_mut(this: &mut Self) -> (&mut Self::Sequentializer, &Self::Data) {
-        (&mut this.sequentializer, &this.value)
+    fn sequentializer_data_mut(this: &mut Self) -> (&mut Self::Sequentializer, &mut Self::Data) {
+        (&mut this.sequentializer, &mut this.value)
     }
     #[inline(always)]
     fn data(this: &Self) -> &Self::Data {
@@ -1148,12 +1161,12 @@ impl<T, F, M, S> GenericLockedLazy<T, F, M, S>
         <M as UniqueLazySequentializer<GenericLockedLazySeq<T, M>>>::init_unique(
             seq,
             S::shall_init,
-            |data: &T| {
+            |data: &mut T| {
                 // SAFETY
                 // This function is called only once within the init function
                 // Only one thread can ever get this mutable access
                 let d = Generator::generate(generator);
-                unsafe { data.init(d) };
+                unsafe { data.init_mut(d) };
             },
         )
     }
@@ -1168,8 +1181,8 @@ unsafe impl<T: LazyData, M> Sequential for GenericLockedLazySeq<T, M> {
         &this.sequentializer
     }
     #[inline(always)]
-    fn sequentializer_data_mut(this: &mut Self) -> (&mut Self::Sequentializer, &Self::Data) {
-        (&mut this.sequentializer, &this.value)
+    fn sequentializer_data_mut(this: &mut Self) -> (&mut Self::Sequentializer, &mut Self::Data) {
+        (&mut this.sequentializer, &mut this.value)
     }
     #[inline(always)]
     fn data(this: &Self) -> &Self::Data {

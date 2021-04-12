@@ -80,7 +80,7 @@ where
     fn new(f: F) -> Self {
         Self(RwLock::new(None), AtomicI32::new(0), f)
     }
-    fn new_static(f: F) -> Self {
+    fn from_generator(f: F) -> Self {
         Self(RwLock::new(None), AtomicI32::new(0), f)
     }
     //fn try_write(&self) -> Result<MappedRwLockWriteGuard<'_,RawRwLock,T>,()> {
@@ -269,14 +269,14 @@ fn bench_init(c: &mut Criterion) {
     do_bench(
         &mut gp,
         "Locked Lazy read",
-        || LockedLazy::new_static(Xx),
+        || LockedLazy::from_generator(Xx),
         |l| *l.read(),
     );
 
     do_bench(
         &mut gp,
         "Locked Lazy write",
-        || LockedLazy::new_static(Xx),
+        || LockedLazy::from_generator(Xx),
         |l| *l.write(),
     );
 
@@ -292,7 +292,7 @@ fn bench_init(c: &mut Criterion) {
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    do_bench(&mut gp, "Lazy", || Lazy::new_static(Xx), |l| **l);
+    do_bench(&mut gp, "Lazy", || Lazy::from_generator(Xx), |l| **l);
 
     let init = || STLazy::<i32>::INIT;
 
@@ -318,14 +318,14 @@ fn bench_init(c: &mut Criterion) {
     do_bench(
         &mut gp,
         "Locked Lazy read",
-        || LockedLazy::new_static(W(Duration::from_micros(1))),
+        || LockedLazy::from_generator(W(Duration::from_micros(1))),
         |l| *l.read(),
     );
 
     do_bench(
         &mut gp,
         "Locked Lazy write",
-        || LockedLazy::new_static(W(Duration::from_micros(1))),
+        || LockedLazy::from_generator(W(Duration::from_micros(1))),
         |l| *l.write(),
     );
 
@@ -349,14 +349,14 @@ fn bench_init(c: &mut Criterion) {
     do_bench(
         &mut gp,
         "Locked Lazy read",
-        || LockedLazy::new_static(W(Duration::from_micros(5))),
+        || LockedLazy::from_generator(W(Duration::from_micros(5))),
         |l| *l.read(),
     );
 
     do_bench(
         &mut gp,
         "Locked Lazy write",
-        || LockedLazy::new_static(W(Duration::from_micros(5))),
+        || LockedLazy::from_generator(W(Duration::from_micros(5))),
         |l| *l.write(),
     );
 
@@ -380,14 +380,14 @@ fn bench_init(c: &mut Criterion) {
     do_bench(
         &mut gp,
         "Locked Lazy read",
-        || LockedLazy::new_static(W(Duration::from_micros(10))),
+        || LockedLazy::from_generator(W(Duration::from_micros(10))),
         |l| *l.read(),
     );
 
     do_bench(
         &mut gp,
         "Locked Lazy write",
-        || LockedLazy::new_static(W(Duration::from_micros(10))),
+        || LockedLazy::from_generator(W(Duration::from_micros(10))),
         |l| *l.write(),
     );
 
@@ -411,14 +411,14 @@ fn bench_init(c: &mut Criterion) {
     do_bench(
         &mut gp,
         "Locked Lazy read",
-        || LockedLazy::new_static(W(Duration::from_micros(20))),
+        || LockedLazy::from_generator(W(Duration::from_micros(20))),
         |l| *l.read(),
     );
 
     do_bench(
         &mut gp,
         "Locked Lazy write",
-        || LockedLazy::new_static(W(Duration::from_micros(20))),
+        || LockedLazy::from_generator(W(Duration::from_micros(20))),
         |l| *l.write(),
     );
 
@@ -442,7 +442,7 @@ fn bench_init(c: &mut Criterion) {
     do_bench(
         &mut gp,
         "Lazy",
-        || Lazy::new_static(W(Duration::from_micros(1))),
+        || Lazy::from_generator(W(Duration::from_micros(1))),
         |l| **l,
     );
 
@@ -478,7 +478,7 @@ fn bench_init(c: &mut Criterion) {
     do_bench(
         &mut gp,
         "Lazy",
-        || Lazy::new_static(W(Duration::from_micros(5))),
+        || Lazy::from_generator(W(Duration::from_micros(5))),
         |l| **l,
     );
 
@@ -514,7 +514,7 @@ fn bench_init(c: &mut Criterion) {
     do_bench(
         &mut gp,
         "Lazy",
-        || Lazy::new_static(W(Duration::from_micros(20))),
+        || Lazy::from_generator(W(Duration::from_micros(20))),
         |l| **l,
     );
 
@@ -555,8 +555,8 @@ static mut QLMD: i32 = 33;
 
 fn bench_access(c: &mut Criterion) {
     let init = || {
-        let l = LockedLazy::new_static(Xx);
-        l.read();
+        let l = LockedLazy::from_generator(Xx);
+        let _ = l.read();
         l
     };
 
@@ -682,7 +682,7 @@ fn bench_access(c: &mut Criterion) {
         &mut gp,
         "Lazy",
         || {
-            let l = Lazy::new_static(Xx);
+            let l = Lazy::from_generator(Xx);
             let _ = *l;
             l
         },
@@ -770,7 +770,7 @@ macro_rules! heavy_bench {
             }
 
             let init = || {
-                let v = $type::new_static(Yy(size));
+                let v = $type::from_generator(Yy(size));
                 let _ = v.read();
                 v
             };

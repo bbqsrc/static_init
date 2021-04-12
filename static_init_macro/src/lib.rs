@@ -1134,7 +1134,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 let _ = ();
 
                 #[allow(unused_unsafe)]
-                unsafe{#typ::new_static_with_info(#prime_expr,#stat_generator_name, #static_info)}
+                unsafe{#typ::from_generator_with_info(#prime_expr,#stat_generator_name, #static_info)}
             }
             }
         }
@@ -1145,7 +1145,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 let _ = ();
 
                 #[allow(unused_unsafe)]
-                unsafe{#typ::new_static(#prime_expr,#stat_generator_name)}
+                unsafe{#typ::from_generator(#prime_expr,#stat_generator_name)}
             }
             }
         }
@@ -1156,7 +1156,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 let _ = ();
 
                 #[allow(unused_unsafe)]
-                unsafe{#typ::new_static_with_info(#stat_generator_name, #static_info)}
+                unsafe{#typ::from_generator_with_info(#stat_generator_name, #static_info)}
             }
             }
         }
@@ -1167,7 +1167,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 let _ = ();
 
                 #[allow(unused_unsafe)]
-                unsafe{#typ::new_static(#stat_generator_name)}
+                unsafe{#typ::from_generator(#stat_generator_name)}
             }
             }
         }
