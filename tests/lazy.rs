@@ -2,7 +2,7 @@ use static_init::{Lazy,LazyAccess,dynamic, Phase};
 use std::panic::catch_unwind;
 use std::sync::atomic::{AtomicU32,Ordering};
 
-#[dynamic]
+#[dynamic(lazy)]
 static NORMAL: Vec<i32> = vec![1,2];
 
 #[test]
@@ -28,7 +28,7 @@ fn normal() {
 }
 
 static UNINIT_COUNT: AtomicU32 = AtomicU32::new(0);
-#[dynamic]
+#[dynamic(lazy)]
 static INIT_MAY_PANICK: Vec<i32> = {
     if UNINIT_COUNT.fetch_add(1,Ordering::Relaxed) < 2 {
         panic!("Should not be seen"); 
@@ -73,7 +73,7 @@ fn init_may_panick() {
 }
 
 static UNINIT_ONCE_COUNT: AtomicU32 = AtomicU32::new(0);
-#[dynamic(try_init_once)]
+#[dynamic(lazy,try_init_once)]
 static UNINITIALIZABLE: Vec<i32> = {
     UNINIT_ONCE_COUNT.fetch_add(1,Ordering::Relaxed);
     panic!("Panicked on purpose")
@@ -102,6 +102,31 @@ fn init_may_panick_intolerant() {
 
     assert_eq!(UNINIT_ONCE_COUNT.load(Ordering::Relaxed), 1);
 
+}
+
+#[dynamic(lazy,try_init_once)]
+static NORMAL_WITH_TOLERANCE: Vec<i32> = vec![1,2];
+
+#[test]
+fn normal_with_tolerance() {
+
+    assert!(LazyAccess::phase(&NORMAL_WITH_TOLERANCE).is_empty());
+
+    assert!(LazyAccess::try_get(&NORMAL_WITH_TOLERANCE).is_err());
+
+    assert!(LazyAccess::phase(&NORMAL_WITH_TOLERANCE).is_empty());
+
+    assert_eq!(NORMAL_WITH_TOLERANCE.len(), 2);
+
+    assert!(LazyAccess::phase(&NORMAL_WITH_TOLERANCE) == Phase::INITIALIZED);
+
+    assert_eq!(LazyAccess::try_get(&NORMAL_WITH_TOLERANCE).unwrap().len(), 2);
+
+    assert!(LazyAccess::phase(&NORMAL_WITH_TOLERANCE) == Phase::INITIALIZED);
+
+    assert_eq!(*NORMAL_WITH_TOLERANCE, vec![1,2]);
+
+    assert_eq!(LazyAccess::get(&NORMAL_WITH_TOLERANCE).len(), 2);
 }
 
 #[test]
@@ -169,3 +194,5 @@ fn local_lazy_mut() {
 
     assert_eq!(*v, vec![1,2,3,4,5]);
 }
+
+

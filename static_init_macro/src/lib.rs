@@ -546,7 +546,7 @@ fn parse_priority_literal(lit: &Lit) -> Result<u16, TokenStream2> {
 
 fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenStream2> {
     let mut opt = DynMode {
-        init:      InitMode::Lazy,
+        init:      InitMode::LesserLazy,
         drop:      DropMode::None,
         tolerance: Tolerance {
             init_fail:         true,
@@ -584,7 +584,7 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
             Err(generate_error!($id.span()=>
                 "Unexpected attribute argument `",
                 __unexpected,
-                "`. Expected either `init[=<u16>]`, `drop[=<u16>]`, `lazy`, `lesser_lazy`, `drop_only=<u16>`, `prime`, `leak` or `try_init_once`."
+                "`. Expected either `init[=<u16>]`, `drop[=<u16>]`, `lazy`, `lesser_lazy`, `drop_only=<u16>`, `prime`, `tolerate_leak` or `try_init_once`."
                 ))
         }
         }

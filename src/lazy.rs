@@ -116,10 +116,14 @@ impl<Tol: GeneratorTolerance, const REG_ALWAYS: bool> LazyPolicy
     }
 }
 
-/// Final registration always succeed for non thread local statics
 type InitializedSoftFinalizedChecker<T> = InitializedSoftFinalizedCheckerGeneric<T, false>;
 
 type InitializedHardFinalizedChecker<T> = InitializedHardFinalizedCheckerGeneric<T, false>;
+
+//Lesser lazy are initializer before main so registration will always succeed
+type InitializedSoftFinalizedCheckerLesser<T> = InitializedSoftFinalizedCheckerGeneric<T, true>;
+
+type InitializedHardFinalizedCheckerLesser<T> = InitializedHardFinalizedCheckerGeneric<T, true>;
 
 /// Thread local final registration always succeed for thread local on glibc plateforms
 #[cfg(all(feature = "thread_local",cxa_thread_at_exit))]
@@ -281,7 +285,7 @@ macro_rules! impl_lazy {
             /// Return a reference to the target if initialized otherwise return an error.
             pub fn try_get(this: &'static Self) -> Result<&'static T,AccessError> {
                  // SAFETY The object is required to have 'static lifetime by construction
-                 this.__private.init_then_try_get()
+                 this.__private.try_get()
             }
         }
         impl<T, G> Deref for $tp<T, G>
@@ -345,7 +349,7 @@ macro_rules! impl_lazy {
                     // TODO: get_unchecked
                     Ok(unsafe{this.__private.get_unchecked()})
                 } else {
-                    this.__private.init_then_try_get()
+                    this.__private.try_get()
                 }
             }
             #[inline(always)]
@@ -502,7 +506,7 @@ impl_lazy! {static LazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedCh
 The method (new)[Self::from_generator] is unsafe as the object must be a non mutable static."
 }
 
-impl_lazy! {global LesserLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
+impl_lazy! {global LesserLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedCheckerLesser,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
 "The actual type of statics attributed with #[dynamic(finalize)]. \
 \
 The method (new)[Self::from_generator] is unsafe because this kind of static \
@@ -1423,7 +1427,7 @@ impl_mut_lazy! {static locked_lazy_finalize,LockedLazyFinalize,ExitSequentialize
 "The actual type of mutable statics attributed with #[dynamic(lazy,finalize)]"
 }
 
-impl_mut_lazy! {global lesser_locked_lazy_finalize,LesserLockedLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
+impl_mut_lazy! {global lesser_locked_lazy_finalize,LesserLockedLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedCheckerLesser,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
 "The actual type of mutable statics attributed with #[dynamic(finalize)] \
 \
 The method (new)[Self::from_generator] is unsafe because this kind of static \
@@ -1441,7 +1445,7 @@ impl_mut_lazy! {const_static const_locked_lazy_droped, ConstLockedLazyDroped,Exi
 "The actual type of statics attributed with #[dynamic(lazy,drop)]"
 }
 
-impl_mut_lazy! {global lesser_locked_lazy_droped,LesserLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+impl_mut_lazy! {global lesser_locked_lazy_droped,LesserLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedCheckerLesser,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
 "The actual type of mutable statics attributed with #[dynamic(drop)] \
 \
 The method (new)[Self::from_generator] is unsafe because this kind of static \
