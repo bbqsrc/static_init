@@ -491,6 +491,7 @@ unsafe impl<T: LazyData, M> Sequential for GenericLazySeq<T, M> {
     }
 }
 
+#[must_use="If unused the write lock is immediatly released"]
 pub struct WriteGuard<T>(T);
 
 impl<T> Deref for WriteGuard<T>
@@ -538,6 +539,7 @@ impl<T> Debug for WriteGuard<T>
 }
 
 
+#[must_use="If unused the read lock is immediatly released"]
 #[derive(Clone)]
 pub struct ReadGuard<T>(T);
 

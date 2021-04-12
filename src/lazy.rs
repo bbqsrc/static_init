@@ -664,7 +664,7 @@ macro_rules! impl_mut_lazy {
             #[inline(always)]
             /// Initialize the lazy if no previous attempt to initialized it where performed
             pub fn init(&$($static)? self) {
-                GenericLockedLazy::init_then_write_lock(&self.__private);
+                let _ = GenericLockedLazy::init_then_write_lock(&self.__private);
             }
         }
 
@@ -709,7 +709,7 @@ macro_rules! impl_mut_lazy {
             #[inline(always)]
             /// Initialize the lazy if no previous attempt to initialized it where performed
             pub fn init(&$($static)? self) {
-                GenericLockedLazy::init_then_write_lock(&self.__private);
+                let _ = GenericLockedLazy::init_then_write_lock(&self.__private);
             }
         }
 
@@ -1429,6 +1429,7 @@ mod test_mut_lazy {
 mod test_primed_mut_lazy_droped {
     use super::PrimedLockedLazyDroped;
     use crate::Uninit;
+    #[derive(Debug)]
     struct A(u32);
     impl Uninit for A {
         fn uninit(&mut self) {
@@ -1438,10 +1439,7 @@ mod test_primed_mut_lazy_droped {
     static _X: PrimedLockedLazyDroped<A> = PrimedLockedLazyDroped::new_static(A(42), || A(22));
     #[test]
     fn test() {
-        match _X.primed_read_non_initializing() {
-            Ok(_) => panic!("Unexpected"),
-            Err(l) => assert_eq!(l.0, 42),
-        }
+        assert_eq!(_X.primed_read_non_initializing().unwrap_err().0, 42);
         assert_eq!(_X.read().0, 22);
         _X.write().0 = 33;
         assert_eq!(_X.read().0, 33);
@@ -1454,10 +1452,7 @@ mod test_primed_mut_lazy {
     static _X: PrimedLockedLazy<u32> = PrimedLockedLazy::new_static(42, || 22);
     #[test]
     fn test() {
-        match _X.primed_read_non_initializing() {
-            Ok(_) => panic!("Unexpected"),
-            Err(l) => assert_eq!(*l, 42),
-        }
+        assert_eq!(*_X.primed_read_non_initializing().unwrap_err(), 42);
         assert_eq!(*_X.read(), 22);
         *_X.write() = 33;
         assert_eq!(*_X.read(), 33);
@@ -1559,10 +1554,7 @@ mod test_unsync_mut_primed_lazy {
         unsafe { UnSyncPrimedLockedLazy::new_static(42, || 22) };
     #[test]
     fn test() {
-        match _X.primed_read_non_initializing() {
-            Ok(x) => panic!("Unexpected {}", *x),
-            Err(l) => assert_eq!(*l, 42),
-        }
+        assert_eq!(*_X.primed_read_non_initializing().unwrap_err(), 42);
         assert_eq!(*_X.read(), 22);
         *_X.write() = 33;
         assert_eq!(*_X.read(), 33);
@@ -1573,6 +1565,7 @@ mod test_unsync_mut_primed_lazy {
 mod test_unsync_mut_primed_lazy_droped {
     use super::UnSyncPrimedLockedLazyDroped;
     use crate::Uninit;
+    #[derive(Debug)]
     struct A(u32);
     impl Uninit for A {
         fn uninit(&mut self) {
@@ -1584,10 +1577,7 @@ mod test_unsync_mut_primed_lazy_droped {
         unsafe { UnSyncPrimedLockedLazyDroped::new_static(A(42), || A(22)) };
     #[test]
     fn test() {
-        match _X.primed_read_non_initializing() {
-            Ok(_) => panic!("Unexpected"),
-            Err(l) => assert_eq!(l.0, 42),
-        }
+        assert_eq!(_X.primed_read_non_initializing().unwrap_err().0, 42);
         assert_eq!(_X.read().0, 22);
         _X.write().0 = 33;
         assert_eq!(_X.read().0, 33);
