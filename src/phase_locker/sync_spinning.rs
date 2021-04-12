@@ -143,6 +143,13 @@ impl<'a, T> Phased for SyncReadPhaseGuard<'a, T> {
     }
 }
 
+impl<'a, T> Clone for SyncReadPhaseGuard<'a, T> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        Self(self.0, self.1.clone())
+    }
+}
+
 // Mutex
 //-------------------
 //
@@ -274,6 +281,32 @@ impl<'a> ReadLock<'a> {
         Self {
             futex,
             init_phase: p,
+        }
+    }
+}
+impl<'a> Clone for ReadLock<'a> {
+    fn clone(&self) -> Self {
+        let mut spin_wait = SpinWait::new();
+        let mut cur = self.futex.load(Ordering::Relaxed);
+        loop {
+            if !has_readers_max(cur)
+                && self
+                    .futex
+                    .compare_exchange_weak(
+                        cur,
+                        cur + READER_UNITY,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+            {
+                return ReadLock {
+                    futex:      &self.futex,
+                    init_phase: self.init_phase,
+                };
+            }
+            spin_wait.spin_no_yield();
+            cur = self.futex.load(Ordering::Relaxed);
         }
     }
 }

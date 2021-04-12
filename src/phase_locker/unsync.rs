@@ -111,6 +111,12 @@ impl<'a, T> Phased for UnSyncReadPhaseGuard<'a, T> {
         this.phase()
     }
 }
+impl<'a, T> Clone for UnSyncReadPhaseGuard<'a, T> {
+    fn clone(&self) -> Self {
+        self.1.set(self.1.get().checked_add(READER_UNITY).unwrap());
+        Self(self.0,self.1)
+    }
+}
 
 impl<'a, T: ?Sized> UnSyncReadPhaseGuard<'a, T> {
     #[inline(always)]
@@ -223,7 +229,7 @@ impl UnSyncPhaseLocker {
                 if self.0.get() & LOCKED_BIT != 0 || self.0.get() & READER_BITS == READER_BITS {
                     None
                 } else {
-                    self.0.set(self.0.get() + READER_UNITY);
+                    self.0.set(self.0.get().checked_add(READER_UNITY).unwrap());
                     Some(LockResult::Read(UnSyncReadPhaseGuard::new(v, &self.0)))
                 }
             }
@@ -270,7 +276,7 @@ impl UnSyncPhaseLocker {
                     READER_BITS,
                     "Maximal number of shared borrow reached."
                 );
-                self.0.set(self.0.get() + READER_UNITY);
+                self.0.set(self.0.get().checked_add(READER_UNITY).unwrap());
                 LockResult::Read(UnSyncReadPhaseGuard::new(v, &self.0))
             }
             LockNature::None => LockResult::None(self.phase()),
