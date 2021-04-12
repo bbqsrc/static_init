@@ -39,11 +39,12 @@ impl SpinWait {
     #[inline]
     #[cfg(not(feature = "spin_loop"))]
     pub fn spin(&mut self) -> bool {
-        if self.counter >= 16 {
+        if self.counter >= 10 /*16*/{
             return false;
         }
         self.counter += 1;
-        if self.counter <= 4 {
+        
+        if self.counter <= 3 /*4*/{
             cpu_relax(1 << self.counter);
         } else {
             yield_now();

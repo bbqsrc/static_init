@@ -117,9 +117,9 @@ impl<Tol: GeneratorTolerance, const REG_ALWAYS: bool> LazyPolicy
 }
 
 /// Final registration always succeed for non thread local statics
-type InitializedSoftFinalizedChecker<T> = InitializedSoftFinalizedCheckerGeneric<T, true>;
+type InitializedSoftFinalizedChecker<T> = InitializedSoftFinalizedCheckerGeneric<T, false>;
 
-type InitializedHardFinalizedChecker<T> = InitializedHardFinalizedCheckerGeneric<T, true>;
+type InitializedHardFinalizedChecker<T> = InitializedHardFinalizedCheckerGeneric<T, false>;
 
 /// Thread local final registration always succeed for thread local on glibc plateforms
 #[cfg(all(feature = "thread_local",cxa_thread_at_exit))]

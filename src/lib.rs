@@ -15,6 +15,11 @@
 //          - voir si specializer le phase locker pour les cas non mut / mut lazy
 //          - ajouter aux macros les lazy const initializé et la tolérance à la non registration
 //            du destructeur
+//          - renomer new_static => from_generator
+//          - faire en sorte que raw statics ne puissent pas voir la librairie
+//            standard dans un état non initialisé... si faisable, sinon obliger
+//            a ce que initializer de raw static soit unsafe
+//
 
 #![cfg_attr(not(any(feature = "parking_lot_core", debug_mode)), no_std)]
 #![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]

@@ -44,12 +44,19 @@ mod exit_manager {
 
         use crate::phase_locker::Mutex;
 
-        static REGISTER: Mutex<(Option<&'static Node>, bool)> = Mutex::new((None, true));
+        struct Register {
+            first:               Option<&'static Node>,
+            registration_opened: bool,
+        }
+        static REGISTER: Mutex<Register> = Mutex::new(Register {
+            first:               None,
+            registration_opened: true,
+        });
 
         #[destructor(0)]
         extern "C" fn execute_at_exit() {
             let mut l = REGISTER.lock();
-            let mut list: Option<&'static Node> = l.0.take();
+            let mut list: Option<&'static Node> = l.first.take();
             drop(l);
             while let Some(on_exit) = list {
                 // SAFETY:
@@ -60,11 +67,11 @@ mod exit_manager {
                 //   a requirement of the ExitSequentializer object new method
                 on_exit.execute();
                 list = on_exit.take_next().or_else(|| {
-                    let mut l = REGISTER.lock();
-                    if l.0.is_none() {
-                        l.1 = true;
+                    let mut reg = REGISTER.lock();
+                    if reg.first.is_none() {
+                        reg.registration_opened = false;
                     }
-                    l.0.take()
+                    reg.first.take()
                 });
             }
         }
@@ -81,14 +88,13 @@ mod exit_manager {
             T::Data: 'static + Finaly,
         {
             let mut l = REGISTER.lock();
-            if l.1 {
+            if l.registration_opened {
                 let mut next = Sequential::sequentializer(st).0.next.lock();
                 assert!(
                     next.is_none(),
                     "Double registration of an ExitSequentializer for finalization at program exit"
                 );
-                *next = l.0.take();
-                *l = (Some(st as &Node), true);
+                *next = l.first.replace(st as &Node);
                 true
             } else {
                 false
