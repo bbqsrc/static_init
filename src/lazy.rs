@@ -171,6 +171,10 @@ macro_rules! impl_lazy {
         impl_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe,'static}
         impl_lazy! {@deref_static $tp,$data$(,T:$tr)?$(,G:$trg)?}
     };
+    (thread_local_static $tp:ident, $man:ident$(<$x:ident>)?, $checker: ident, $data:ty, $locker:ty $(,T: $tr: ident)?$(,G: $trg:ident)?,$doc:literal $(cfg($attr:meta))?) => {
+        impl_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe,'static}
+        impl_lazy! {@deref_thread_local $tp,$data$(,T:$tr)?$(,G:$trg)?}
+    };
     (@deref $tp:ident, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
         impl<T, G> $tp<T, G>
         //where $data: LazyData<Target=T>,
@@ -209,6 +213,20 @@ macro_rules! impl_lazy {
             /// form of locking when initializing
             pub fn try_get_mut(this: &mut Self) -> Result<&'_ mut T,AccessError> {
                 this.__private.try_get_mut()
+            }
+            #[inline(always)]
+            /// Return the phase
+            pub fn phase(this: & Self) -> Phase {
+                Phased::phase(&this.__private)
+            }
+            #[inline(always)]
+            /// Initialize the lazy if not yet initialized
+            ///
+            /// # Panic
+            ///
+            /// Panic if the generator panics
+            pub fn init(this: & Self) -> Phase {
+                GenericLazy::init(&this.__private)
             }
         }
         impl<T, G> Deref for $tp<T, G>
@@ -286,6 +304,20 @@ macro_rules! impl_lazy {
             pub fn try_get(this: &'static Self) -> Result<&'static T,AccessError> {
                  // SAFETY The object is required to have 'static lifetime by construction
                  this.__private.try_get()
+            }
+            #[inline(always)]
+            /// Return the phase
+            pub fn phase(this: &'static Self) -> Phase {
+                Phased::phase(&this.__private)
+            }
+            #[inline(always)]
+            /// Initialize the lazy if not yet initialized
+            ///
+            /// # Panic
+            ///
+            /// Panic if the generator panics
+            pub fn init(this: &'static Self) -> Phase {
+                GenericLazy::init(&this.__private)
             }
         }
         impl<T, G> Deref for $tp<T, G>
@@ -373,6 +405,20 @@ macro_rules! impl_lazy {
                     this.__private.init_then_get()
                 }
             }
+            #[inline(always)]
+            /// Return the phase
+            pub fn phase(this: &'static Self) -> Phase {
+                Phased::phase(&this.__private)
+            }
+            #[inline(always)]
+            /// Initialize the lazy if not yet initialized
+            ///
+            /// # Panic
+            ///
+            /// Panic if the generator panics
+            pub fn init(this: &'static Self) -> Phase {
+                GenericLazy::init(&this.__private)
+            }
         }
         impl<T, G> Deref for $tp<T, G>
         //where $data: 'static + LazyData<Target=T>,
@@ -413,6 +459,87 @@ macro_rules! impl_lazy {
              }
              #[inline(always)]
              fn init(this: Self) -> Phase{
+                 $tp::init(this)
+             }
+        }
+
+    };
+    (@deref_thread_local $tp:ident, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
+        impl<T, G> $tp<T, G>
+        //where $data: 'static + LazyData<Target=T>,
+        where G: 'static + Generator<T>,
+        T:'static,
+        $(G:$trg, T:Sync,)?
+        $(T:$tr,)?
+        {
+            #[inline(always)]
+            /// Initialize if necessary then return a reference to the target.
+            ///
+            /// # Panics
+            ///
+            /// Panic if previous attempt to initialize has panicked and the lazy policy does not
+            /// tolorate further initialization attempt or if initialization
+            /// panic.
+            pub fn get(this: &Self) -> &T {
+                 // SAFETY The object is required to have 'static lifetime by construction
+                 unsafe {as_static(&this.__private).init_then_get()}
+            }
+            #[inline(always)]
+            /// Return a reference to the target if initialized otherwise return an error.
+            pub fn try_get(this: &Self) -> Result<&T,AccessError> {
+                 // SAFETY The object is required to have 'static lifetime by construction
+                 unsafe{as_static(&this.__private).try_get()}
+            }
+            #[inline(always)]
+            /// Return the phase
+            pub fn phase(this: &Self) -> Phase {
+                Phased::phase(unsafe{as_static(&this.__private)})
+            }
+            #[inline(always)]
+            /// Initialize the lazy if not yet initialized
+            ///
+            /// # Panic
+            ///
+            /// Panic if the generator panics
+            pub fn init(this: &Self) -> Phase {
+                GenericLazy::init(unsafe{as_static(&this.__private)})
+            }
+        }
+
+        impl<T, G> Deref for $tp<T, G>
+        where G: 'static + Generator<T>,
+        T:'static,
+        $(G:$trg, T:Sync,)?
+        $(T:$tr,)?
+        {
+            type Target = T;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                 Self::get(self)
+            }
+        }
+
+        impl<'a,T,G> LazyAccess for &'a $tp<T,G>
+            where G: 'static + Generator<T>,
+            T:'static,
+            $(G:$trg, T:Sync,)?
+            $(T:$tr,)?
+            {
+            type Target = &'a T;
+             #[inline(always)]
+             fn get(this: Self) -> &'a T {
+                 $tp::get(this)
+             }
+             #[inline(always)]
+             fn try_get(this: Self) -> Result<&'a T,AccessError>{
+                 $tp::try_get(this)
+             }
+             #[inline(always)]
+             fn phase(this: Self) -> Phase{
+                 $tp::phase(this)
+             }
+             #[inline(always)]
+             fn init(this: Self) -> Phase {
                  $tp::init(this)
              }
         }
@@ -465,28 +592,6 @@ macro_rules! impl_lazy {
             }
         }
 
-        impl<T, G> $tp<T, G>
-        //where $data: $($static +)? LazyData<Target=T>,
-        where G: $($static +)? Generator<T>,
-        $(G:$trg, T:Sync,)?
-        $(T:$tr,)?
-        {
-            #[inline(always)]
-            /// Return the phase
-            pub fn phase(this: &Self) -> Phase {
-                Phased::phase(&this.__private)
-            }
-            #[inline(always)]
-            /// Initialize the lazy if not yet initialized
-            ///
-            /// # Panic
-            ///
-            /// Panic if the generator panics
-            pub fn init(this: &$($static)? Self) -> Phase {
-                GenericLazy::init(&this.__private)
-            }
-        }
-
     };
 }
 
@@ -518,13 +623,13 @@ impl_lazy! {UnSyncLazy,UnSyncSequentializer<G>,InitializedChecker,UnInited::<T>,
 }
 
 #[cfg(feature = "thread_local")]
-impl_lazy! {static UnSyncLazyFinalize,ThreadExitSequentializer<G>,InitializedSoftFinalizedTLChecker,UnInited::<T>,UnSyncPhaseLocker,T:Finaly,
+impl_lazy! {thread_local_static UnSyncLazyFinalize,ThreadExitSequentializer<G>,InitializedSoftFinalizedTLChecker,UnInited::<T>,UnSyncPhaseLocker,T:Finaly,
 "The actual type of thread_local statics attributed with #[dynamic(finalize)] \
 \
 The method (new)[Self::from_generator] is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
 }
 #[cfg(feature = "thread_local")]
-impl_lazy! {static UnSyncLazyDroped,ThreadExitSequentializer<G>,InitializedHardFinalizedTLChecker,DropedUnInited::<T>,UnSyncPhaseLocker,
+impl_lazy! {thread_local_static UnSyncLazyDroped,ThreadExitSequentializer<G>,InitializedHardFinalizedTLChecker,DropedUnInited::<T>,UnSyncPhaseLocker,
 "The actual type of thread_local statics attributed with #[dynamic(drop)] \
 \
 The method (new)[Self::from_generator] is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
