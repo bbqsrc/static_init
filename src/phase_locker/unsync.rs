@@ -53,7 +53,7 @@ impl<'a, T: 'a, U: 'a> Mappable<T, U, UnSyncPhaseGuard<'a, U>> for UnSyncPhaseGu
 
 unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for UnSyncPhaseGuard<'a, T> {
     #[inline(always)]
-    unsafe fn set_phase(&mut self, p: Phase) {
+    fn set_phase(&mut self, p: Phase) {
         self.2 = p;
     }
     #[inline(always)]
@@ -65,7 +65,7 @@ unsafe impl<'a, T: ?Sized> PhaseGuard<'a, T> for UnSyncPhaseGuard<'a, T> {
         self.2
     }
     #[inline(always)]
-    unsafe fn transition<R>(
+    fn transition<R>(
         &mut self,
         f: impl FnOnce(&'a T) -> R,
         on_success: Phase,

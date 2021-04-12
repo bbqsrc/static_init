@@ -126,6 +126,8 @@ fn init_section(priority: u16) -> Result<String, TokenStream> {
     //
     //idem put Room for lesser lazy initialized later
     if cfg!(elf) {
+        // on linux the standard library args are initilized
+        // at .init_array.00099. => priority 65436
         Ok(format!(".init_array.{:05}", 65535 - priority))
     } else if cfg!(mach_o) {
         //on mach it is not clear of ObjC runtime is initialized
@@ -139,9 +141,9 @@ fn init_section(priority: u16) -> Result<String, TokenStream> {
             Ok("__DATA,__mod_init_func".to_string())
         }
     } else if cfg!(coff) {
-        //on window the c runtime is already initialized
-        //so no trouble here
-        Ok(format!(".CRT$XCTZ{:05}", 65535 - priority))
+        // on windows init maybe be called at .CRT$XCU
+        // so lets initialization takes place after
+        Ok(format!(".CRT$XCU{:05}", 65535 - priority))
     } else {
         Err(const_dtor_no_support())
     }
@@ -149,6 +151,7 @@ fn init_section(priority: u16) -> Result<String, TokenStream> {
 
 fn fini_section(priority: u16) -> Result<String, TokenStream> {
     if cfg!(elf) {
+        // destructors not used by standard library
         Ok(format!(".fini_array.{:05}", 65535 - priority))
     } else if cfg!(mach_o) {
         if priority != 0 {
@@ -160,6 +163,7 @@ fn fini_section(priority: u16) -> Result<String, TokenStream> {
             Ok("__DATA,__mod_term_func".to_string())
         }
     } else if cfg!(coff) {
+        // destructors not used by standard library
         Ok(format!(".CRT$XPTZ{:05}", 65535 - priority))
     } else {
         Err(const_dtor_no_support())

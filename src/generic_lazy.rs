@@ -3,7 +3,7 @@ use crate::{
     Sequentializer, StaticInfo, Uninit,UniqueLazySequentializer
 };
 use core::cell::UnsafeCell;
-use core::fmt::{self, Display, Formatter};
+use core::fmt::{self, Debug, Display, Formatter};
 use core::hint::unreachable_unchecked;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
@@ -212,9 +212,26 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
     ///
     /// # Safety
     ///
+    /// ## Constraint on T
+    ///
+    /// Should initialize the object when init is called and the method get should
+    /// return a pointer without UB if the object is not initialized
+    ///
+    /// ## Constraint on P
+    ///
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
+    ///
+    /// ## Constraint on F
+    ///
+    /// The parameter F should be a Generator that ensured that the object
+    /// is accessble after a call to generate succeeds
+    ///
+    /// ## Constraint on S
+    ///
+    /// S should be a lazy policy that report correctly when the object
+    /// is accessbile, this in adequation with M and F.
     pub const unsafe fn new(generator: F, sequentializer: M, value: T) -> Self {
         Self {
             seq: GenericLazySeq {
@@ -228,14 +245,30 @@ impl<T, F, M, S> GenericLazy<T, F, M, S> {
         }
     }
     #[inline(always)]
-    /// const initialize the lazy, the inner data may be in an uninitialized state, and store
-    /// debug information in debug_mode
+    /// const initialize the lazy, the inner data may be in an uninitialized state
     ///
     /// # Safety
+    ///
+    /// ## Constraint on T
+    ///
+    /// Should initialize the object when init is called and the method get should
+    /// return a pointer without UB if the object is not initialized
+    ///
+    /// ## Constraint on P
     ///
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
+    ///
+    /// ## Constraint on F
+    ///
+    /// The parameter F should be a Generator that ensured that the object
+    /// is accessble after a call to generate succeeds
+    ///
+    /// ## Constraint on S
+    ///
+    /// S should be a lazy policy that report correctly when the object
+    /// is accessbile, this in adequation with M and F.
     pub const unsafe fn new_with_info(
         generator: F,
         sequentializer: M,
@@ -492,6 +525,20 @@ where
     }
 }
 
+impl<T> Debug for WriteGuard<T> 
+    where T: Deref,
+    <T as Deref>::Target: LazyData,
+    <<T as Deref>::Target as LazyData>::Target: Debug,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("WriteGuard")
+            .field(&*self)
+            .finish()
+    }
+}
+
+
+#[derive(Clone)]
 pub struct ReadGuard<T>(T);
 
 impl<T> Deref for ReadGuard<T>
@@ -505,6 +552,20 @@ where
         unsafe { &*(*self.0).get() }
     }
 }
+
+
+impl<T> Debug for ReadGuard<T> 
+    where T: Deref,
+    <T as Deref>::Target: LazyData,
+    <<T as Deref>::Target as LazyData>::Target: Debug,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ReadGuard")
+            .field(&*self)
+            .finish()
+    }
+}
+
 impl<T, U> From<WriteGuard<T>> for ReadGuard<U>
 where
     U: From<T>,
@@ -548,9 +609,26 @@ impl<T, F, M, S> GenericLockedLazy<T, F, M, S> {
     ///
     /// # Safety
     ///
+    /// ## Constraint on T
+    ///
+    /// Should initialize the object when init is called and the method get should
+    /// return a pointer without UB if the object is not initialized
+    ///
+    /// ## Constraint on P
+    ///
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
+    ///
+    /// ## Constraint on F
+    ///
+    /// The parameter F should be a Generator that ensured that the object
+    /// is accessble after a call to generate succeeds
+    ///
+    /// ## Constraint on S
+    ///
+    /// S should be a lazy policy that report correctly when the object
+    /// is accessbile, this in adequation with M and F.
     pub const unsafe fn new(generator: F, sequentializer: M, value: T) -> Self {
         Self {
             seq: GenericLockedLazySeq {
@@ -564,14 +642,30 @@ impl<T, F, M, S> GenericLockedLazy<T, F, M, S> {
         }
     }
     #[inline(always)]
-    /// const initialize the lazy, the inner data may be in an uninitialized state and
-    /// store some debuging informations
+    /// const initialize the lazy, the inner data may be in an uninitialized state
     ///
     /// # Safety
+    ///
+    /// ## Constraint on T
+    ///
+    /// Should initialize the object when init is called and the method get should
+    /// return a pointer without UB if the object is not initialized
+    ///
+    /// ## Constraint on P
     ///
     /// The parameter M should be a lazy sequentializer that ensure that:
     ///  1. When finalize is called, no other shared reference to the inner data exist
     ///  2. The finalization is run only if the object was previously initialized
+    ///
+    /// ## Constraint on F
+    ///
+    /// The parameter F should be a Generator that ensured that the object
+    /// is accessble after a call to generate succeeds
+    ///
+    /// ## Constraint on S
+    ///
+    /// S should be a lazy policy that report correctly when the object
+    /// is accessbile, this in adequation with M and F.
     pub const unsafe fn new_with_info(
         generator: F,
         sequentializer: M,

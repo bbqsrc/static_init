@@ -4,6 +4,7 @@ use core::marker::PhantomData;
 
 pub use generic::{SyncSequentializer, UnSyncSequentializer};
 
+
 #[inline]
 #[cold]
 fn lazy_initialization_only<'a, T: 'a, P: PhaseGuard<'a, T>>(
@@ -16,7 +17,7 @@ fn lazy_initialization_only<'a, T: 'a, P: PhaseGuard<'a, T>>(
 
     let initialization_panic = cur | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED;
 
-    unsafe { phase_guard.transition(init, initialized, initialization_panic) };
+    phase_guard.transition(init, initialized, initialization_panic);
 
     phase_guard
 }
@@ -53,7 +54,7 @@ where
 
         let registration_failed = Phase::REGISTRATION_PANICKED | Phase::INITIALIZATION_SKIPED;
 
-        if unsafe { phase_guard.transition(reg, cur, registration_failed) } {
+        if phase_guard.transition(reg, cur, registration_failed) {
             registration_finished = Phase::REGISTERED;
         } else {
             registration_finished = Phase::REGISTRATION_REFUSED;
@@ -77,13 +78,11 @@ where
         let initialization_panic =
             before_init | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED;
 
-        unsafe {
-            phase_guard.transition(
-                |s| init(Sequential::data(s)),
-                initialized,
-                initialization_panic,
-            )
-        };
+         phase_guard.transition(
+             |s| init(Sequential::data(s)),
+             initialized,
+             initialization_panic,
+         )
     } else if Tol::FINAL_REGISTRATION_FAILURE {
         let before_init = if Tol::INIT_FAILURE {
             registration_finished
@@ -99,17 +98,16 @@ where
         let initialization_panic =
             before_init | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED;
 
-        unsafe {
-            phase_guard.transition(
-                |s| init(Sequential::data(s)),
-                initialized,
-                initialization_panic,
-            )
-        };
+         phase_guard.transition(
+             |s| init(Sequential::data(s)),
+             initialized,
+             initialization_panic,
+         )
+        
     } else {
         let no_init = registration_finished | Phase::INITIALIZATION_SKIPED;
 
-        unsafe { phase_guard.set_phase(no_init) };
+        phase_guard.set_phase(no_init);
     }
     phase_guard
 }
@@ -121,7 +119,7 @@ fn lazy_finalization<'a, T: 'a, P: PhaseGuard<'a, T>>(mut phase_guard: P, f: imp
 
     let finalizing_failed = cur | Phase::FINALIZATION_PANICKED;
 
-    unsafe { phase_guard.transition(f, finalizing_success, finalizing_failed) };
+    phase_guard.transition(f, finalizing_success, finalizing_failed);
 }
 
 mod generic {

@@ -21,6 +21,40 @@
 //            a ce que initializer de raw static soit unsafe
 //
 
+// Notes on rust rt
+//
+// On unixes-linux:
+//   -args are initialized with .init_array(99)
+//   -but also just before main to help miri
+// On other unixes
+//   - args/env is set just before main start
+//    => it will look like there are no arg and no env. => safe.
+//
+// On unixes
+//   - sys::init() :
+//      - initialize standard streams
+//      - sigpip reset
+//
+//   - guard actualy does noting just return expect stack size 
+//   - otherwise map memory and prohibit access with mprotect 
+//      => so this is not secure and no point in minding about that
+//   - then sys::stack_overflow install a signal handler to handle
+//     signal => once again not secure no point in minding about that
+//   - then set thread_info => so use of thread::current will panic
+//   in constructor or destructor
+//
+// At exit args/env may be cleaned, also stack_guard
+// stdio will not be buffered
+//
+// windows init maybe called at .CRT$XCU
+//
+//
+//
+// On windows there are no sys::init(), it does nothing
+// no guard,
+// args always accessbile
+// the same as unix with thread_info
+//
 #![cfg_attr(not(any(feature = "parking_lot_core", debug_mode)), no_std)]
 #![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]
 #![cfg_attr(

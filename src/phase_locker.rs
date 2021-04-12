@@ -35,7 +35,7 @@ pub unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
     /// This function is unsafe because not providing a correct phase
     /// may lead to miss interpretation of the state of the target object
     /// which may result in unsound lazy
-    unsafe fn set_phase(&mut self, p: Phase);
+    fn set_phase(&mut self, p: Phase);
     /// Set the phase of the target object with release semantic if the
     /// PhaseGuard is Sync
     fn commit_phase(&mut self);
@@ -50,7 +50,7 @@ pub unsafe trait PhaseGuard<'a, T: ?Sized + 'a> {
     ///
     /// The phase provided must be consistant with the transition otherwise
     /// this will leads to unsoundness
-    unsafe fn transition<R>(
+    fn transition<R>(
         &mut self,
         f: impl FnOnce(&'a T) -> R,
         on_success: Phase,

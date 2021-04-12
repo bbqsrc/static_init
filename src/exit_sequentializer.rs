@@ -503,7 +503,7 @@ mod local_manager {
         //non nul pointers between .CRT$XLA and .CRT$XLZ will be
         //run... => So we could implement thread_local drop without
         //registration...
-        #[link_section = ".CRT$XLAZ"] //do this after the standard library
+        #[link_section = ".CRT$XLAZ"] //TODO: voir si cela est bien fait après la librairie standard
         #[used]
         pub static AT_THEAD_EXIT: extern "system" fn(LPVOID, DWORD, LPVOID) = destroy;
 
