@@ -1,9 +1,9 @@
 [package]
 name = "static_init"
-version = "0.5.2"
+version = "1.0.0"
 authors = ["Olivier Kannengieser <okannen@gmail.com>"]
 edition = "2018"
-description = "Code execution during program initialization/termination phases and non const static initialization (and drop)"
+description = "Safe mutable static and non const static initialization, and code execution at program startup/exit."
 keywords = ["no_std","optimization","static","preformance","constructor"]
 categories = ["no-std","rust-patterns","memory-management"]
 repository = "https://gitlab.com/okannen/static_init"
@@ -32,7 +32,7 @@ test_no_global_lazy_hint = []
 # does not work here
 bench_nightly = ["criterion/real_blackbox"]
 
-default = ["thread_local","bench_nightly"]
+default = []
 
 [dependencies]
 bitflags = "1"
@@ -40,7 +40,7 @@ parking_lot = {version = "0.11", optional=true}
 parking_lot_core = {version = "0.8", optional=true}
 
 [dependencies.static_init_macro]
-version="0.5.0"
+version="1.0.0"
 path="static_init_macro"
 
 [dev-dependencies]
