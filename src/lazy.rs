@@ -177,7 +177,6 @@ macro_rules! impl_lazy {
     };
     (@deref $tp:ident, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
         impl<T, G> $tp<T, G>
-        //where $data: LazyData<Target=T>,
         where G: Generator<T>,
         $(G:$trg, T:Sync,)?
         $(T:$tr,)?
@@ -230,7 +229,6 @@ macro_rules! impl_lazy {
             }
         }
         impl<T, G> Deref for $tp<T, G>
-        //where $data: LazyData<Target=T>,
         where G: Generator<T>,
         $(G:$trg, T:Sync,)?
         $(T:$tr,)?
@@ -243,7 +241,6 @@ macro_rules! impl_lazy {
         }
 
         impl<T, G> DerefMut for $tp<T, G>
-        //where $data: LazyData<Target=T>,
         where G: Generator<T>,
         $(G:$trg, T:Sync,)?
         $(T:$tr,)?
@@ -255,7 +252,6 @@ macro_rules! impl_lazy {
         }
 
         impl<'a,T,G> LazyAccess for &'a $tp<T,G>
-            //where $data: LazyData<Target=T>,
             where G: Generator<T>,
             $(G:$trg, T:Sync,)?
             $(T:$tr,)?
@@ -282,7 +278,6 @@ macro_rules! impl_lazy {
     };
     (@deref_static $tp:ident, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
         impl<T, G> $tp<T, G>
-        //where $data: 'static + LazyData<Target=T>,
         where G: 'static + Generator<T>,
         $(G:$trg, T:Sync,)?
         $(T:$tr,)?
@@ -321,7 +316,6 @@ macro_rules! impl_lazy {
             }
         }
         impl<T, G> Deref for $tp<T, G>
-        //where $data: 'static + LazyData<Target=T>,
         where G: 'static + Generator<T>,
         T:'static,
         $(G:$trg, T:Sync,)?
@@ -336,7 +330,6 @@ macro_rules! impl_lazy {
         }
 
         impl<T,G> LazyAccess for &'static $tp<T,G>
-            //where $data: 'static + LazyData<Target=T>,
             where G: 'static + Generator<T>,
             $(G:$trg, T:Sync,)?
             $(T:$tr,)?
@@ -363,7 +356,6 @@ macro_rules! impl_lazy {
     };
     (@deref_global $tp:ident, $data:ty $(,T: $tr: ident)?$(,G: $trg:ident)?) => {
         impl<T, G> $tp<T, G>
-        //where $data: 'static + LazyData<Target=T>,
         where G: 'static + Generator<T>,
         $(G:$trg, T:Sync,)?
         $(T:$tr,)?
@@ -421,7 +413,6 @@ macro_rules! impl_lazy {
             }
         }
         impl<T, G> Deref for $tp<T, G>
-        //where $data: 'static + LazyData<Target=T>,
         where G: 'static + Generator<T>,
         T:'static,
         $(G:$trg, T:Sync,)?
@@ -439,7 +430,6 @@ macro_rules! impl_lazy {
             }
         }
         impl<T,G> LazyAccess for &'static $tp<T,G>
-            //where $data: 'static + LazyData<Target=T>,
             where G: 'static + Generator<T>,
             $(G:$trg, T:Sync,)?
             $(T:$tr,)?
@@ -856,6 +846,17 @@ macro_rules! impl_mut_lazy {
         impl_mut_lazy! {@lock $tp,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?, 'static}
         impl_mut_lazy! {@prime $tp, $man$(<$x>)?, $data, $locker}
         impl_mut_lazy! {@prime_static $tp, $checker, $data, $gdw, $gd$(,T:$tr)?$(,G:$trg)?}
+        }
+        #[doc(inline)]
+        pub use $mod::$tp;
+    };
+    (global_primed_static $mod: ident, $tp:ident, $man:ident$(<$x:ident>)?, $checker:ident, $data:ty, $locker:ty, $gdw: ident, $gd: ident $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
+        pub mod $mod { 
+            use super::*;
+        impl_mut_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker,$gdw,$gd$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, 'static}
+        impl_mut_lazy! {@lock_global $tp,$checker,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
+        impl_mut_lazy! {@prime $tp, $man$(<$x>)?, $data, $locker}
+        impl_mut_lazy! {@prime_global $tp, $checker, $data, $gdw, $gd$(,T:$tr)?$(,G:$trg)?}
         }
         #[doc(inline)]
         pub use $mod::$tp;
@@ -1291,6 +1292,98 @@ macro_rules! impl_mut_lazy {
             }
         }
     };
+    (@prime_global $tp:ident,$checker:ident, $data:ty, $gdw: ident, $gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)?) => {
+        impl<T, G> $tp<T, G>
+        //where $data: 'static + LazyData<Target=T>,
+        where G: 'static + Generator<T>,
+        T: 'static,
+        $(G:$trg, T:Send,)?
+        $(T:$tr,)?
+        {
+            #[inline(always)]
+            /// Return a read lock to the initialized value or an error containing a read lock to
+            /// the primed or post uninited value
+            pub fn primed_read_non_initializing(&'static self) ->
+               Result<ReadGuard<'_,T>,ReadGuard<'_,T>> {
+               let l = unsafe {GenericLockedLazy::read_lock_unchecked(&self.__private)};
+               let p = Phased::phase(&l);
+               if inited::global_inited_hint() {
+                  if <$checker::<G>>::initialized_is_accessible(p) {
+                      Ok(ReadGuard(l))
+                  } else {
+                      Err(ReadGuard(l))
+                  }
+               } else {
+                  if <$checker::<G>>::is_accessible(p) {
+                      Ok(ReadGuard(l))
+                  } else {
+                      Err(ReadGuard(l))
+                  }
+               }
+            }
+            #[inline(always)]
+            /// Initialize if possible and either return a read lock to the initialized value or an
+            /// error containing a read lock to the primed or post uninited value
+            pub fn primed_read(&'static self) -> Result<ReadGuard<'_,T>,ReadGuard<'_,T>> {
+               let l = unsafe {GenericLockedLazy::init_then_read_lock_unchecked(&self.__private)};
+               let p = Phased::phase(&l);
+               if inited::global_inited_hint() {
+                  if <$checker::<G>>::initialized_is_accessible(p) {
+                      Ok(ReadGuard(l))
+                  } else {
+                      Err(ReadGuard(l))
+                  }
+               } else {
+                  if <$checker::<G>>::is_accessible(p) {
+                      Ok(ReadGuard(l))
+                  } else {
+                      Err(ReadGuard(l))
+                  }
+               }
+            }
+            #[inline(always)]
+            /// Return a write lock that refers to the initialized value or an
+            /// error containing a read lock that refers to the primed or post uninited value
+            pub fn primed_write_non_initializing(&'static self) -> Result<WriteGuard<'_,T>,ReadGuard<'_,T>> {
+               let l = unsafe{GenericLockedLazy::write_lock_unchecked(&self.__private)};
+               let p = Phased::phase(&l);
+               if inited::global_inited_hint() {
+                  if <$checker::<G>>::initialized_is_accessible(p) {
+                      Ok(WriteGuard(l))
+                  } else {
+                      Err(ReadGuard(l.into()))
+                  }
+               } else {
+                  if <$checker::<G>>::is_accessible(p) {
+                      Ok(WriteGuard(l))
+                  } else {
+                      Err(ReadGuard(l.into()))
+                  }
+               }
+            }
+            #[inline(always)]
+            /// Initialize if possible and either return a write lock that refers to the
+            /// initialized value or an error containing a read lock that refers to the primed or
+            /// post uninited value
+            pub fn primed_write(&'static self) -> Result<WriteGuard<'_,T>,ReadGuard<'_,T>> {
+               let l = unsafe{GenericLockedLazy::init_then_write_lock_unchecked(&self.__private)};
+               let p = Phased::phase(&l);
+               if inited::global_inited_hint() {
+                  if <$checker::<G>>::initialized_is_accessible(p) {
+                      Ok(WriteGuard(l))
+                  } else {
+                      Err(ReadGuard(l.into()))
+                  }
+               } else {
+                  if <$checker::<G>>::is_accessible(p) {
+                      Ok(WriteGuard(l))
+                  } else {
+                      Err(ReadGuard(l.into()))
+                  }
+               }
+            }
+        }
+    };
     (@prime_thread_local $tp:ident,$checker:ident, $data:ty, $gdw: ident, $gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)?) => {
         impl<T, G> $tp<T, G>
         //where $data: 'static + LazyData<Target=T>,
@@ -1519,6 +1612,9 @@ impl_mut_lazy! {locked_lazy:extend_locked_lazy, LockedLazy,SyncSequentializer<G>
 "A mutable locked lazy that initialize its content on the first lock"}
 
 impl_mut_lazy! {primed_static primed_locked_lazy, PrimedLockedLazy,SyncSequentializer<G>,InitializedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
+"The actual type of mutable statics attributed with #[dynamic(lazy,primed)]"}
+
+impl_mut_lazy! {global_primed_static primed_lesser_locked_lazy, PrimedLesserLockedLazy,SyncSequentializer<G>,InitializedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
 "The actual type of mutable statics attributed with #[dynamic(primed)]"}
 
 impl_mut_lazy! {global lesser_locked_lazy, LesserLockedLazy,SyncSequentializer<G>,InitializedChecker,UnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
@@ -1542,19 +1638,23 @@ impl_mut_lazy! {static locked_lazy_droped,LockedLazyDroped,ExitSequentializer<G>
 "The actual type of statics attributed with #[dynamic(lazy,finalize)]"
 }
 
-impl_mut_lazy! {primed_static primed_locked_lazy_droped,PrimedLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Uninit, G:Sync,
-"The actual type of mutable statics attributed with #[dynamic(primed,drop)]"
-}
-
-impl_mut_lazy! {const_static const_locked_lazy_droped, ConstLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
-"The actual type of statics attributed with #[dynamic(lazy,drop)]"
-}
-
 impl_mut_lazy! {global lesser_locked_lazy_droped,LesserLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedCheckerLesser,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
 "The actual type of mutable statics attributed with #[dynamic(drop)] \
 \
 The method (new)[Self::from_generator] is unsafe because this kind of static \
 can only safely be used through this attribute macros."
+}
+
+impl_mut_lazy! {primed_static primed_locked_lazy_droped,PrimedLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Uninit, G:Sync,
+"The actual type of mutable statics attributed with #[dynamic(lazy,primed,drop)]"
+}
+
+impl_mut_lazy! {global_primed_static global_primed_locked_lazy_droped,PrimedLesserLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Uninit, G:Sync,
+"The actual type of mutable statics attributed with #[dynamic(primed,drop)]"
+}
+
+impl_mut_lazy! {const_static const_locked_lazy_droped, ConstLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+"The actual type of statics attributed with #[dynamic(lazy,drop)]"
 }
 
 impl_mut_lazy! {unsync_locked_lazy:extend_unsync_locked_lazy,UnSyncLockedLazy,UnSyncSequentializer<G>,InitializedChecker,UnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,
