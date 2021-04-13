@@ -1,12 +1,10 @@
 use core::cell::UnsafeCell;
+use core::mem::MaybeUninit;
 use std::sync::atomic::{compiler_fence, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::time::Duration;
 
 use static_init::dynamic;
-
-#[cfg(target_os = "linux")]
-use core::mem::MaybeUninit;
 
 #[cfg(target_os = "linux")]
 use libc::{getrusage, rusage, RUSAGE_THREAD};

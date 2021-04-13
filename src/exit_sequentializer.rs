@@ -478,7 +478,6 @@ mod local_manager {
         use super::{Node, ThreadExitSequentializer};
         use crate::{Finaly, GeneratorTolerance, Sequential};
         use core::cell::Cell;
-        use core::ptr::NonNull;
 
         use winapi::shared::minwindef::{DWORD, LPVOID};
         use winapi::um::winnt::{DLL_PROCESS_DETACH, DLL_THREAD_DETACH};
@@ -533,7 +532,7 @@ mod local_manager {
         /// finalize call back at thread exit
         pub(crate) fn finalize_at_thread_exit<
             T: Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
-            Tol: GeneratorTolerance,
+            Tol: 'static+GeneratorTolerance,
         >(
             st: &'static T,
         ) -> bool

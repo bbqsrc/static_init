@@ -32,7 +32,7 @@ test_no_global_lazy_hint = []
 # does not work here
 bench_nightly = ["criterion/real_blackbox"]
 
-default = ["thread_local", "bench_nightly"]
+default = ["thread_local","bench_nightly"]
 
 [dependencies]
 bitflags = "1"
@@ -81,6 +81,6 @@ default-features = false
 version = "0.2"
 default-features = false
 
-[target.'cfg(not(any(target_os="linux",target_os="windows",target_os="android")))'.dependencies]
+[target.'cfg(not(any(target_os="linux",target_os="android")))'.dependencies]
 parking_lot = "0.11"
 parking_lot_core = "0.8"

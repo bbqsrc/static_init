@@ -139,7 +139,7 @@ mod linux {
 ))]
 pub(crate) use linux::Futex;
 
-#[cfg(feature = "parking_lot_core")]
+#[cfg(any(feature = "parking_lot_core", not(any(target_os="linux",target_os="android"))))]
 mod other {
     use super::READ_FAIRNESS_PERIOD;
     use crate::phase::*;
@@ -262,5 +262,5 @@ mod other {
         }
     }
 }
-#[cfg(feature = "parking_lot_core")]
+#[cfg(any(feature = "parking_lot_core", not(any(target_os="linux",target_os="android"))))]
 pub(crate) use other::Futex;
