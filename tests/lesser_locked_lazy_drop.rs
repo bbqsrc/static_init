@@ -1,4 +1,4 @@
-use static_init::{dynamic, Phase, Finaly,destructor,constructor};
+use static_init::{dynamic, Phase,destructor,constructor};
 use std::sync::atomic::{AtomicU32,Ordering};
 
 static FINALIZE_A_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -11,13 +11,13 @@ impl A {
     }
 }
 
-impl Finaly for A {
-    fn finaly(&self) {
+impl Drop for A {
+    fn drop(&mut self) {
         FINALIZE_A_COUNT.fetch_add(1,Ordering::Relaxed);
     }
 }
 
-#[dynamic(finalize)]
+#[dynamic(drop)]
 static mut NORMAL: A = A::new(33);
 
 #[constructor(10)]
@@ -72,8 +72,8 @@ impl B {
     }
 }
 
-impl Finaly for B {
-    fn finaly(&self) {
+impl Drop for B {
+    fn drop(&mut self) {
         FINALIZE_B_COUNT.fetch_add(1,Ordering::Relaxed);
     }
 }
@@ -83,7 +83,7 @@ extern fn check_b_finalized() {
     assert_eq!(FINALIZE_B_COUNT.load(Ordering::Relaxed), 1)
 }
 
-#[dynamic(finalize)]
+#[dynamic(drop)]
 static mut PRE_INITED_NORMAL: B = B::new(12);
 
 #[constructor(10)]
@@ -128,8 +128,8 @@ impl C {
     }
 }
 
-impl Finaly for C {
-    fn finaly(&self) {
+impl Drop for C {
+    fn drop(&mut self) {
         FINALIZE_C_COUNT.fetch_add(1,Ordering::Relaxed);
     }
 }
@@ -140,7 +140,7 @@ extern fn check_c_finalized() {
 }
 
 
-#[dynamic(finalize,try_init_once)]
+#[dynamic(drop,try_init_once)]
 static mut NORMAL_WITH_TOLERANCE: C = C::new(33);
 
 #[test]

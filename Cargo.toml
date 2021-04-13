@@ -32,7 +32,7 @@ test_no_global_lazy_hint = []
 # does not work here
 bench_nightly = ["criterion/real_blackbox"]
 
-default = ["thread_local"]
+default = ["thread_local", "bench_nightly"]
 
 [dependencies]
 bitflags = "1"

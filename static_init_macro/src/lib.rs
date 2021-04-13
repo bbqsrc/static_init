@@ -432,54 +432,6 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         "Expected an expression of the form `match INIT { PRIME => /*expr/*, DYN => /*expr*/}`"
     );
 
-    let (expr, prime_expr) = if !options.priming {
-        (&*stat.expr, None)
-    } else if let Expr::Match(mexp) = &*stat.expr {
-        if let Expr::Path(p) = &*mexp.expr {
-            if !p.path.segments.len() == 1 && p.path.segments.first().unwrap().ident == "INIT" {
-                return generate_error!(mexp.expr.span()=>
-                "Expected `INIT` because the static has `#[dynamic(prime)]` attribute."
-                );
-            }
-        } else {
-            return generate_error!(mexp.expr.span()=>
-            "Expected `INIT` because the static has `#[dynamic(prime)]` attribute."
-            );
-        }
-        if mexp.arms.len() != 2 {
-            return generate_error!(mexp.span()=>
-            "Expected two match arms as the static has `#[dynamic(prime)]` attribute."
-            );
-        }
-        let mut expr = None;
-        let mut prime_expr = None;
-        for arm in &mexp.arms {
-            let p = match &arm.pat {
-                Pat::Ident(p)
-                    if p.by_ref.is_none() && p.mutability.is_none() && p.subpat.is_none() =>
-                {
-                    p
-                }
-                x => {
-                    return generate_error!(x.span()=>
-                    "Expected either `DYN` or `PRIME` as the static has `#[dynamic(prime)]` attribute."
-                    )
-                }
-            };
-            if p.ident == "PRIME" && prime_expr.is_none() {
-                prime_expr = Some(&*arm.body);
-            } else if p.ident == "DYN" && expr.is_none() {
-                expr = Some(&*arm.body);
-            } else {
-                return generate_error!(p.span()=>
-                "Repeated match expression `", p, "`. There must be one arm that matches `PRIME` and the other `DYN`."
-                );
-            }
-        }
-        (expr.unwrap(), Some(prime_expr))
-    } else {
-        return err;
-    };
 
     let stat_typ = &*stat.ty;
 
@@ -516,6 +468,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             stat.mutability = None
         };
     }
+
     let typ: Type = if !(options.init == InitMode::Lazy || options.init == InitMode::LesserLazy) {
         if stat.mutability.is_none() {
             into_mutable!();
@@ -650,9 +603,11 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         }
     } else if options.drop == DropMode::Drop && options.init == InitMode::Lazy {
         if stat.mutability.is_none() {
-            parse_quote! {
-                ::static_init::lazy::ConstLockedLazyDroped::<#stat_typ,#stat_generator_name>
-            }
+            return generate_error!("Droped lazy must be mutable");
+            //is_const_droped = true;
+            //parse_quote! {
+            //    ::static_init::lazy::ConstLockedLazyDroped::<#stat_typ,#stat_generator_name>
+            //}
         } else {
             into_immutable!();
             parse_quote! {
@@ -661,7 +616,6 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         }
     } else if options.drop == DropMode::Drop && options.init == InitMode::LesserLazy {
         if stat.mutability.is_none() {
-            //TODO
             return generate_error!("Droped lazy must be mutable");
         } else {
             into_immutable!();
@@ -689,6 +643,55 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         parse_quote! {
             ::static_init::lazy::LockedLazy::<#stat_typ,#stat_generator_name>
         }
+    };
+
+    let (expr, prime_expr) = if !options.priming {
+        (&*stat.expr, None)
+    } else if let Expr::Match(mexp) = &*stat.expr {
+        if let Expr::Path(p) = &*mexp.expr {
+            if !p.path.segments.len() == 1 && p.path.segments.first().unwrap().ident == "INIT" {
+                return generate_error!(mexp.expr.span()=>
+                "Expected `INIT` because the static has `#[dynamic(prime)]` attribute."
+                );
+            }
+        } else {
+            return generate_error!(mexp.expr.span()=>
+            "Expected `INIT` because the static has `#[dynamic(prime)]` attribute."
+            );
+        }
+        if mexp.arms.len() != 2 {
+            return generate_error!(mexp.span()=>
+            "Expected two match arms as the static has `#[dynamic(prime)]` attribute."
+            );
+        }
+        let mut expr = None;
+        let mut prime_expr = None;
+        for arm in &mexp.arms {
+            let p = match &arm.pat {
+                Pat::Ident(p)
+                    if p.by_ref.is_none() && p.mutability.is_none() && p.subpat.is_none() =>
+                {
+                    p
+                }
+                x => {
+                    return generate_error!(x.span()=>
+                    "Expected either `DYN` or `PRIME` as the static has `#[dynamic(prime)]` attribute."
+                    )
+                }
+            };
+            if p.ident == "PRIME" && prime_expr.is_none() {
+                prime_expr = Some(&*arm.body);
+            } else if p.ident == "DYN" && expr.is_none() {
+                expr = Some(&*arm.body);
+            } else {
+                return generate_error!(p.span()=>
+                "Repeated match expression `", p, "`. There must be one arm that matches `PRIME` and the other `DYN`."
+                );
+            }
+        }
+        (expr.unwrap(), prime_expr)
+    } else {
+        return err;
     };
 
     let sp = stat.expr.span();

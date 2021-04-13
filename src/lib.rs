@@ -123,6 +123,8 @@
 //! double check solution. 
 //! 
 //! ## Benchmark results
+//!
+//! (see the README file or run benchmark with `cargo bench --feature bench_nightly`)
 //! 
 //! # Thread local support
 //! 
@@ -181,6 +183,7 @@
 //! 
 //! It is possible to register fonction for execution before main start/ after main returns.
 //! 
+//!
 //! ```rust
 //! use static_init::{constructor, destructor};
 //!
@@ -997,24 +1000,6 @@ pub use static_init_macro::destructor;
 /// static mut V2: Vec<i32> = vec![1,2];
 /// ```
 ///
-/// It is possible to use the drop attribute without the mut keyword. In this case
-/// the locked lazy does not provides the `write` methods but will be droped.
-///
-/// ```
-/// # #![cfg_attr(feature = "thread_local", feature(thread_local))]
-/// # use static_init::{Finaly,dynamic};
-///
-/// # fn main(){}
-/// 
-/// # #[cfg(feature="thread_local")]
-/// # mod m{
-/// # use static_init::{dynamic};
-/// #[dynamic(drop)] //initialized, non modificable, droped
-/// #[thread_local]
-/// static V: Vec<i32> = vec![1,2];
-/// # }
-/// ```
-///
 /// ## Primed locked lazy statics
 ///
 /// Those statics model the case where an object should have a
@@ -1043,7 +1028,7 @@ pub use static_init_macro::destructor;
 ///     };
 ///
 /// #[dynamic(lazy,prime)]
-/// static mut O: Option<Vec<i32>> = match INIT {
+/// static mut OLAZY: Option<Vec<i32>> = match INIT {
 ///     PRIME => None,
 ///     DYN => Some(vec![1,2]),
 ///     };

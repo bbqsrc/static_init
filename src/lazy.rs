@@ -812,8 +812,8 @@ macro_rules! impl_mut_lazy {
         pub mod $mod { 
             use super::*;
         impl_mut_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker,$gdw,$gd$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, 'static}
-        impl_mut_lazy! {@const_lock $tp,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)? , 'static}
-        impl_mut_lazy! {@uninited $tp, $man$(<$x>)?, $data, $locker}
+        impl_mut_lazy! {@const_lock $tp,$checker, $data,$gdw,$gd$(,T:$tr)?$(,G:$trg)? , 'static}
+        impl_mut_lazy! {@prime $tp, $man$(<$x>)?, $data, $locker}
         }
         #[doc(inline)]
         pub use $mod::$tp;
@@ -947,48 +947,50 @@ macro_rules! impl_mut_lazy {
         }
 
     };
-    (@const_lock $tp:ident, $data:ty, $gdw: ident, $gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)? $(,$static:lifetime)?) => {
+    (@const_lock $tp:ident, $checker: ident, $data:ty, $gdw: ident, $gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)? $(,$static:lifetime)?) => {
         impl<T, G> $tp<T, G>
-        //where $data: $($static +)?  LazyData<Target=T>,
         where G: $($static +)? Generator<T>,
+        T:Uninit,
         $(T:$static ,)?
         $(G:$trg, T:Send,)?
         $(T:$tr,)?
         {
             #[inline(always)]
-            /// Initialize if necessary and returns a read lock
+            /// get read lock
             ///
             /// # Panic
             ///
-            /// Panics if initialization panics or if initialization has panicked in a previous attempt to initialize.
-            pub fn read(&$($static)? self) -> ReadGuard<'_,T> {
-               ReadGuard(GenericLockedLazy::init_then_read_lock(&self.__private))
+            /// Panics if the lazy was droped
+            pub fn read(&'static self) -> ReadGuard<'_,T> {
+                    let l = unsafe{GenericLockedLazy::read_lock_unchecked(&self.__private)};
+                    assert!(<$checker::<G>>::initialized_is_accessible(Phased::phase(&l)));
+                    ReadGuard(l)
             }
-            #[inline(always)]
-            /// Initialize if necessary and returns some read lock if the lazy is not
+            /// Returns some read lock if the lazy is not
             /// already write locked. If the lazy is already write locked it returns `None`
             ///
             /// # Panic
             ///
-            /// If locks succeeds, panics if initialization panics or if initialization has panicked in a previous attempt to initialize.
-            pub fn fast_read(&$($static)? self) -> Option<ReadGuard<'_,T>> {
-               GenericLockedLazy::fast_init_then_read_lock(&self.__private).map(ReadGuard)
+            /// If locks succeeds, panics if the lazy was droped 
+            #[inline(always)]
+            pub fn fast_read(&'static self) -> Option<ReadGuard<'_,T>> {
+                    let l = unsafe{GenericLockedLazy::fast_read_lock_unchecked(&self.__private)};
+                    if let Some(l) = &l {
+                        assert!(<$checker::<G>>::initialized_is_accessible(Phased::phase(l)));
+                    }
+                    l.map(ReadGuard)
             }
             #[inline(always)]
-            /// Get a read lock if the lazy is initialized or an [AccessError]
-            pub fn try_read(&$($static)? self) -> Result<ReadGuard<'_,T>,AccessError> {
-               GenericLockedLazy::try_read_lock(&self.__private).map(ReadGuard)
-            }
-            #[inline(always)]
-            /// if the lazy is not already write locked: get a read lock if the lazy is initialized or an [AccessError].
-            /// Otherwise returns `None`
-            pub fn fast_try_read(&$($static)? self) -> Option<Result<ReadGuard<'_,T>,AccessError>> {
-               GenericLockedLazy::fast_try_read_lock(&self.__private).map(|r| r.map(ReadGuard))
-            }
-            #[inline(always)]
-            /// Initialize the lazy if no previous attempt to initialized it where performed
-            pub fn init(&$($static)? self) {
-                let _ = GenericLockedLazy::init_then_write_lock(&self.__private);
+            /// Return a read lock to the initialized value or an
+            /// error containing a read lock to the post uninited value
+            pub fn primed_read(&'static self) -> Result<ReadGuard<'_,T>,ReadGuard<'_,T>> {
+               let l = unsafe {GenericLockedLazy::read_lock_unchecked(&self.__private)};
+               let p = Phased::phase(&l);
+               if <$checker::<G>>::initialized_is_accessible(p) {
+                   Ok(ReadGuard(l))
+               } else {
+                   Err(ReadGuard(l))
+               }
             }
         }
 
@@ -1611,18 +1613,19 @@ macro_rules! impl_mut_lazy {
 impl_mut_lazy! {locked_lazy:extend_locked_lazy, LockedLazy,SyncSequentializer<G>,InitializedChecker,UnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
 "A mutable locked lazy that initialize its content on the first lock"}
 
-impl_mut_lazy! {primed_static primed_locked_lazy, PrimedLockedLazy,SyncSequentializer<G>,InitializedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
-"The actual type of mutable statics attributed with [#[dynamic(primed)]](macro@crate::dynamic)"}
-
-impl_mut_lazy! {global_primed_static primed_lesser_locked_lazy, PrimedLesserLockedLazy,SyncSequentializer<G>,InitializedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
-"The actual type of mutable statics attributed with [#[dynamic(primed)]](macro@crate::dynamic)"}
-
 impl_mut_lazy! {global lesser_locked_lazy, LesserLockedLazy,SyncSequentializer<G>,InitializedChecker,UnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
 "The actual type of mutable statics attributed with [#[dynamic]](macro@crate::dynamic) \
 \
 The method [from_generator](Self::from_generator) is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
+
+impl_mut_lazy! {primed_static primed_locked_lazy, PrimedLockedLazy,SyncSequentializer<G>,InitializedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
+"The actual type of mutable statics attributed with [#[dynamic(primed)]](macro@crate::dynamic)"}
+
+impl_mut_lazy! {global_primed_static primed_lesser_locked_lazy, PrimedLesserLockedLazy,SyncSequentializer<G>,InitializedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
+"The actual type of mutable statics attributed with [#[dynamic(primed)]](macro@crate::dynamic)"}
+
 
 impl_mut_lazy! {static locked_lazy_finalize,LockedLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard, T:Finaly,G:Sync,
 "The actual type of mutable statics attributed with [#[dynamic(lazy,finalize)]](macro@crate::dynamic)"
@@ -1653,9 +1656,9 @@ impl_mut_lazy! {global_primed_static global_primed_locked_lazy_droped,PrimedLess
 "The actual type of mutable statics attributed with [#[dynamic(primed,drop)]](macro@crate::dynamic)"
 }
 
-impl_mut_lazy! {const_static const_locked_lazy_droped, ConstLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
-"The actual type of statics attributed with [#[dynamic(lazy,drop)]](macro@crate::dynamic)"
-}
+//impl_mut_lazy! {const_static const_locked_lazy_droped, ConstLockedLazyDroped,ExitSequentializer<G>,InitializedSoftFinalizedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
+//"The actual type of statics (non mutable) attributed with [#[dynamic(lazy,drop)]](macro@crate::dynamic)"
+//}
 
 impl_mut_lazy! {unsync_locked_lazy:extend_unsync_locked_lazy,UnSyncLockedLazy,UnSyncSequentializer<G>,InitializedChecker,UnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,
 "A RefCell that initializes its content on the first access"

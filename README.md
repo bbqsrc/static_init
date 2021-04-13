@@ -3,10 +3,13 @@
 [![Documentation](https://docs.rs/static_init/badge.svg)](https://docs.rs/static_init)
 [![Crates.io Version](https://img.shields.io/crates/v/static_init.svg)](https://crates.io/crates/static_init)
 
-
 Safe non const initialized statics and safe mutable statics with unbeatable performance.
 
 Also provides code execution at program start-up/exit.
+
+Why using non const initialized statics and safe mutable statics? Because all execution depends on state that is
+maintained during all program execution. Because it is very difficult than it looks-like
+to have an ergonomic, safe and with excellent performance solution for maintaining such state. 
 
 # Feature
 
@@ -122,6 +125,78 @@ a double check with a single boolean for all statics that is much faster other
 double check solution. 
 
 ## Benchmark results
+
+### Lazy static access
+
+This graph showes the access time to lazy statics once they are initialized. The measurment includes statics from crates `double_checked_cell` and `static_lazy`.  In the legend "LesserLazy" are the lazy declared using `#[dynamic]` attribute and "Lazy" those declared with the
+attribute `#[dynamic(lazy)]`. On the horizontal axis is reported the number of thread that almost simultaneous attempt to access the lazy and the vertical axis the access time summed over all thread. 
+
+Access time to lazy from this crates can be up to *10x faster* than other solutions.
+
+![](docs/access.svg)
+
+### Lazy static initialization
+
+#### Extremely short initization performance
+
+This graph showes the access time to lazy statics when the lazy is not yet
+initialized. The measurment includes statics from crates `double_checked_cell`
+and `static_lazy`.  In the legend "LesserLazy" are the lazy declared using
+`#[dynamic]` attribute and "Lazy" those declared with the attribute
+`#[dynamic(lazy)]`. On the horizontal axis is reported the number of thread
+that almost simultaneous attempt to access and initialize the lazy and the
+vertical axis the access time + initialization time overhead summed over all
+thread. The initialization in itself count for pico seconds. "LesserLazy" (`#[dynamic]) are
+not ploted here because they are initialized before main start but whatsoever,
+they use the exact same lock as that of "Lazy" (`#[dynamic(lazy)]`) statics.
+
+Initialization duration is *3x time faster* when using statics from this crates.
+
+![](docs/init_nano.svg)
+
+#### Large initization performance
+
+In this case all thread attempt to initialize a static whose initialization takes
+approximately 20µs. Static from this crates scale much better on high contention. On high contention
+is this crates provides a *10x speed-up*.
+
+![](docs/init_20us.svg)
+
+### Mutable Locked lazy access
+
+Mutable lazy from this crates are compared to an implementation using parking-lot crate `RwLock`. The implementation
+can be found in the source file `benches/multi_threaded/main.rs`.
+
+On the graph below the legend "Locked Lazy" are for mutable statics declared with `#[dynamic(lazy)]` attribute, "LesserLocked Lazy" those declared with `#[dynamic]`, "LesserLocked LazyDrop" those declared with `#[dynamic(drop)]` and "Locked Lazy PkLot" the one implemented using parking-lot crate `RwLock`.
+
+Mutable locked statics from this crates are close to *2x time faster* than the solution using parking-lot RwLock if the initialization is attempted throught an attempt to get a read lock (on the first graph). When initilization is attempted through an attempt to get a write lock all solutions are globaly equivalent.
+
+![](docs/access_locked_read.svg)
+![](docs/access_locked_write.svg)
+
+### Mutable locked lazy static initialization
+
+#### Extremely short initization performance
+
+Here we compare access time when the lazy is not yet initialized. On high
+contention, when a high number of thread attempt to get a read lock while the
+lazy is not yet initialized, lazy declared with #[dynamic(lazy)] perform close
+to *100x time* `RwLock`. This is the concequence of the adaptative lock. On the
+other hand, on low contention, when only 1 or 2 thread are simultaneously
+attempting to initialize the static, this adaptative ness cause an increased
+initialization time. Nevertheless this is a one shot performance shift of a few
+nano seconds.
+
+![](docs/init_locked_nano.svg)
+
+#### Large initialization time 
+
+Here we compare access time + initialization time when the lazy is not yet initialized and when the initialization time is
+of the order of 20µs. When all threads attempt to initialize the statics while trying to get a write lock, the statics from 
+this crate hase similar performance as a static using parking_lot `RwLock`. But if such initialization is performed through attempt
+to get a read lock, statics from this crate are *200x time faster* than `RwLock`. This is also a concequence of the adaptative lock algorithm.
+
+![](docs/init_locked_20us.svg)
 
 # Thread local support
 
