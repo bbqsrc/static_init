@@ -1025,7 +1025,8 @@ pub use static_init_macro::destructor;
 /// 
 /// - a const initialization that happens at compile time
 ///
-/// - a dynamic intialization that happens the first time they are accessed
+/// - a dynamic intialization that happens the first time they are accessed if
+/// if is declared with `lazy` attribute argument or just before.
 ///
 /// More over they are conceptualy uninitialized if the type of the statics
 /// implement the `Uninit` trait and is declared with the `drop` attribute argument.
@@ -1036,6 +1037,12 @@ pub use static_init_macro::destructor;
 /// use static_init::{dynamic, Uninit};
 ///
 /// #[dynamic(prime)]
+/// static mut O: Option<Vec<i32>> = match INIT {
+///     PRIME => None,
+///     DYN => Some(vec![1,2]),
+///     };
+///
+/// #[dynamic(lazy,prime)]
 /// static mut O: Option<Vec<i32>> = match INIT {
 ///     PRIME => None,
 ///     DYN => Some(vec![1,2]),

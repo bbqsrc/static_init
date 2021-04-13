@@ -290,8 +290,6 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
                 } else if id == "tolerate_leak" {
                     opt.tolerance.registration_fail = true;
                 } else if id == "prime" {
-                    check_no_init!(id);
-                    opt.init = InitMode::Lazy;
                     opt.priming = true;
                 } else {
                     return unexpected_arg!(id);
@@ -335,6 +333,11 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
         return Err(generate_error!(
             "Unusefull `tolerate_leak`: this static is not dropped, it will always leak. Add \
              `drop` or `finalize` attribute argument if the intent is that this static is dropped."
+        ));
+    }
+    if opt.priming && ! (opt.init== InitMode::Lazy || opt.init == InitMode::LesserLazy) {
+        return Err(generate_error!(
+            "Only lazy statics can be primed"
         ));
     }
     if (opt.init == InitMode::Lazy || opt.init == InitMode::LesserLazy)
@@ -546,7 +549,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 ::static_init::lazy::UnSyncPrimedLockedLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
-    } else if options.priming && options.drop == DropMode::None {
+    } else if options.priming && options.init == InitMode::Lazy && options.drop == DropMode::None {
         if stat.mutability.is_none() {
             return generate_error!(stat.static_token.span()=>
                 "Primed statics are mutating (safe). Add the `mut` keyword."
@@ -557,7 +560,18 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 ::static_init::lazy::PrimedLockedLazy::<#stat_typ,#stat_generator_name>
             }
         }
-    } else if options.priming {
+    } else if options.priming && options.init == InitMode::LesserLazy && options.drop == DropMode::None {
+        if stat.mutability.is_none() {
+            return generate_error!(stat.static_token.span()=>
+                "Primed statics are mutating (safe). Add the `mut` keyword."
+            );
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::PrimedLesserLockedLazy::<#stat_typ,#stat_generator_name>
+            }
+        }
+    } else if options.priming  && options.init == InitMode::Lazy{
         if stat.mutability.is_none() {
             return generate_error!(stat.static_token.span()=>
                 "Primed statics are mutating (safe). Add the `mut` keyword."
@@ -566,6 +580,17 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             into_immutable!();
             parse_quote! {
                 ::static_init::lazy::PrimedLockedLazyDroped::<#stat_typ,#stat_generator_name>
+            }
+        }
+    } else if options.priming  && options.init == InitMode::LesserLazy{
+        if stat.mutability.is_none() {
+            return generate_error!(stat.static_token.span()=>
+                "Primed statics are mutating (safe). Add the `mut` keyword."
+            );
+        } else {
+            into_immutable!();
+            parse_quote! {
+                ::static_init::lazy::PrimedLesserLockedLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
     } else if is_thread_local && options.drop == DropMode::Finalize {
@@ -636,6 +661,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         }
     } else if options.drop == DropMode::Drop && options.init == InitMode::LesserLazy {
         if stat.mutability.is_none() {
+            //TODO
             return generate_error!("Droped lazy must be mutable");
         } else {
             into_immutable!();
