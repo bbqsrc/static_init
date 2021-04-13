@@ -56,7 +56,8 @@ use static_init::{dynamic};
 #[dynamic] 
 static mut L1: Vec<i32> = vec![1,2,3,4,5,6];
 
-#[dynamic(drop)] 
+//Mutable statics are safe to access
+#[dynamic] 
 static mut L2: Vec<i32> = {
    //get a unique lock:
    let mut lock = L1.write(); 
@@ -87,6 +88,19 @@ Even if the static is not mut, dropped statics are always locked. There is also 
 argument that can be used to run a "drop" equivalent at program exit but leaves the static unchanged. 
 
 Those lazy also provide superior performances compared to other solutions.
+
+# Other features for lazy statics
+
+In the documentation of macro `dynamic` you will find how to:
+
+- declare static that are poisoned if first initialization panics. (By default initialization is retried)
+
+- declare finalized or droped statics.
+
+- declare droped or finalized statics that tolerate to be leaked.
+
+- declare lazy statics that are also const initialized and provide a const fallback when their resource is released
+  at program/thread exit
 
 # `no_std` support
 
