@@ -599,22 +599,22 @@ impl_lazy! {Lazy,SyncSequentializer<G>,InitializedChecker,UnInited::<T>,SyncPhas
 "A type that initialize itself only once on the first access"}
 
 impl_lazy! {global LesserLazy,SyncSequentializer<G>,InitializedChecker,UnInited::<T>,SyncPhaseLocker,
-"The actual type of statics attributed with #[dynamic]. \
+"The actual type of statics attributed with [#[dynamic]](macro@crate::dynamic). \
 \
-The method (new)[Self::from_generator] is unsafe because this kind of static \
+The method [from_generator](Self::from_generator) is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
 impl_lazy! {static LazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedChecker,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
-"The actual type of statics attributed with #[dynamic(lazy,finalize)] \
+"The actual type of statics attributed with [#[dynamic(lazy,finalize)]](macro@crate::dynamic) \
 \
-The method (new)[Self::from_generator] is unsafe as the object must be a non mutable static."
+The method [from_generator](Self::from_generator) is unsafe as the object must be a non mutable static."
 }
 
 impl_lazy! {global LesserLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedCheckerLesser,UnInited::<T>,SyncPhaseLocker,T:Finaly,G:Sync,
-"The actual type of statics attributed with #[dynamic(finalize)]. \
+"The actual type of statics attributed with [#[dynamic(finalize)]](macro@crate::dynamic). \
 \
-The method (new)[Self::from_generator] is unsafe because this kind of static \
+The method [from_generator](Self::from_generator) is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
@@ -624,15 +624,15 @@ impl_lazy! {UnSyncLazy,UnSyncSequentializer<G>,InitializedChecker,UnInited::<T>,
 
 #[cfg(feature = "thread_local")]
 impl_lazy! {thread_local_static UnSyncLazyFinalize,ThreadExitSequentializer<G>,InitializedSoftFinalizedTLChecker,UnInited::<T>,UnSyncPhaseLocker,T:Finaly,
-"The actual type of thread_local statics attributed with #[dynamic(finalize)] \
+"The actual type of thread_local statics attributed with [#[dynamic(finalize)]](macro@crate::dynamic) \
 \
-The method (new)[Self::from_generator] is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
+The method [from_generator](Self::from_generator) is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
 }
 #[cfg(feature = "thread_local")]
 impl_lazy! {thread_local_static UnSyncLazyDroped,ThreadExitSequentializer<G>,InitializedHardFinalizedTLChecker,DropedUnInited::<T>,UnSyncPhaseLocker,
-"The actual type of thread_local statics attributed with #[dynamic(drop)] \
+"The actual type of thread_local statics attributed with [#[dynamic(drop)]](macro@crate::dynamic) \
 \
-The method (new)[Self::from_generator] is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
+The method [from_generator](Self::from_generator) is unsafe as the object must be a non mutable static." cfg(feature="thread_local")
 }
 
 use core::fmt::{self, Debug, Formatter};
@@ -1519,41 +1519,41 @@ impl_mut_lazy! {locked_lazy:extend_locked_lazy, LockedLazy,SyncSequentializer<G>
 "A mutable locked lazy that initialize its content on the first lock"}
 
 impl_mut_lazy! {primed_static primed_locked_lazy, PrimedLockedLazy,SyncSequentializer<G>,InitializedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
-"The actual type of mutable statics attributed with #[dynamic(primed)]"}
+"The actual type of mutable statics attributed with [#[dynamic(primed)]](macro@crate::dynamic)"}
 
 impl_mut_lazy! {global lesser_locked_lazy, LesserLockedLazy,SyncSequentializer<G>,InitializedChecker,UnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
-"The actual type of mutable statics attributed with #[dynamic] \
+"The actual type of mutable statics attributed with [#[dynamic]](macro@crate::dynamic) \
 \
-The method (new)[Self::from_generator] is unsafe because this kind of static \
+The method [from_generator](Self::from_generator) is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
 impl_mut_lazy! {static locked_lazy_finalize,LockedLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard, T:Finaly,G:Sync,
-"The actual type of mutable statics attributed with #[dynamic(lazy,finalize)]"
+"The actual type of mutable statics attributed with [#[dynamic(lazy,finalize)]](macro@crate::dynamic)"
 }
 
 impl_mut_lazy! {global lesser_locked_lazy_finalize,LesserLockedLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedCheckerLesser,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Finaly, G:Sync,
-"The actual type of mutable statics attributed with #[dynamic(finalize)] \
+"The actual type of mutable statics attributed with [#[dynamic(finalize)]](macro@crate::dynamic) \
 \
-The method (new)[Self::from_generator] is unsafe because this kind of static \
+The method [from_generator](Self::from_generator) is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 impl_mut_lazy! {static locked_lazy_droped,LockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
-"The actual type of statics attributed with #[dynamic(lazy,finalize)]"
+"The actual type of statics attributed with [#[dynamic(lazy,finalize)]](macro@crate::dynamic)"
 }
 
 impl_mut_lazy! {primed_static primed_locked_lazy_droped,PrimedLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,T:Uninit, G:Sync,
-"The actual type of mutable statics attributed with #[dynamic(primed,drop)]"
+"The actual type of mutable statics attributed with [#[dynamic(primed,drop)]](macro@crate::dynamic)"
 }
 
 impl_mut_lazy! {const_static const_locked_lazy_droped, ConstLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedChecker,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
-"The actual type of statics attributed with #[dynamic(lazy,drop)]"
+"The actual type of statics attributed with [#[dynamic(lazy,drop)]](macro@crate::dynamic)"
 }
 
 impl_mut_lazy! {global lesser_locked_lazy_droped,LesserLockedLazyDroped,ExitSequentializer<G>,InitializedHardFinalizedCheckerLesser,DropedUnInited::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,G:Sync,
-"The actual type of mutable statics attributed with #[dynamic(drop)] \
+"The actual type of mutable statics attributed with [#[dynamic(drop)]](macro@crate::dynamic) \
 \
-The method (new)[Self::from_generator] is unsafe because this kind of static \
+The method [from_generator](Self::from_generator) is unsafe because this kind of static \
 can only safely be used through this attribute macros."
 }
 
@@ -1563,28 +1563,28 @@ impl_mut_lazy! {unsync_locked_lazy:extend_unsync_locked_lazy,UnSyncLockedLazy,Un
 
 #[cfg(feature = "thread_local")]
 impl_mut_lazy! {primed_thread_local unsync_primed_locked_lazy,UnSyncPrimedLockedLazy,UnSyncSequentializer<G>,InitializedChecker,Primed::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,
-"The actual type of mutable thread_local statics attributed with #[dynamic(primed)] \
+"The actual type of mutable thread_local statics attributed with [#[dynamic(primed)]](macro@crate::dynamic) \
 \
-The method (new)[Self::from_generator] is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
+The method [from_generator](Self::from_generator)  is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
 }
 #[cfg(feature = "thread_local")]
 impl_mut_lazy! {primed_thread_local unsync_primed_locked_lazy_droped,UnSyncPrimedLockedLazyDroped,ThreadExitSequentializer<G>,InitializedHardFinalizedTLChecker,Primed::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard, T:Uninit,
-"The actual type of mutable thread_local statics attributed with #[dynamic(primed,drop)] \
+"The actual type of mutable thread_local statics attributed with [#[dynamic(primed,drop)]](macro@crate::dynamic) \
 \
-The method (new)[Self::from_generator] is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
+The method [from_generator](Self::from_generator) is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
 }
 
 #[cfg(feature = "thread_local")]
 impl_mut_lazy! {thread_local unsync_locked_lazy_finalize,UnSyncLockedLazyFinalize,ThreadExitSequentializer<G>,InitializedSoftFinalizedTLChecker,UnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,T:Finaly,
-"The actual type of mutable thread_local statics attributed with #[dynamic(finalize)] \
+"The actual type of mutable thread_local statics attributed with [#[dynamic(finalize)]](macro@crate::dynamic) \
 \
-The method (new)[Self::from_generator] is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
+The method [from_generator](Self::from_generator) is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
 }
 #[cfg(feature = "thread_local")]
 impl_mut_lazy! {thread_local unsync_locked_lazy_droped,UnSyncLockedLazyDroped,ThreadExitSequentializer<G>,InitializedHardFinalizedTLChecker,DropedUnInited::<T>,UnSyncPhaseLocker, UnSyncPhaseGuard,UnSyncReadPhaseGuard,
-"The actual type of thread_local mutable statics attributed with #[dynamic(drop)] \
+"The actual type of thread_local mutable statics attributed with [#[dynamic(drop)]](macro@crate::dynamic) \
 \
-The method (new)[Self::from_generator] is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
+The method [from_generator](Self::from_generator) is unsafe as the object must be a non mutable thread_local static." cfg(feature="thread_local")
 }
 
 #[cfg(all(support_priority, not(feature = "test_no_global_lazy_hint")))]

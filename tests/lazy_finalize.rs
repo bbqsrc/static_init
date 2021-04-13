@@ -134,6 +134,7 @@ impl Finaly for C {
 
 #[destructor(10)]
 extern fn check_c_finalized() {
+    println!("Without this message threads cannot be spawned in destructors...");
     assert_eq!(FINALIZE_C_COUNT.load(Ordering::Relaxed), 1)
 }
 

@@ -58,7 +58,7 @@ extern "C" fn init_0() {
     }
 }
 
-#[cfg(all(unix, target_env = "gnu"))]
+#[cfg(all(linux, target_env = "gnu"))]
 mod gnu {
     use super::constructor;
     use std::env::args_os;

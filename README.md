@@ -10,23 +10,15 @@ Also provides code execution at program start-up/exit.
 
 # Feature
 
-[x] non const initialized statics.
-
-[x] statics dropped at program exit.
-
-[x] safe mutable lazy statics (locked).
-
-[x] every feature with `no_std` support.
-
-[x] unbeatable performance, can be order of magnitude faster that any other solution.
-
-[x] registration of code execution at program exit without allocation (as opposed to libc::at_exit).
-
-[x] ergonomic syntax.
-
-[x] sound and safe.
-
-[x] on nigtly, `thread_locals` and safe mutable `thread_locals`, guaranteed to be
+- [x] non const initialized statics.
+- [x] statics dropped at program exit.
+- [x] safe mutable lazy statics (locked).
+- [x] every feature with `no_std` support.
+- [x] unbeatable performance, can be order of magnitude faster that any other solution.
+- [x] registration of code execution at program exit without allocation (as opposed to libc::at_exit).
+- [x] ergonomic syntax.
+- [x] sound and safe.
+- [x] on nigtly, `thread_locals` and safe mutable `thread_locals`, guaranteed to be
     dropped at thread exit with the lowest possible overhead compared to
     what is provided by system library thread support or the standard library!
 
@@ -38,14 +30,14 @@ On unixes and windows *lesser lazy statics* are *lazy* during program startup ph
 (before `main` is called). Once main is called, those statics are all guaranteed to be
 initialized and any access to them almost no incur any performance cost
 
-```rust
+```
 use static_init::{dynamic};
 
 #[dynamic] 
 static L1: Vec<i32> = vec![1,2,3,4,5,6];
 
 #[dynamic(drop)] 
-static L2: Vec<i32> = {let v = L1.clone(); v.push(43); v};
+static mut L2: Vec<i32> = {let mut v = L1.clone(); v.push(43); v};
 ```
 
 Those static initialization and access can be 10x faster than
@@ -55,7 +47,7 @@ what is provided by the standard library or other crates.
 
 Just add the `mut` keyword to have mutable locked statics.
 
-```rust
+```
 use static_init::{dynamic};
 
 #[dynamic] 
@@ -63,11 +55,11 @@ static mut L1: Vec<i32> = vec![1,2,3,4,5,6];
 
 #[dynamic(drop)] 
 static mut L2: Vec<i32> = {
-	//get a unique lock:
-	let lock = L1.write(); 
-	lock.push(42); 
-	lock.clone()
-	};
+   //get a unique lock:
+   let mut lock = L1.write(); 
+   lock.push(42); 
+   lock.clone()
+   };
 ```
 
 Those statics use an *apdaptative phase locker* that gives them surprising performance.
@@ -139,6 +131,12 @@ regular statics. In this case, the mutable `thread_local` will behave similarly
 to a RefCell with the same syntax as mutable lazy statics.
 
 ```rust
+# #![cfg_attr(feature = "thread_local", feature(thread_local))]
+# use static_init::{Finaly,dynamic};
+# #[cfg(feature = "thread_local")]
+# mod m{
+# use static_init::{dynamic};
+
 #[dynamic(drop)] //guaranteed to be drop: no leak contrarily to std::thread_local
 #[thread_local]
 static V: Vec<i32> = vec![1,1,2,3,5];
@@ -146,9 +144,11 @@ static V: Vec<i32> = vec![1,1,2,3,5];
 #[dynamic]
 #[thread_local]
 static mut W: Vec<i32> = V.clone();
-
+# fn main() { 
 assert_ne!(W.read().len(), 0);
 assert_ne!(W.try_read().unwrap().len(), 0);
+# }
+# }
 ```
 
 # Unsafe Low level 
@@ -160,6 +160,8 @@ does not imply any memory overhead neither execution time overhead. This is the 
 to be sure not to access those static before they are initialized.
 
 ```rust
+use static_init::dynamic;
+
 #[dynamic(10)]
 static A: Vec<i32> = vec![1,2,3];
 
@@ -179,6 +181,8 @@ Those statics can also be droped at program exit with the `drop` attribute argum
 It is possible to register fonction for execution before main start/ after main returns.
 
 ```rust
+use static_init::{constructor, destructor};
+
 #[constructor(10)]
 extern "C" fn run_first() {}
 
@@ -192,3 +196,7 @@ extern "C" fn pre_finish() {}
 extern "C" fn finaly() {}
 ```
 
+# Debug support
+
+The feature `debug_order` can be activated to detect trouble with initialization order of raw
+statics or dead locks due to lazy initialization depending on itself.
