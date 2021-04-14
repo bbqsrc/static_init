@@ -142,7 +142,7 @@ double check solution.
 
 ### Lazy static access
 
-This graph showes the access time to lazy statics once they are initialized. The measurment includes statics from crates `double_checked_cell` and `static_lazy`.  In the legend "LesserLazy" are the lazy declared using `#[dynamic]` attribute and "Lazy" those declared with the
+This graph showes the access time to lazy statics once they are initialized. The measurment includes statics from crates `double_checked_cell` and `lazy_static`.  In the legend "LesserLazy" are the lazy declared using `#[dynamic]` attribute and "Lazy" those declared with the
 attribute `#[dynamic(lazy)]`. On the horizontal axis is reported the number of thread that almost simultaneous attempt to access the lazy and the vertical axis the access time summed over all thread. 
 
 Access time to lazy from this crates can be up to *10x faster* than other solutions.
@@ -155,7 +155,7 @@ Access time to lazy from this crates can be up to *10x faster* than other soluti
 
 This graph showes the access time to lazy statics when the lazy is not yet
 initialized. The measurment includes statics from crates `double_checked_cell`
-and `static_lazy`.  In the legend "LesserLazy" are the lazy declared using
+and `lazy_static`.  In the legend "LesserLazy" are the lazy declared using
 `#[dynamic]` attribute and "Lazy" those declared with the attribute
 `#[dynamic(lazy)]`. On the horizontal axis is reported the number of thread
 that almost simultaneous attempt to access and initialize the lazy and the

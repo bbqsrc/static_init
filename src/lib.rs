@@ -1212,3 +1212,6 @@ pub struct StaticInfo {
     pub init_mode:     InitMode,
     pub drop_mode:     FinalyMode,
 }
+
+#[cfg(feature = "lock_statistics")]
+pub use phase_locker::LockStatistics;

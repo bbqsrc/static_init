@@ -1,5 +1,6 @@
 use core::cell::UnsafeCell;
 use std::sync::atomic::{compiler_fence, AtomicUsize, Ordering};
+use std::sync::Barrier;
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::time::Duration;
 
@@ -26,6 +27,11 @@ pub struct Config<
     const NTHREAD: usize,
     const NT_SART: usize,
     const TOLERATE_CONTEXT_SWITCH: bool,
+    const AVOID_SCHEDULER_PREMPTION: bool,
+    //if AVOID_SCHEDULER_PREMPTION if activated all thread get a new fresh time slice
+    //before each iteration. The result may be more artificial than in a 
+    //real scenario but this may be usefull to bench specifical
+    //parts of the locking algorithm
 >;
 
 #[cfg(target_os = "linux")]
@@ -52,19 +58,22 @@ pub fn synchro_bench_input<
     const NT: usize,
     const NT_START: usize,
     const TOL_SWITCH: bool,
+    const AVOID_SCHEDULER: bool,
 >(
     c: &mut BenchmarkGroup<WallTime>,
     id: BenchmarkId,
     input: &I,
     build: impl Fn(&I) -> T,
     access: impl Fn(&T) -> R + Sync,
-    _: Config<MICRO_BENCH, NT, NT_START, TOL_SWITCH>,
+    _: Config<MICRO_BENCH, NT, NT_START, TOL_SWITCH, AVOID_SCHEDULER>,
 ) {
     let started: AtomicUsize = AtomicUsize::new(NT_START);
 
     let vm: MutSynchronized<T> = MutSynchronized(UnsafeCell::new(build(input)));
 
     let (sender, receiver) = sync_channel(0);
+
+    let barrier = Barrier::new(NT+1);
 
     assert!(NT_START <= NT);
 
@@ -99,6 +108,7 @@ pub fn synchro_bench_input<
                         Ok(_) => continue,
                     }
                 }
+                #[allow(clippy::branches_sharing_code)]//on purpose
                 let duration = if MICRO_BENCH {
                     compiler_fence(Ordering::AcqRel);
                     let d = unsafe { TK.time(|| access(&*vm.0.get())) };
@@ -124,19 +134,22 @@ pub fn synchro_bench_input<
                 } else {
                     sender.send(None).unwrap();
                 }
-                expect = 2 * NT + 10;
-
-                while let Err(x) = started.compare_exchange_weak(
-                    expect,
-                    expect + 1,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                ) {
-                    if x >= 2 * NT + 10 {
-                        expect = x;
-                    }
-                    for _ in 1..32 {
-                        core::hint::spin_loop()
+                if AVOID_SCHEDULER {
+                    barrier.wait();
+                } else {
+                    expect = 2 * NT + 10;
+                    while let Err(x) = started.compare_exchange_weak(
+                        expect,
+                        expect + 1,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    ) {
+                        if x >= 2 * NT + 10 {
+                            expect = x;
+                        }
+                        for _ in 1..32 {
+                            core::hint::spin_loop()
+                        }
                     }
                 }
             }
@@ -196,20 +209,34 @@ pub fn synchro_bench_input<
                         }
                     }
                     unsafe { *vm.0.get() = build(input) };
-                    started
-                        .compare_exchange(
-                            NT_START + 1,
-                            2 * NT + 10,
-                            Ordering::Release,
-                            Ordering::Relaxed,
-                        )
-                        .unwrap();
-                    while started
-                        .compare_exchange_weak(3 * NT + 10, 0, Ordering::Relaxed, Ordering::Relaxed)
-                        .is_err()
-                    {
-                        for _ in 1..32 {
-                            core::hint::spin_loop()
+
+
+                    if AVOID_SCHEDULER {
+                        started
+                            .compare_exchange(
+                                NT_START + 1,
+                                0,
+                                Ordering::Release,
+                                Ordering::Relaxed,
+                            )
+                            .unwrap();
+                        barrier.wait();
+                    } else {
+                        started
+                            .compare_exchange(
+                                NT_START + 1,
+                                2 * NT + 10,
+                                Ordering::Release,
+                                Ordering::Relaxed,
+                            )
+                            .unwrap();
+                        while started
+                            .compare_exchange_weak(3 * NT + 10, 0, Ordering::Relaxed, Ordering::Relaxed)
+                            .is_err()
+                        {
+                            for _ in 1..32 {
+                                core::hint::spin_loop()
+                            }
                         }
                     }
                 }
