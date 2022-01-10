@@ -34,7 +34,7 @@ test_pthread_support = ["thread_local"]
 # does not work here
 bench_nightly = ["criterion/real_blackbox"]
 
-default = ["test_pthread_support"]
+default = []
 
 [dependencies]
 bitflags = "1"
