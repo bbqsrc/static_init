@@ -14,7 +14,7 @@ use syn::*;
 use core::result::Result;
 
 extern crate quote;
-use quote::{quote, quote_spanned};
+use quote::quote_spanned;
 
 use proc_macro::TokenStream;
 
@@ -46,18 +46,18 @@ pub fn constructor(args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 fn get_init_func_sig(sig: &Signature) -> TypeBareFn {
-    let sp = sig.span();
+    let sp = sig.span().resolved_at(Span::mixed_site());
 
     if cfg!(target_env = "gnu") && cfg!(target_family = "unix") && !sig.inputs.is_empty() {
-        parse2(quote_spanned!(sp.span()=>extern "C" fn(i32,*const*const u8, *const *const u8)))
+        parse2(quote_spanned!(sp=>extern "C" fn(i32,*const*const u8, *const *const u8)))
             .unwrap()
     } else {
-        parse2(quote_spanned!(sp.span()=>extern "C" fn())).unwrap()
+        parse2(quote_spanned!(sp=>extern "C" fn())).unwrap()
     }
 }
 
 fn const_dtor_no_support() -> TokenStream {
-    quote!(compile_error!(
+    quote_spanned!(Span::mixed_site()=>compile_error!(
         "program constructors/destructors not supported on this target"
     ))
     .into()
@@ -76,7 +76,7 @@ fn init_section(priority: u16) -> Result<String, TokenStream> {
         //on mach it is not clear of ObjC runtime is initialized
         //before or after constructors that are here
         if priority != 0 {
-            Err(quote!(compile_error!(
+            Err(quote_spanned!(Span::mixed_site()=>compile_error!(
                 "Constructor priority other than 0 not supported on this plateform."
             ))
             .into())
@@ -98,7 +98,7 @@ fn fini_section(priority: u16) -> Result<String, TokenStream> {
         Ok(format!(".fini_array.{:05}", 65535 - priority))
     } else if cfg!(mach_o) {
         if priority != 0 {
-            Err(quote!(compile_error!(
+            Err(quote_spanned!(Span::mixed_site()=>compile_error!(
                 "Constructor priority not supported on this plateform."
             ))
             .into())
@@ -188,20 +188,20 @@ macro_rules! generate_error{
     ($span:expr => $($args:tt),*) => {
         {
         let __expand = [$(generate_error!(@expand $args)),*];
-        quote_spanned!($span => ::core::compile_error!(::core::concat!(#(#__expand),*)))
+        quote_spanned!($span.resolved_at(Span::mixed_site()) => ::core::compile_error!(::core::concat!(#(#__expand),*)))
         }
     };
     ($($args:tt),*) => {{
         let __expand = [$(generate_error!(@expand $args)),*];
-        quote!(::core::compile_error!(::core::concat!(#(#__expand),*)))
+        quote_spanned!(Span::mixed_site()=>::core::compile_error!(::core::concat!(#(#__expand),*)))
     }
     };
     (@expand $v:literal) => {
-        quote!($v)
+        quote_spanned!(Span::mixed_site()=>$v)
     };
     (@expand $v:ident) => {
         {
-        quote!(::core::stringify!(#$v))
+        quote_spanned!(Span::mixed_site()=>::core::stringify!(#$v))
         }
     };
 
@@ -390,7 +390,7 @@ fn gen_ctor_dtor(
 
     let func_name = &func.sig.ident;
 
-    let sp = func.sig.span();
+    let sp = func.sig.span().resolved_at(Span::mixed_site());
     //if func.sig.unsafety.is_none() {
     //    quote_spanned! {sp=>compile_error!("Constructors and destructors must be unsafe functions as \
     //    they may access uninitialized memory regions")}
@@ -695,11 +695,12 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         return err;
     };
 
-    let sp = stat.expr.span();
+    let sp = stat.expr.span().resolved_at(Span::mixed_site());
 
     let initer = match options.init {
         //InitMode::Dynamic(priority) if options.drop == DropMode::Drop => {
-        //    let attr: Attribute = parse_quote!(#[::static_init::constructor(#priority)]);
+        //    let attr: Attribute = parse_quote_spanned!(Span::mixed_site()=>
+        //    #[::static_init::constructor(#priority)]);
         //    Some(quote_spanned! {sp=>
         //            extern "C" fn __static_init_dropper() {
         //                unsafe{#typ::drop(#stat_ref)}
@@ -715,7 +716,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         //    })
         //}
         //InitMode::Dynamic(priority) if options.drop == DropMode::Finalize => {
-        //    let attr: Attribute = parse_quote!(#[::static_init::constructor(#priority)]);
+        //    let attr: Attribute = parse_quote_spanned!(Span::mixed_site()=>#[::static_init::constructor(#priority)]);
         //    Some(quote_spanned! {sp=>
         //            extern "C" fn __static_init_dropper() {
         //                unsafe{::static_init::Finaly::finalize(**#stat_ref)}
@@ -747,7 +748,6 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
             Some(quote_spanned! {sp=>
                     #[::static_init::constructor(__lazy_init)]
                     extern "C" fn __static_init_initializer() {
-                        #[allow(unused_unsafe)]
                         unsafe {#typ::init(#stat_ref)};
                     }
             })
@@ -835,7 +835,6 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
 
                 let _ = ();
 
-                #[allow(unused_unsafe)]
                 unsafe{#typ::from_generator_with_info(#prime_expr,#stat_generator_name, #static_info)}
             }
             }
@@ -846,7 +845,6 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
 
                 let _ = ();
 
-                #[allow(unused_unsafe)]
                 unsafe{#typ::from_generator(#prime_expr,#stat_generator_name)}
             }
             }
@@ -857,7 +855,6 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
 
                 let _ = ();
 
-                #[allow(unused_unsafe)]
                 unsafe{#typ::from_generator_with_info(#stat_generator_name, #static_info)}
             }
             }
@@ -868,7 +865,6 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
 
                 let _ = ();
 
-                #[allow(unused_unsafe)]
                 unsafe{#typ::from_generator(#stat_generator_name)}
             }
             }

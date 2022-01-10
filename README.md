@@ -27,7 +27,7 @@ to have an ergonomic, safe and with excellent performance solution for maintaini
 
 # Fastest Lazy Statics
 
-This crate provides *lazy statics* on all plateforms.
+This crate provides *lazy statics* on all platforms.
 
 On unixes and windows *lesser lazy statics* are *lazy* during program startup phase
 (before `main` is called). Once main is called, those statics are all guaranteed to be
@@ -71,7 +71,7 @@ Those statics use an *apdaptative phase locker* that gives them surprising perfo
 # Classical Lazy statics 
 
 By default, initialization of statics declared with the `dynamic` is forced before main
-start on plateform that support it. If *lazyness* if a required feature, the attribute argument
+start on platform that support it. If *lazyness* if a required feature, the attribute argument
 `lazy` can be used.
 
 ```rust
@@ -107,7 +107,7 @@ In the documentation of macro `dynamic` you will find how to:
 On linux or Reddox (TBC) this library is `no_std`. The library use directly the `futex` system call
 to place thread in a wait queue when needed.
 
-On other plateform `no_std` support can be gain by using the `spin_loop` feature. NB that lock strategies
+On other platform `no_std` support can be gain by using the `spin_loop` feature. NB that lock strategies
 based on spin loop are not system-fair and cause entire system slow-down.
 
 # Performant
