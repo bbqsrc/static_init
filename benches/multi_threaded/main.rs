@@ -7,6 +7,9 @@ mod tick_counter;
 
 use static_init::{dynamic, Generator, GeneratorTolerance, Lazy, LockedLazy};
 
+#[cfg(feature = "lock_statistics")]
+use static_init::LockStatistics;
+
 use parking_lot::{
     lock_api::{MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
@@ -234,7 +237,7 @@ fn do_bench<'a, R, T, F: Fn() -> T + Copy, A: Fn(&T) -> R + Sync>(
                 &$t,
                 |_| init(),
                 |l| access(l),
-                Config::<true, $t, $l, true>,
+                Config::<true, $t, $l, true, false>,
             );
         };
     }
@@ -244,24 +247,39 @@ fn do_bench<'a, R, T, F: Fn() -> T + Copy, A: Fn(&T) -> R + Sync>(
     gp.bench_with_input(BenchmarkId::new(name, 1), &1, |b, _| {
         b.iter_batched(init, |l| access(&l), BatchSize::SmallInput)
     });
+
+    print_statistics();
+
     mb!(2);
+
+    print_statistics();
 
     gp.measurement_time(Duration::from_secs(5));
 
     mb!(4);
 
+    print_statistics();
+
     gp.measurement_time(Duration::from_secs(8));
 
     mb!(8 - 8);
+
+    print_statistics();
 
     gp.measurement_time(Duration::from_secs(15));
 
     mb!(16 - 8);
 
+    print_statistics();
+
     mb!(32 - 8);
+
+    print_statistics();
 }
 
 fn bench_init(c: &mut Criterion) {
+    reset_statistics();
+
     let mut gp = c.benchmark_group("Init Locked Thread Scaling");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
@@ -301,7 +319,7 @@ fn bench_init(c: &mut Criterion) {
         *r.get(|| 33)
     };
 
-    do_bench(&mut gp, "static_lazy::Lazy", init, access);
+    do_bench(&mut gp, "lazy_static::Lazy", init, access);
 
     let init = || DoubleCheckedCell::<i32>::new();
 
@@ -456,7 +474,7 @@ fn bench_init(c: &mut Criterion) {
         })
     };
 
-    do_bench(&mut gp, "static_lazy::Lazy", init, access);
+    do_bench(&mut gp, "lazy_static::Lazy", init, access);
 
     let init = || DoubleCheckedCell::<i32>::new();
 
@@ -492,7 +510,7 @@ fn bench_init(c: &mut Criterion) {
         })
     };
 
-    do_bench(&mut gp, "static_lazy::Lazy", init, access);
+    do_bench(&mut gp, "lazy_static::Lazy", init, access);
 
     let init = || DoubleCheckedCell::<i32>::new();
 
@@ -528,7 +546,7 @@ fn bench_init(c: &mut Criterion) {
         })
     };
 
-    do_bench(&mut gp, "static_lazy::Lazy", init, access);
+    do_bench(&mut gp, "lazy_static::Lazy", init, access);
 
     let init = || DoubleCheckedCell::<i32>::new();
 
@@ -554,6 +572,8 @@ static mut QLM: i32 = 33;
 static mut QLMD: i32 = 33;
 
 fn bench_access(c: &mut Criterion) {
+    reset_statistics();
+
     let init = || {
         let l = LockedLazy::from_generator(Xx);
         let _ = l.read();
@@ -703,7 +723,7 @@ fn bench_access(c: &mut Criterion) {
         *r.get(|| 33)
     };
 
-    do_bench(&mut gp, "static_lazy::Lazy", init, access);
+    do_bench(&mut gp, "lazy_static::Lazy", init, access);
 
     let init = || {
         let v = DoubleCheckedCell::<i32>::new();
@@ -853,8 +873,10 @@ macro_rules! heavy_bench {
                 &size,
                 |_| init(),
                 access,
-                Config::<false, 8, 8, true>,
+                Config::<false, 8, 8, true, false>,
             );
+
+            print_statistics();
         }
     };
 }
@@ -898,6 +920,8 @@ heavy_bench! {heavy_fast_mutlazy,LockedLazy, fast_read_access, fast_write_access
 heavy_bench! {heavy_fast_rwmut,RwMut, fast_read_access, fast_write_access}
 
 fn bench_heavy(c: &mut Criterion) {
+    reset_statistics();
+
     let mut gp = c.benchmark_group("Heavy access reads / writes");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
@@ -972,6 +996,8 @@ fn bench_heavy(c: &mut Criterion) {
 }
 
 fn fast_bench_heavy(c: &mut Criterion) {
+    reset_statistics();
+
     let mut gp = c.benchmark_group("Heavy fast access reads / writes");
 
     gp.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
@@ -1044,3 +1070,22 @@ fn fast_bench_heavy(c: &mut Criterion) {
 
     gp.finish();
 }
+
+#[cfg(feature = "lock_statistics")]
+fn print_statistics() {
+    let l = LockStatistics::get_and_reset();
+    if l.optimistic_failures > 1 {
+        println!("{}", l);
+    } //otherwise criterion is certainly just skipping bench or this
+      //statitistic are for a single thread case
+}
+
+#[cfg(not(feature = "lock_statistics"))]
+fn print_statistics() {}
+
+#[cfg(feature = "lock_statistics")]
+fn reset_statistics() {
+    LockStatistics::get_and_reset();
+}
+#[cfg(not(feature = "lock_statistics"))]
+fn reset_statistics() {}

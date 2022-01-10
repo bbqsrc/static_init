@@ -103,3 +103,6 @@ pub enum LockResult<R, W> {
     Write(W),
     None(Phase),
 }
+
+#[cfg(feature = "lock_statistics")]
+pub use sync::LockStatistics;

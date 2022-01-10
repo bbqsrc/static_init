@@ -1,12 +1,18 @@
 use super::futex::Futex;
 use super::spin_wait::SpinWait;
-use super::{LockNature, LockResult, Mappable, PhaseGuard, PhaseLocker, MutPhaseLocker};
+use super::{LockNature, LockResult, Mappable, MutPhaseLocker, PhaseGuard, PhaseLocker};
 use crate::phase::*;
 use crate::{Phase, Phased};
 use core::cell::UnsafeCell;
 use core::mem::forget;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{fence, Ordering};
+
+#[cfg(feature = "lock_statistics")]
+use core::sync::atomic::AtomicUsize;
+
+#[cfg(feature = "lock_statistics")]
+use core::fmt::{self,Formatter,Display};
 
 /// A synchronised phase locker.
 pub(crate) struct SyncPhaseLocker(Futex);
@@ -32,6 +38,78 @@ pub(crate) struct SyncReadPhaseGuard<'a, T: ?Sized>(&'a T, ReadLock<'a>);
 pub(crate) struct Mutex<T>(UnsafeCell<T>, SyncPhaseLocker);
 
 pub(crate) struct MutexGuard<'a, T>(&'a mut T, Lock<'a>);
+
+#[cfg(feature = "lock_statistics")]
+static OPTIMISTIC_FAILURES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "lock_statistics")]
+static SECOND_ATTEMPT_FAILURES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "lock_statistics")]
+static WRITE_LOCK_WHILE_READER_FAILURES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "lock_statistics")]
+static WRITE_WAIT_FAILURES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "lock_statistics")]
+static WRITE_WAIT_SUCCESSES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "lock_statistics")]
+static READ_WAIT_FAILURES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "lock_statistics")]
+static READ_WAIT_SUCCESSES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "lock_statistics")]
+static ADDAPTATIVE_WAIT_SUCCESSES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "lock_statistics")]
+static LATE_ADDAPTATIONS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "lock_statistics")]
+#[derive(Debug)]
+pub struct LockStatistics {
+    pub optimistic_failures:              usize,
+    pub second_attempt_failures:          usize,
+    pub write_lock_while_reader_failures: usize,
+    pub write_wait_failures:              usize,
+    pub write_wait_successes:             usize,
+    pub read_wait_failures:               usize,
+    pub read_wait_successes:              usize,
+    pub addaptative_wait_successes:       usize,
+    pub late_addaptations:                usize,
+}
+
+#[cfg(feature = "lock_statistics")]
+impl LockStatistics {
+    pub fn get_and_reset() -> Self {
+        Self {
+            optimistic_failures:              OPTIMISTIC_FAILURES.swap(0, Ordering::Relaxed),
+            second_attempt_failures:          SECOND_ATTEMPT_FAILURES.swap(0, Ordering::Relaxed),
+
+            write_lock_while_reader_failures: WRITE_LOCK_WHILE_READER_FAILURES
+                .swap(0, Ordering::Relaxed),
+
+            write_wait_failures:              WRITE_WAIT_FAILURES.swap(0, Ordering::Relaxed),
+
+            write_wait_successes:             WRITE_WAIT_SUCCESSES.swap(0, Ordering::Relaxed),
+
+            read_wait_failures:               READ_WAIT_FAILURES.swap(0, Ordering::Relaxed),
+
+            read_wait_successes:              READ_WAIT_SUCCESSES.swap(0, Ordering::Relaxed),
+
+            addaptative_wait_successes:       ADDAPTATIVE_WAIT_SUCCESSES.swap(0, Ordering::Relaxed),
+
+            late_addaptations:                LATE_ADDAPTATIONS.swap(0, Ordering::Relaxed),
+        }
+    }
+}
+#[cfg(feature = "lock_statistics")]
+impl Display for LockStatistics {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f,"{:#?}",self)
+    }
+}
 
 // SyncPhaseGuard
 //-------------------
@@ -145,7 +223,6 @@ impl<'a, T> Clone for SyncReadPhaseGuard<'a, T> {
         SyncReadPhaseGuard(self.0, self.1.clone())
     }
 }
-
 
 // Mutex
 //-------------------
@@ -418,7 +495,6 @@ impl<'a> Clone for ReadLock<'a> {
         let mut spin_wait = SpinWait::new();
         let mut cur = self.futex.load(Ordering::Relaxed);
         loop {
-
             if !has_readers_max(cur) {
                 cur = match read_lock(&self.futex, |cur| !has_readers_max(cur), cur) {
                     Ok(rl) => return rl,
@@ -426,7 +502,7 @@ impl<'a> Clone for ReadLock<'a> {
                 }
             }
 
-            if cur & READ_WAITER_BIT == 0 && spin_wait.spin(){
+            if cur & READ_WAITER_BIT == 0 && spin_wait.spin() {
                 cur = self.futex.load(Ordering::Relaxed);
                 continue;
             }
@@ -452,7 +528,7 @@ impl<'a> Clone for ReadLock<'a> {
                 assert_ne!(cur & (READER_BITS | READER_OVERF), 0);
 
                 return ReadLock::new(&self.futex, cur);
-                }
+            }
 
             spin_wait.reset();
             cur = self.futex.load(Ordering::Relaxed);
@@ -530,7 +606,7 @@ fn wake_readers(futex: &Futex, to_unactivate: u32, converting: bool) -> ReadLock
     ReadLock::new(futex, cur)
 }
 
-struct MutGuard<'a>(&'a mut Futex,Phase);
+struct MutGuard<'a>(&'a mut Futex, Phase);
 impl<'a> Drop for MutGuard<'a> {
     fn drop(&mut self) {
         *self.0.get_mut() = self.1.bits();
@@ -552,11 +628,11 @@ unsafe impl MutPhaseLocker for SyncPhaseLocker {
     }
 
     #[inline(always)]
-    fn transition<R>(&mut self,f: impl FnOnce() -> R, on_success: Phase, on_panic:Phase) -> R {
+    fn transition<R>(&mut self, f: impl FnOnce() -> R, on_success: Phase, on_panic: Phase) -> R {
         let m = MutGuard(&mut self.0, on_panic);
         let r = f();
         forget(m);
-        Self::set_phase(self,on_success);
+        Self::set_phase(self, on_success);
         r
     }
 }
@@ -683,6 +759,11 @@ impl SyncPhaseLocker {
             Err(cur) => cur,
         };
 
+        #[cfg(feature = "lock_statistics")]
+        {
+            OPTIMISTIC_FAILURES.fetch_add(1, Ordering::Relaxed);
+        }
+
         let p = Phase::from_bits_truncate(cur);
 
         match how(p) {
@@ -727,6 +808,11 @@ impl SyncPhaseLocker {
             }
         }
 
+        #[cfg(feature = "lock_statistics")]
+        {
+            SECOND_ATTEMPT_FAILURES.fetch_add(1, Ordering::Relaxed);
+        }
+
         None
     }
 
@@ -741,6 +827,11 @@ impl SyncPhaseLocker {
             Ok(x) => return x,
             Err(cur) => cur,
         };
+
+        #[cfg(feature = "lock_statistics")]
+        {
+            OPTIMISTIC_FAILURES.fetch_add(1, Ordering::Relaxed);
+        }
 
         let p = Phase::from_bits_truncate(cur);
 
@@ -780,6 +871,11 @@ impl SyncPhaseLocker {
                 return LockResult::None(p);
             }
         }
+        #[cfg(feature = "lock_statistics")]
+        {
+            SECOND_ATTEMPT_FAILURES.fetch_add(1, Ordering::Relaxed);
+        }
+
         self.raw_lock_slow(how, on_waiting_how)
     }
     #[cold]
@@ -834,17 +930,10 @@ impl SyncPhaseLocker {
                                 Ok(l) => return LockResult::Write(l),
                                 Err(cur) => cur,
                             };
-                            //cur has WRITE_WAITER_BIT
-
-                            //if let Some(lock) =
-                            //    wait_as_writer_then_wake_with_lock(&self.0, cur, &how)
-                            //{
-                            //    return lock;
-                            //}
-
-                            //spin_wait.reset();
-                            //cur = self.0.load(Ordering::Relaxed);
-                            //continue;
+                            #[cfg(feature = "lock_statistics")]
+                            {
+                                WRITE_LOCK_WHILE_READER_FAILURES.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                     }
                     if cur & WRITE_WAITER_BIT == 0 && spin_wait.spin() {
@@ -897,7 +986,19 @@ impl SyncPhaseLocker {
                     }
 
                     if let Some(lock) = wait_as_writer_then_wake_with_lock(&self.0, cur, &how) {
+                        #[cfg(feature = "lock_statistics")]
+                        {
+                            WRITE_WAIT_SUCCESSES.fetch_add(1, Ordering::Relaxed);
+                            if how(Phase::from_bits_truncate(cur)) != LockNature::Write {
+                                ADDAPTATIVE_WAIT_SUCCESSES.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
                         return lock;
+                    } else {
+                        #[cfg(feature = "lock_statistics")]
+                        {
+                            WRITE_WAIT_FAILURES.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                 }
                 LockNature::Read => {
@@ -917,7 +1018,19 @@ impl SyncPhaseLocker {
                     }
 
                     if let Some(lock) = wait_as_reader_then_wake_with_lock(&self.0, cur, &how) {
+                        #[cfg(feature = "lock_statistics")]
+                        {
+                            READ_WAIT_SUCCESSES.fetch_add(1, Ordering::Relaxed);
+                            if how(Phase::from_bits_truncate(cur)) != LockNature::Read {
+                                ADDAPTATIVE_WAIT_SUCCESSES.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
                         return lock;
+                    } else {
+                        #[cfg(feature = "lock_statistics")]
+                        {
+                            READ_WAIT_FAILURES.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                 }
             }
@@ -1023,11 +1136,21 @@ fn wait_as_writer_then_wake_with_lock(
             LockNature::Write => return Some(LockResult::Write(lock)),
 
             LockNature::Read => {
+                #[cfg(feature = "lock_statistics")]
+                {
+                    LATE_ADDAPTATIONS.fetch_add(1, Ordering::Relaxed);
+                }
                 return Some(LockResult::Read(
                     lock.into_read_lock(Phase::from_bits_truncate(cur)),
-                ))
+                ));
             }
-            LockNature::None => return Some(LockResult::None(Phase::from_bits_truncate(cur))),
+            LockNature::None => {
+                #[cfg(feature = "lock_statistics")]
+                {
+                    LATE_ADDAPTATIONS.fetch_add(1, Ordering::Relaxed);
+                }
+                return Some(LockResult::None(Phase::from_bits_truncate(cur)));
+            }
         }
     }
     None
@@ -1050,7 +1173,13 @@ fn wait_as_reader_then_wake_with_lock(
 
         match how(Phase::from_bits_truncate(cur)) {
             LockNature::Read => return Some(LockResult::Read(lock)),
-            LockNature::None => return Some(LockResult::None(Phase::from_bits_truncate(cur))),
+            LockNature::None => {
+                #[cfg(feature = "lock_statistics")]
+                {
+                    LATE_ADDAPTATIONS.fetch_add(1, Ordering::Relaxed);
+                }
+                return Some(LockResult::None(Phase::from_bits_truncate(cur)));
+            }
             LockNature::Write => (),
         }
     }
@@ -1058,7 +1187,7 @@ fn wait_as_reader_then_wake_with_lock(
 }
 
 #[inline(always)]
-fn wait_for_readers(futex: &Futex, mut cur: u32) -> Result<Lock<'_>,u32> {
+fn wait_for_readers(futex: &Futex, mut cur: u32) -> Result<Lock<'_>, u32> {
     // wait for reader releasing the lock
     let mut spinwait = SpinWait::new();
     while spinwait.spin() {

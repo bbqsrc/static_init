@@ -1862,7 +1862,7 @@ mod test_quasi_mut_lazy {
     #[test]
     fn test() {
         assert_eq!(*_X.read(), 22);
-        *_X.write_lock() = 33;
+        *_X.write() = 33;
         assert_eq!(*_X.read(), 33);
     }
 }

@@ -24,15 +24,18 @@ thread_local = []
 
 spin_loop = []
 
-# internal feature to enable tests
-test_no_global_lazy_hint = []
-
-# internal feature to enable pthread test on linux
-test_pthread_support = ["thread_local"]
-
 # to be used when benching because the stable criterion black box
 # does not work here
 bench_nightly = ["criterion/real_blackbox"]
+
+# internal feature to enable tests
+test_no_global_lazy_hint = []
+
+# internal feature to force use of pthread keys for droped thread local on linux
+test_pthread_support = ["thread_local"]
+
+# internal feature to retrieve lock statics during tests
+lock_statistics = []
 
 default = []
 
@@ -61,8 +64,8 @@ harness = false
 [build-dependencies]
 cfg_aliases = "0.1"
 
-[profile.bench]
-lto = true
+#[profile.bench]
+#lto = true
 
 [profile.dev]
 panic="abort"

@@ -14,7 +14,6 @@ use static_init::{constructor, destructor, dynamic, Finaly};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::spawn;
 
-use static_init::{Phased,Phase};
 //use std::thread::sleep;
 //use std::time::Duration;
 
@@ -88,6 +87,7 @@ macro_rules! make_test {
             }
 
             $(
+            use static_init::{Phased,Phase};
             #[allow(unused)]
             let $thread_local = 0;
             eprintln!("tested");
