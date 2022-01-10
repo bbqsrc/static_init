@@ -423,6 +423,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     //TODO: for lazy statics with leak tolerance => only usefull for thread locals.
 
     let stat_name = &stat.ident;
+    let stat_vis = &stat.vis;
 
     let stat_generator_name = format!("__StaticInitGeneratorFor_{}", stat_name);
 
@@ -803,7 +804,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
     let lazy_generator = if matches!(options.init, InitMode::Lazy | InitMode::LesserLazy) {
         Some(quote_spanned! {sp=>
             #[allow(clippy::upper_case_acronyms)]
-            struct #stat_generator_name;
+            #stat_vis struct #stat_generator_name;
             impl ::static_init::Generator<#stat_typ> for #stat_generator_name {
                 #[inline]
                 fn generate(&self) -> #stat_typ {
