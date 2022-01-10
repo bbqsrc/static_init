@@ -274,9 +274,15 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
                     check_no_init!(id);
                     opt.init = InitMode::Dynamic(0);
                 } else if id == "drop" {
+                    if !cfg!(constructor_destructor) {
+                        return Err(generate_error!(id.span()=>"Static drop mode only supported on unixes and windows"))
+                    }
                     check_no_drop!(id);
                     opt.drop = DropMode::Drop;
                 } else if id == "finalize" {
+                    if !cfg!(constructor_destructor) {
+                        return Err(generate_error!(id.span()=>"Static finalization mode only supported on unixes and windows"))
+                    }
                     check_no_drop!(id);
                     opt.drop = DropMode::Finalize;
                 } else if id == "lazy" {
@@ -328,6 +334,9 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
                 return unexpected_arg!(arg);
             }
         }
+    }
+    if opt.init == InitMode::LesserLazy && !cfg!(constructor_destructor) {
+        opt.init = InitMode::Lazy
     }
     if opt.drop == DropMode::None && opt.tolerance.registration_fail {
         return Err(generate_error!(

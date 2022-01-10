@@ -28,5 +28,7 @@ fn main() {
 
         support_priority: { any(elf,coff) },
 
+        constructor_destructor: { any(elf,coff,mach_o) },
+
     }
 }

@@ -27,11 +27,14 @@ spin_loop = []
 # internal feature to enable tests
 test_no_global_lazy_hint = []
 
+# internal feature to enable pthread test on linux
+test_pthread_support = ["thread_local"]
+
 # to be used when benching because the stable criterion black box
 # does not work here
 bench_nightly = ["criterion/real_blackbox"]
 
-default = []
+default = ["test_pthread_support"]
 
 [dependencies]
 bitflags = "1"

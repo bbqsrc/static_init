@@ -247,7 +247,7 @@
 // args always accessbile
 // the same as unix with thread_info
 //
-#![cfg_attr(all(not(any(feature = "parking_lot_core", debug_mode)),any(target="linux",target="android")), no_std)]
+#![cfg_attr(all(not(any(feature = "parking_lot_core", debug_mode)),any(target_os="linux",target_os="android")), no_std)]
 #![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]
 #![cfg_attr(
     feature = "thread_local",

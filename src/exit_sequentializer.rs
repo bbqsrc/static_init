@@ -551,7 +551,7 @@ mod local_manager {
     #[cfg(coff_thread_at_exit)]
     use windows::finalize_at_thread_exit;
 
-    #[cfg(cxa_thread_at_exit)]
+    #[cfg(all(cxa_thread_at_exit,not(feature = "test_pthread_support")))]
     mod cxa {
         use super::{Node, ThreadExitSequentializer};
         use crate::{Finaly, GeneratorTolerance, Sequential};
@@ -597,6 +597,8 @@ mod local_manager {
             }
             DESTROYING.set(false);
         }
+
+
         #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
@@ -619,17 +621,18 @@ mod local_manager {
             true
         }
     }
-    #[cfg(cxa_thread_at_exit)]
+    #[cfg(all(cxa_thread_at_exit,not(feature = "test_pthread_support")))]
     use cxa::finalize_at_thread_exit;
 
-    #[cfg(pthread_thread_at_exit)]
+    #[cfg(any(pthread_thread_at_exit,feature = "test_pthread_support"))]
     mod pthread {
         use super::{Node, ThreadExitSequentializer};
         use crate::{Finaly, GeneratorTolerance, Sequential};
+        use static_init_macro::destructor;
 
         use core::cell::Cell;
         use core::ffi::c_void;
-        use core::ptr::NonNull;
+        use core::ptr::{self,NonNull};
         use core::sync::atomic::{AtomicUsize, Ordering};
 
         use libc::{
@@ -655,6 +658,13 @@ mod local_manager {
                 opt_head = r.take_next().or_else(|| REGISTER.take());
             }
         }
+        //pthread key destructor are not run in the main thread
+        //so we must force this
+        #[destructor(0)]
+        extern "C" fn force_main_thread_destructor() {
+            execute_destroy(ptr::null_mut());
+        }
+
 
         /// Here panics are prefered so that we are sure
         /// that if it returns false, no memory allocation
@@ -685,8 +695,8 @@ mod local_manager {
                     key = match DESTRUCTOR_KEY.compare_exchange(
                         usize::MAX,
                         lk as usize,
-                        Ordering::Release,
-                        Ordering::Acquire,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,//Just in case, to be sure to sync with lib pthread state.
                     ) {
                         Ok(k) => k,
                         Err(k) => {
@@ -700,7 +710,7 @@ mod local_manager {
         }
         fn register_on_thread_exit<
             T: Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
-            Tol: GeneratorTolerance,
+            Tol: 'static + GeneratorTolerance,
         >(
             st: &'static T,
             key: pthread_key_t,
@@ -733,7 +743,7 @@ mod local_manager {
         /// finalize call back at thread exit
         pub(crate) fn finalize_at_thread_exit<
             T: Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
-            Tol: GeneratorTolerance,
+            Tol: 'static + GeneratorTolerance,
         >(
             st: &'static T,
         ) -> bool
@@ -746,6 +756,6 @@ mod local_manager {
             }
         }
     }
-    #[cfg(pthread_thread_at_exit)]
+    #[cfg(any(pthread_thread_at_exit,feature = "test_pthread_support"))]
     use pthread::finalize_at_thread_exit;
 }

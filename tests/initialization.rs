@@ -13,6 +13,8 @@ use static_init::{constructor, destructor, dynamic, Finaly};
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::spawn;
+
+use static_init::{Phased,Phase};
 //use std::thread::sleep;
 //use std::time::Duration;
 
@@ -82,9 +84,17 @@ macro_rules! make_test {
 
             #[constructor(10)]
             extern fn test_pre() {
-                // if XPRE is a thread local, it is not the one that will appear in main.
                 assert_eq!($acc!(XPRE),42);
             }
+
+            $(
+            #[allow(unused)]
+            let $thread_local = 0;
+            eprintln!("tested");
+            assert!(!Phased::phase(&XPRE).intersects(Phase::INITIALIZED)
+            , "Assertions of this test are valid as long as the tests are not run in the same thread as the \
+                main thread. Please remove the `--test-threads=1` test option");
+            )?
 
             assert_eq!($acc!(XPRE),42);
 
