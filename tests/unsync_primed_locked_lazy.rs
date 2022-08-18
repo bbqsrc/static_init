@@ -6,44 +6,44 @@ use std::panic::catch_unwind;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread::spawn;
 
-#[dynamic(lazy,prime)]
+#[dynamic(lazy, prime)]
 #[thread_local]
 static mut NORMAL: Vec<i32> = match INIT {
     PRIME => vec![],
     DYN => vec![1, 2],
 };
-#[dynamic(lazy,prime)]
+#[dynamic(lazy, prime)]
 #[thread_local]
 static mut NORMAL1: Vec<i32> = match INIT {
     PRIME => vec![],
     DYN => vec![1, 2],
 };
-#[dynamic(lazy,prime)]
+#[dynamic(lazy, prime)]
 #[thread_local]
 static mut NORMAL2: Vec<i32> = match INIT {
     PRIME => vec![],
     DYN => vec![1, 2],
 };
-#[dynamic(lazy,prime)]
+#[dynamic(lazy, prime)]
 #[thread_local]
 static mut NORMAL3: Vec<i32> = match INIT {
     PRIME => vec![],
     DYN => vec![1, 2],
 };
 #[thread_local]
-#[dynamic(lazy,prime)]
+#[dynamic(lazy, prime)]
 static mut NORMAL4: Vec<i32> = match INIT {
     PRIME => vec![],
     DYN => vec![1, 2],
 };
 #[thread_local]
-#[dynamic(lazy,prime)]
+#[dynamic(lazy, prime)]
 static mut NORMAL5: Vec<i32> = match INIT {
     PRIME => vec![],
     DYN => vec![1, 2],
 };
 #[thread_local]
-#[dynamic(lazy,prime)]
+#[dynamic(lazy, prime)]
 static mut NORMAL6: Vec<i32> = match INIT {
     PRIME => vec![],
     DYN => vec![1, 2],
@@ -113,12 +113,14 @@ fn normal() {
 
     assert_eq!(*NORMAL.read(), vec![1, 2, 3]);
 
-    spawn(|| assert_eq!(*NORMAL.read(), vec![1,2])).join().unwrap();
+    spawn(|| assert_eq!(*NORMAL.read(), vec![1, 2]))
+        .join()
+        .unwrap();
 }
 
 static UNINIT_COUNT: AtomicU32 = AtomicU32::new(0);
 
-#[dynamic(lazy,prime)]
+#[dynamic(lazy, prime)]
 static mut INIT_MAY_PANICK: Vec<i32> = match INIT {
     PRIME => vec![],
     DYN => {
@@ -135,7 +137,13 @@ fn init_may_panick() {
 
     assert!(INIT_MAY_PANICK.try_read().is_err());
 
-    assert_eq!(INIT_MAY_PANICK.primed_read_non_initializing().unwrap_err().len(), 0);
+    assert_eq!(
+        INIT_MAY_PANICK
+            .primed_read_non_initializing()
+            .unwrap_err()
+            .len(),
+        0
+    );
 
     assert!(INIT_MAY_PANICK.phase().is_empty());
 
@@ -176,12 +184,12 @@ fn init_may_panick() {
 
 static UNINIT_ONCE_COUNT: AtomicU32 = AtomicU32::new(0);
 
-#[dynamic(lazy,prime, try_init_once)]
+#[dynamic(lazy, prime, try_init_once)]
 static mut UNINITIALIZABLE: Vec<i32> = match INIT {
     PRIME => vec![],
     DYN => {
-    UNINIT_ONCE_COUNT.fetch_add(1, Ordering::Relaxed);
-    panic!("Panicked on purpose")
+        UNINIT_ONCE_COUNT.fetch_add(1, Ordering::Relaxed);
+        panic!("Panicked on purpose")
     }
 };
 
@@ -191,7 +199,13 @@ fn init_may_panick_intolerant() {
 
     assert!(UNINITIALIZABLE.try_read().is_err());
 
-    assert_eq!(UNINITIALIZABLE.primed_read_non_initializing().unwrap_err().len(), 0);
+    assert_eq!(
+        UNINITIALIZABLE
+            .primed_read_non_initializing()
+            .unwrap_err()
+            .len(),
+        0
+    );
 
     assert!(UNINITIALIZABLE.phase().is_empty());
 
@@ -206,7 +220,13 @@ fn init_may_panick_intolerant() {
 
     assert!(catch_unwind(|| UNINITIALIZABLE.write().len()).is_err());
 
-    assert_eq!(UNINITIALIZABLE.primed_read_non_initializing().unwrap_err().len(), 0);
+    assert_eq!(
+        UNINITIALIZABLE
+            .primed_read_non_initializing()
+            .unwrap_err()
+            .len(),
+        0
+    );
 
     assert_eq!(UNINIT_ONCE_COUNT.load(Ordering::Relaxed), 1);
 
@@ -218,7 +238,7 @@ fn init_may_panick_intolerant() {
     assert_eq!(UNINIT_ONCE_COUNT.load(Ordering::Relaxed), 1);
 }
 
-#[dynamic(lazy,prime,try_init_once)]
+#[dynamic(lazy, prime, try_init_once)]
 static mut NORMAL_WITH_TOLERANCE: Vec<i32> = match INIT {
     PRIME => vec![],
     DYN => vec![1, 2],
@@ -230,7 +250,13 @@ fn normal_with_tolerance() {
 
     assert!(NORMAL_WITH_TOLERANCE.try_read().is_err());
 
-    assert_eq!(NORMAL_WITH_TOLERANCE.primed_read_non_initializing().unwrap_err().len(), 0);
+    assert_eq!(
+        NORMAL_WITH_TOLERANCE
+            .primed_read_non_initializing()
+            .unwrap_err()
+            .len(),
+        0
+    );
 
     assert!(NORMAL_WITH_TOLERANCE.phase().is_empty());
 

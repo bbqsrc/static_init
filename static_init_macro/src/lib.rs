@@ -49,8 +49,7 @@ fn get_init_func_sig(sig: &Signature) -> TypeBareFn {
     let sp = sig.span().resolved_at(Span::mixed_site());
 
     if cfg!(target_env = "gnu") && cfg!(target_family = "unix") && !sig.inputs.is_empty() {
-        parse2(quote_spanned!(sp=>extern "C" fn(i32,*const*const u8, *const *const u8)))
-            .unwrap()
+        parse2(quote_spanned!(sp=>extern "C" fn(i32,*const*const u8, *const *const u8))).unwrap()
     } else {
         parse2(quote_spanned!(sp=>extern "C" fn())).unwrap()
     }
@@ -129,7 +128,6 @@ pub fn destructor(args: TokenStream, input: TokenStream) -> TokenStream {
     gen_ctor_dtor(func, &section, &func_ptr_name, func_type).into()
 }
 
-
 #[proc_macro_attribute]
 pub fn dynamic(args: TokenStream, input: TokenStream) -> TokenStream {
     let item: ItemStatic = parse_macro_input!(input);
@@ -155,16 +153,16 @@ enum DropMode {
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct Tolerance {
-    init_fail:         bool,
+    init_fail: bool,
     registration_fail: bool,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct DynMode {
-    init:      InitMode,
-    drop:      DropMode,
+    init: InitMode,
+    drop: DropMode,
     tolerance: Tolerance,
-    priming:   bool,
+    priming: bool,
 }
 
 fn parse_priority(args: TokenStream) -> std::result::Result<u16, TokenStream2> {
@@ -218,13 +216,13 @@ fn parse_priority_literal(lit: &Lit) -> Result<u16, TokenStream2> {
 
 fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenStream2> {
     let mut opt = DynMode {
-        init:      InitMode::LesserLazy,
-        drop:      DropMode::None,
+        init: InitMode::LesserLazy,
+        drop: DropMode::None,
         tolerance: Tolerance {
-            init_fail:         true,
+            init_fail: true,
             registration_fail: false,
         },
-        priming:   false,
+        priming: false,
     };
 
     let mut init_set = false;
@@ -275,13 +273,17 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
                     opt.init = InitMode::Dynamic(0);
                 } else if id == "drop" {
                     if !cfg!(constructor_destructor) {
-                        return Err(generate_error!(id.span()=>"Static drop mode only supported on unixes and windows"))
+                        return Err(
+                            generate_error!(id.span()=>"Static drop mode only supported on unixes and windows"),
+                        );
                     }
                     check_no_drop!(id);
                     opt.drop = DropMode::Drop;
                 } else if id == "finalize" {
                     if !cfg!(constructor_destructor) {
-                        return Err(generate_error!(id.span()=>"Static finalization mode only supported on unixes and windows"))
+                        return Err(
+                            generate_error!(id.span()=>"Static finalization mode only supported on unixes and windows"),
+                        );
                     }
                     check_no_drop!(id);
                     opt.drop = DropMode::Finalize;
@@ -344,10 +346,8 @@ fn parse_dyn_options(args: AttributeArgs) -> std::result::Result<DynMode, TokenS
              `drop` or `finalize` attribute argument if the intent is that this static is dropped."
         ));
     }
-    if opt.priming && ! (opt.init== InitMode::Lazy || opt.init == InitMode::LesserLazy) {
-        return Err(generate_error!(
-            "Only lazy statics can be primed"
-        ));
+    if opt.priming && !(opt.init == InitMode::Lazy || opt.init == InitMode::LesserLazy) {
+        return Err(generate_error!("Only lazy statics can be primed"));
     }
     if (opt.init == InitMode::Lazy || opt.init == InitMode::LesserLazy)
         && !(opt.drop == DropMode::None
@@ -442,7 +442,6 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
         "Expected an expression of the form `match INIT { PRIME => /*expr/*, DYN => /*expr*/}`"
     );
 
-
     let stat_typ = &*stat.ty;
 
     let is_thread_local = has_thread_local(&stat.attrs);
@@ -523,7 +522,10 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 ::static_init::lazy::PrimedLockedLazy::<#stat_typ,#stat_generator_name>
             }
         }
-    } else if options.priming && options.init == InitMode::LesserLazy && options.drop == DropMode::None {
+    } else if options.priming
+        && options.init == InitMode::LesserLazy
+        && options.drop == DropMode::None
+    {
         if stat.mutability.is_none() {
             return generate_error!(stat.static_token.span()=>
                 "Primed statics are mutating (safe). Add the `mut` keyword."
@@ -534,7 +536,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 ::static_init::lazy::PrimedLesserLockedLazy::<#stat_typ,#stat_generator_name>
             }
         }
-    } else if options.priming  && options.init == InitMode::Lazy{
+    } else if options.priming && options.init == InitMode::Lazy {
         if stat.mutability.is_none() {
             return generate_error!(stat.static_token.span()=>
                 "Primed statics are mutating (safe). Add the `mut` keyword."
@@ -545,7 +547,7 @@ fn gen_dyn_init(mut stat: ItemStatic, options: DynMode) -> TokenStream2 {
                 ::static_init::lazy::PrimedLockedLazyDroped::<#stat_typ,#stat_generator_name>
             }
         }
-    } else if options.priming  && options.init == InitMode::LesserLazy{
+    } else if options.priming && options.init == InitMode::LesserLazy {
         if stat.mutability.is_none() {
             return generate_error!(stat.static_token.span()=>
                 "Primed statics are mutating (safe). Add the `mut` keyword."

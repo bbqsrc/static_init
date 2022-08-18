@@ -1,19 +1,19 @@
-use static_init::{dynamic, Phase,destructor,constructor};
-use std::sync::atomic::{AtomicU32,Ordering};
+use static_init::{constructor, destructor, dynamic, Phase};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 static FINALIZE_A_COUNT: AtomicU32 = AtomicU32::new(0);
 
 struct A(u32);
 
 impl A {
-    fn new(v: u32) -> A{
+    fn new(v: u32) -> A {
         A(v)
     }
 }
 
 impl Drop for A {
     fn drop(&mut self) {
-        FINALIZE_A_COUNT.fetch_add(1,Ordering::Relaxed);
+        FINALIZE_A_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -37,8 +37,7 @@ extern "C" fn test_pre_normal() {
 
 #[test]
 fn normal() {
-
-    assert!(NORMAL.phase() == Phase::INITIALIZED|Phase::REGISTERED);
+    assert!(NORMAL.phase() == Phase::INITIALIZED | Phase::REGISTERED);
 
     assert_eq!(NORMAL.try_read().unwrap().0, 33);
 
@@ -48,7 +47,7 @@ fn normal() {
 
     assert_eq!(NORMAL.fast_try_write().unwrap().unwrap().0, 33);
 
-    assert!(NORMAL.phase() == Phase::INITIALIZED|Phase::REGISTERED);
+    assert!(NORMAL.phase() == Phase::INITIALIZED | Phase::REGISTERED);
 
     assert_eq!(NORMAL.read().0, 33);
 
@@ -58,7 +57,7 @@ fn normal() {
 }
 
 #[destructor(10)]
-extern fn check_a_finalized() {
+extern "C" fn check_a_finalized() {
     assert_eq!(FINALIZE_A_COUNT.load(Ordering::Relaxed), 1)
 }
 
@@ -67,19 +66,19 @@ static FINALIZE_B_COUNT: AtomicU32 = AtomicU32::new(0);
 struct B(u32);
 
 impl B {
-    fn new(v: u32) -> B{
+    fn new(v: u32) -> B {
         B(v)
     }
 }
 
 impl Drop for B {
     fn drop(&mut self) {
-        FINALIZE_B_COUNT.fetch_add(1,Ordering::Relaxed);
+        FINALIZE_B_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 }
 
 #[destructor(10)]
-extern fn check_b_finalized() {
+extern "C" fn check_b_finalized() {
     assert_eq!(FINALIZE_B_COUNT.load(Ordering::Relaxed), 1)
 }
 
@@ -96,11 +95,11 @@ extern "C" fn test_pre_pre_inited_normal() {
 
     assert_eq!(PRE_INITED_NORMAL.read().0, 12);
 
-    assert!(PRE_INITED_NORMAL.phase() == Phase::INITIALIZED|Phase::REGISTERED);
+    assert!(PRE_INITED_NORMAL.phase() == Phase::INITIALIZED | Phase::REGISTERED);
 
-    assert_eq!(PRE_INITED_NORMAL.try_read().unwrap().0,12);
+    assert_eq!(PRE_INITED_NORMAL.try_read().unwrap().0, 12);
 
-    assert!(PRE_INITED_NORMAL.phase() == Phase::INITIALIZED|Phase::REGISTERED);
+    assert!(PRE_INITED_NORMAL.phase() == Phase::INITIALIZED | Phase::REGISTERED);
 
     assert_eq!(PRE_INITED_NORMAL.read().0, 12);
 
@@ -109,53 +108,51 @@ extern "C" fn test_pre_pre_inited_normal() {
 
 #[test]
 fn pre_inited_normal() {
-    assert_eq!(PRE_INITED_NORMAL.phase(), Phase::INITIALIZED|Phase::REGISTERED);
+    assert_eq!(
+        PRE_INITED_NORMAL.phase(),
+        Phase::INITIALIZED | Phase::REGISTERED
+    );
 
-    assert_eq!(PRE_INITED_NORMAL.try_read().unwrap().0,33);
+    assert_eq!(PRE_INITED_NORMAL.try_read().unwrap().0, 33);
 
-    assert_eq!(PRE_INITED_NORMAL.read().0,33);
-
+    assert_eq!(PRE_INITED_NORMAL.read().0, 33);
 }
-
 
 static FINALIZE_C_COUNT: AtomicU32 = AtomicU32::new(0);
 
 struct C(u32);
 
 impl C {
-    fn new(v: u32) -> C{
+    fn new(v: u32) -> C {
         C(v)
     }
 }
 
 impl Drop for C {
     fn drop(&mut self) {
-        FINALIZE_C_COUNT.fetch_add(1,Ordering::Relaxed);
+        FINALIZE_C_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 }
 
 #[destructor(10)]
-extern fn check_c_finalized() {
+extern "C" fn check_c_finalized() {
     assert_eq!(FINALIZE_C_COUNT.load(Ordering::Relaxed), 1)
 }
 
-
-#[dynamic(drop,try_init_once)]
+#[dynamic(drop, try_init_once)]
 static mut NORMAL_WITH_TOLERANCE: C = C::new(33);
 
 #[test]
 fn normal_with_tolerance() {
-
     assert_eq!(NORMAL_WITH_TOLERANCE.read().0, 33);
 
-    assert!(NORMAL_WITH_TOLERANCE.phase() == Phase::INITIALIZED|Phase::REGISTERED);
+    assert!(NORMAL_WITH_TOLERANCE.phase() == Phase::INITIALIZED | Phase::REGISTERED);
 
     assert_eq!(NORMAL_WITH_TOLERANCE.try_read().unwrap().0, 33);
 
-    assert!(NORMAL_WITH_TOLERANCE.phase() == Phase::INITIALIZED|Phase::REGISTERED);
+    assert!(NORMAL_WITH_TOLERANCE.phase() == Phase::INITIALIZED | Phase::REGISTERED);
 
     assert_eq!(NORMAL_WITH_TOLERANCE.read().0, 33);
 
     assert_eq!(NORMAL_WITH_TOLERANCE.write().0, 33);
 }
-

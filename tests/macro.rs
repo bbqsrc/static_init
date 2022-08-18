@@ -272,13 +272,13 @@ mod lazy {
         #[dynamic(lesser_lazy, finalize)]
         static mut L2: A = A::new(L3.0);
 
-        #[dynamic(lazy,prime)]
+        #[dynamic(lazy, prime)]
         static mut L4: i32 = match INIT {
             PRIME => 42,
             DYN => 33,
         };
 
-        #[dynamic(lazy,prime, drop)]
+        #[dynamic(lazy, prime, drop)]
         static mut L5: A = match INIT {
             PRIME => A(33),
             DYN => A::new(12),

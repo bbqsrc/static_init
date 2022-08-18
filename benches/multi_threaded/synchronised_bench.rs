@@ -1,7 +1,7 @@
 use core::cell::UnsafeCell;
 use std::sync::atomic::{compiler_fence, AtomicUsize, Ordering};
-use std::sync::Barrier;
 use std::sync::mpsc::{sync_channel, SyncSender};
+use std::sync::Barrier;
 use std::time::Duration;
 
 use static_init::dynamic;
@@ -29,7 +29,7 @@ pub struct Config<
     const TOLERATE_CONTEXT_SWITCH: bool,
     const AVOID_SCHEDULER_PREMPTION: bool,
     //if AVOID_SCHEDULER_PREMPTION if activated all thread get a new fresh time slice
-    //before each iteration. The result may be more artificial than in a 
+    //before each iteration. The result may be more artificial than in a
     //real scenario but this may be usefull to bench specifical
     //parts of the locking algorithm
 >;
@@ -73,7 +73,7 @@ pub fn synchro_bench_input<
 
     let (sender, receiver) = sync_channel(0);
 
-    let barrier = Barrier::new(NT+1);
+    let barrier = Barrier::new(NT + 1);
 
     assert!(NT_START <= NT);
 
@@ -108,7 +108,7 @@ pub fn synchro_bench_input<
                         Ok(_) => continue,
                     }
                 }
-                #[allow(clippy::branches_sharing_code)]//on purpose
+                #[allow(clippy::branches_sharing_code)] //on purpose
                 let duration = if MICRO_BENCH {
                     compiler_fence(Ordering::AcqRel);
                     let d = unsafe { TK.time(|| access(&*vm.0.get())) };
@@ -210,15 +210,9 @@ pub fn synchro_bench_input<
                     }
                     unsafe { *vm.0.get() = build(input) };
 
-
                     if AVOID_SCHEDULER {
                         started
-                            .compare_exchange(
-                                NT_START + 1,
-                                0,
-                                Ordering::Release,
-                                Ordering::Relaxed,
-                            )
+                            .compare_exchange(NT_START + 1, 0, Ordering::Release, Ordering::Relaxed)
                             .unwrap();
                         barrier.wait();
                     } else {
@@ -231,7 +225,12 @@ pub fn synchro_bench_input<
                             )
                             .unwrap();
                         while started
-                            .compare_exchange_weak(3 * NT + 10, 0, Ordering::Relaxed, Ordering::Relaxed)
+                            .compare_exchange_weak(
+                                3 * NT + 10,
+                                0,
+                                Ordering::Relaxed,
+                                Ordering::Relaxed,
+                            )
                             .is_err()
                         {
                             for _ in 1..32 {

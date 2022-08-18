@@ -1,4 +1,4 @@
-use super::{LockNature, LockResult, Mappable, PhaseGuard, PhaseLocker, MutPhaseLocker};
+use super::{LockNature, LockResult, Mappable, MutPhaseLocker, PhaseGuard, PhaseLocker};
 use crate::phase::*;
 use crate::{Phase, Phased};
 use core::cell::Cell;
@@ -114,7 +114,7 @@ impl<'a, T> Phased for UnSyncReadPhaseGuard<'a, T> {
 impl<'a, T> Clone for UnSyncReadPhaseGuard<'a, T> {
     fn clone(&self) -> Self {
         self.1.set(self.1.get().checked_add(READER_UNITY).unwrap());
-        Self(self.0,self.1)
+        Self(self.0, self.1)
     }
 }
 
@@ -158,7 +158,7 @@ impl<'a, T: ?Sized> Drop for UnSyncReadPhaseGuard<'a, T> {
 unsafe impl MutPhaseLocker for UnSyncPhaseLocker {
     #[inline(always)]
     fn get_phase_unique(&mut self) -> Phase {
-       Phase::from_bits(self.0.get()).unwrap()
+        Phase::from_bits(self.0.get()).unwrap()
     }
 
     #[inline(always)]
@@ -167,7 +167,7 @@ unsafe impl MutPhaseLocker for UnSyncPhaseLocker {
     }
 
     #[inline(always)]
-    fn transition<R>(&mut self,f: impl FnOnce() -> R, on_success: Phase, on_panic:Phase) -> R {
+    fn transition<R>(&mut self, f: impl FnOnce() -> R, on_success: Phase, on_panic: Phase) -> R {
         self.0.set(on_panic.bits());
         let r = f();
         self.0.set(on_success.bits());

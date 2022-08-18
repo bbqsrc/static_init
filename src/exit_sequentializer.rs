@@ -21,7 +21,7 @@ mod exit_manager {
     type Node = dyn 'static + OnExit + Sync;
 
     struct ExitSequentializerBase<G> {
-        sub:  SubSequentializer<G>,
+        sub: SubSequentializer<G>,
         next: Mutex<Option<&'static Node>>,
     }
 
@@ -45,11 +45,11 @@ mod exit_manager {
         use crate::phase_locker::Mutex;
 
         struct Register {
-            first:               Option<&'static Node>,
+            first: Option<&'static Node>,
             registration_opened: bool,
         }
         static REGISTER: Mutex<Register> = Mutex::new(Register {
-            first:               None,
+            first: None,
             registration_opened: true,
         });
 
@@ -115,7 +115,7 @@ mod exit_manager {
         pub const fn new(l: SyncPhaseLocker) -> Self {
             //Self(GLOBAL_INIT)
             Self(ExitSequentializerBase {
-                sub:  SubSequentializer::new(l),
+                sub: SubSequentializer::new(l),
                 next: MUTEX_INIT,
             })
         }
@@ -298,7 +298,7 @@ mod local_manager {
     /// A sequentializer that store finalize_callback  
     /// for execution at thread exit
     struct ThreadExitSequentializerBase<Tol> {
-        sub:  SubSequentializer<Tol>,
+        sub: SubSequentializer<Tol>,
         next: Cell<Option<&'static Node>>,
     }
 
@@ -325,7 +325,7 @@ mod local_manager {
         pub const fn new(l: UnSyncPhaseLocker) -> Self {
             //Self(GLOBAL_INIT)
             Self(ThreadExitSequentializerBase {
-                sub:  SubSequentializer::new(l),
+                sub: SubSequentializer::new(l),
                 next: CELL_INIT,
             })
         }
@@ -532,7 +532,7 @@ mod local_manager {
         /// finalize call back at thread exit
         pub(crate) fn finalize_at_thread_exit<
             T: Sequential<Sequentializer = ThreadExitSequentializer<Tol>>,
-            Tol: 'static+GeneratorTolerance,
+            Tol: 'static + GeneratorTolerance,
         >(
             st: &'static T,
         ) -> bool
@@ -551,7 +551,7 @@ mod local_manager {
     #[cfg(coff_thread_at_exit)]
     use windows::finalize_at_thread_exit;
 
-    #[cfg(all(cxa_thread_at_exit,not(feature = "test_pthread_support")))]
+    #[cfg(all(cxa_thread_at_exit, not(feature = "test_pthread_support")))]
     mod cxa {
         use super::{Node, ThreadExitSequentializer};
         use crate::{Finaly, GeneratorTolerance, Sequential};
@@ -598,7 +598,6 @@ mod local_manager {
             DESTROYING.set(false);
         }
 
-
         #[cfg_attr(docsrs, doc(cfg(feature = "thread_local")))]
         /// Store a reference of the thread local static for execution of the
         /// finalize call back at thread exit
@@ -621,10 +620,10 @@ mod local_manager {
             true
         }
     }
-    #[cfg(all(cxa_thread_at_exit,not(feature = "test_pthread_support")))]
+    #[cfg(all(cxa_thread_at_exit, not(feature = "test_pthread_support")))]
     use cxa::finalize_at_thread_exit;
 
-    #[cfg(any(pthread_thread_at_exit,feature = "test_pthread_support"))]
+    #[cfg(any(pthread_thread_at_exit, feature = "test_pthread_support"))]
     mod pthread {
         use super::{Node, ThreadExitSequentializer};
         use crate::{Finaly, GeneratorTolerance, Sequential};
@@ -632,7 +631,7 @@ mod local_manager {
 
         use core::cell::Cell;
         use core::ffi::c_void;
-        use core::ptr::{self,NonNull};
+        use core::ptr::{self, NonNull};
         use core::sync::atomic::{AtomicUsize, Ordering};
 
         use libc::{
@@ -665,7 +664,6 @@ mod local_manager {
             execute_destroy(ptr::null_mut());
         }
 
-
         /// Here panics are prefered so that we are sure
         /// that if it returns false, no memory allocation
         /// has been done, which avoid recursions.
@@ -696,7 +694,7 @@ mod local_manager {
                         usize::MAX,
                         lk as usize,
                         Ordering::AcqRel,
-                        Ordering::Acquire,//Just in case, to be sure to sync with lib pthread state.
+                        Ordering::Acquire, //Just in case, to be sure to sync with lib pthread state.
                     ) {
                         Ok(k) => k,
                         Err(k) => {
@@ -756,6 +754,6 @@ mod local_manager {
             }
         }
     }
-    #[cfg(any(pthread_thread_at_exit,feature = "test_pthread_support"))]
+    #[cfg(any(pthread_thread_at_exit, feature = "test_pthread_support"))]
     use pthread::finalize_at_thread_exit;
 }

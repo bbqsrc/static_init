@@ -12,15 +12,15 @@ use core::sync::atomic::{fence, Ordering};
 use core::sync::atomic::AtomicUsize;
 
 #[cfg(feature = "lock_statistics")]
-use core::fmt::{self,Formatter,Display};
+use core::fmt::{self, Display, Formatter};
 
 /// A synchronised phase locker.
 pub(crate) struct SyncPhaseLocker(Futex);
 
 pub(crate) struct Lock<'a> {
-    futex:      &'a Futex,
+    futex: &'a Futex,
     init_phase: Phase,
-    on_unlock:  Phase,
+    on_unlock: Phase,
 }
 
 /// A phase guard that allow atomic phase transition that
@@ -28,7 +28,7 @@ pub(crate) struct Lock<'a> {
 pub(crate) struct SyncPhaseGuard<'a, T: ?Sized>(&'a T, Lock<'a>);
 
 pub(crate) struct ReadLock<'a> {
-    futex:      &'a Futex,
+    futex: &'a Futex,
     init_phase: Phase,
 }
 
@@ -69,45 +69,45 @@ static LATE_ADDAPTATIONS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(feature = "lock_statistics")]
 #[derive(Debug)]
 pub struct LockStatistics {
-    pub optimistic_failures:              usize,
-    pub second_attempt_failures:          usize,
+    pub optimistic_failures: usize,
+    pub second_attempt_failures: usize,
     pub write_lock_while_reader_failures: usize,
-    pub write_wait_failures:              usize,
-    pub write_wait_successes:             usize,
-    pub read_wait_failures:               usize,
-    pub read_wait_successes:              usize,
-    pub addaptative_wait_successes:       usize,
-    pub late_addaptations:                usize,
+    pub write_wait_failures: usize,
+    pub write_wait_successes: usize,
+    pub read_wait_failures: usize,
+    pub read_wait_successes: usize,
+    pub addaptative_wait_successes: usize,
+    pub late_addaptations: usize,
 }
 
 #[cfg(feature = "lock_statistics")]
 impl LockStatistics {
     pub fn get_and_reset() -> Self {
         Self {
-            optimistic_failures:              OPTIMISTIC_FAILURES.swap(0, Ordering::Relaxed),
-            second_attempt_failures:          SECOND_ATTEMPT_FAILURES.swap(0, Ordering::Relaxed),
+            optimistic_failures: OPTIMISTIC_FAILURES.swap(0, Ordering::Relaxed),
+            second_attempt_failures: SECOND_ATTEMPT_FAILURES.swap(0, Ordering::Relaxed),
 
             write_lock_while_reader_failures: WRITE_LOCK_WHILE_READER_FAILURES
                 .swap(0, Ordering::Relaxed),
 
-            write_wait_failures:              WRITE_WAIT_FAILURES.swap(0, Ordering::Relaxed),
+            write_wait_failures: WRITE_WAIT_FAILURES.swap(0, Ordering::Relaxed),
 
-            write_wait_successes:             WRITE_WAIT_SUCCESSES.swap(0, Ordering::Relaxed),
+            write_wait_successes: WRITE_WAIT_SUCCESSES.swap(0, Ordering::Relaxed),
 
-            read_wait_failures:               READ_WAIT_FAILURES.swap(0, Ordering::Relaxed),
+            read_wait_failures: READ_WAIT_FAILURES.swap(0, Ordering::Relaxed),
 
-            read_wait_successes:              READ_WAIT_SUCCESSES.swap(0, Ordering::Relaxed),
+            read_wait_successes: READ_WAIT_SUCCESSES.swap(0, Ordering::Relaxed),
 
-            addaptative_wait_successes:       ADDAPTATIVE_WAIT_SUCCESSES.swap(0, Ordering::Relaxed),
+            addaptative_wait_successes: ADDAPTATIVE_WAIT_SUCCESSES.swap(0, Ordering::Relaxed),
 
-            late_addaptations:                LATE_ADDAPTATIONS.swap(0, Ordering::Relaxed),
+            late_addaptations: LATE_ADDAPTATIONS.swap(0, Ordering::Relaxed),
         }
     }
 }
 #[cfg(feature = "lock_statistics")]
 impl Display for LockStatistics {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f,"{:#?}",self)
+        write!(f, "{:#?}", self)
     }
 }
 

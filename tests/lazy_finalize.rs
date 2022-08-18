@@ -1,29 +1,28 @@
-use static_init::{LazyAccess,dynamic, Phase, Finaly,destructor};
+use static_init::{destructor, dynamic, Finaly, LazyAccess, Phase};
 use std::panic::catch_unwind;
-use std::sync::atomic::{AtomicU32,Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 static FINALIZE_A_COUNT: AtomicU32 = AtomicU32::new(0);
 
 struct A(u32);
 
 impl A {
-    fn new(v: u32) -> A{
+    fn new(v: u32) -> A {
         A(v)
     }
 }
 
 impl Finaly for A {
     fn finaly(&self) {
-        FINALIZE_A_COUNT.fetch_add(1,Ordering::Relaxed);
+        FINALIZE_A_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 }
 
-#[dynamic(lazy,finalize)]
+#[dynamic(lazy, finalize)]
 static NORMAL: A = A::new(33);
 
 #[test]
 fn normal() {
-
     assert!(LazyAccess::phase(&NORMAL).is_empty());
 
     assert!(LazyAccess::try_get(&NORMAL).is_err());
@@ -32,11 +31,11 @@ fn normal() {
 
     assert_eq!(NORMAL.0, 33);
 
-    assert!(LazyAccess::phase(&NORMAL) == Phase::INITIALIZED|Phase::REGISTERED);
+    assert!(LazyAccess::phase(&NORMAL) == Phase::INITIALIZED | Phase::REGISTERED);
 
     assert_eq!(LazyAccess::try_get(&NORMAL).unwrap().0, 33);
 
-    assert!(LazyAccess::phase(&NORMAL) == Phase::INITIALIZED|Phase::REGISTERED);
+    assert!(LazyAccess::phase(&NORMAL) == Phase::INITIALIZED | Phase::REGISTERED);
 
     assert_eq!(NORMAL.0, 33);
 
@@ -44,10 +43,9 @@ fn normal() {
 }
 
 #[destructor(10)]
-extern fn check_a_finalized() {
+extern "C" fn check_a_finalized() {
     assert_eq!(FINALIZE_A_COUNT.load(Ordering::Relaxed), 1)
 }
-
 
 static FINALIZE_B_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -61,12 +59,12 @@ impl B {
 
 impl Finaly for B {
     fn finaly(&self) {
-        FINALIZE_B_COUNT.fetch_add(1,Ordering::Relaxed);
+        FINALIZE_B_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 }
 
 #[destructor(10)]
-extern fn check_b_finalized() {
+extern "C" fn check_b_finalized() {
     assert_eq!(FINALIZE_B_COUNT.load(Ordering::Relaxed), 1)
 }
 
@@ -74,15 +72,14 @@ static UNINIT_COUNT: AtomicU32 = AtomicU32::new(0);
 
 #[dynamic(lazy, finalize)]
 static INIT_MAY_PANICK: B = {
-    if UNINIT_COUNT.fetch_add(1,Ordering::Relaxed) < 2 {
-        panic!("Should not be seen"); 
+    if UNINIT_COUNT.fetch_add(1, Ordering::Relaxed) < 2 {
+        panic!("Should not be seen");
     }
     B::new(42)
-    };
+};
 
 #[test]
 fn init_may_panick() {
-
     assert!(LazyAccess::phase(&INIT_MAY_PANICK).is_empty());
 
     assert!(LazyAccess::try_get(&INIT_MAY_PANICK).is_err());
@@ -90,24 +87,30 @@ fn init_may_panick() {
     assert!(LazyAccess::phase(&INIT_MAY_PANICK).is_empty());
 
     assert!(catch_unwind(|| INIT_MAY_PANICK.0).is_err());
-    
+
     assert_eq!(UNINIT_COUNT.load(Ordering::Relaxed), 1);
 
-    assert_eq!(LazyAccess::phase(&INIT_MAY_PANICK), Phase::REGISTERED | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED);
+    assert_eq!(
+        LazyAccess::phase(&INIT_MAY_PANICK),
+        Phase::REGISTERED | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED
+    );
 
     assert!(catch_unwind(|| INIT_MAY_PANICK.0).is_err());
 
     assert_eq!(UNINIT_COUNT.load(Ordering::Relaxed), 2);
 
-    assert_eq!(LazyAccess::phase(&INIT_MAY_PANICK), Phase::REGISTERED | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED);
+    assert_eq!(
+        LazyAccess::phase(&INIT_MAY_PANICK),
+        Phase::REGISTERED | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED
+    );
 
     assert_eq!(INIT_MAY_PANICK.0, 42);
-    
+
     assert_eq!(UNINIT_COUNT.load(Ordering::Relaxed), 3);
 
     assert!(LazyAccess::phase(&INIT_MAY_PANICK) == Phase::REGISTERED | Phase::INITIALIZED);
 
-    assert_eq!(LazyAccess::try_get(&INIT_MAY_PANICK).unwrap().0,42);
+    assert_eq!(LazyAccess::try_get(&INIT_MAY_PANICK).unwrap().0, 42);
 
     assert!(LazyAccess::phase(&INIT_MAY_PANICK) == Phase::REGISTERED | Phase::INITIALIZED);
 
@@ -121,34 +124,32 @@ static FINALIZE_C_COUNT: AtomicU32 = AtomicU32::new(0);
 struct C(u32);
 
 impl C {
-    fn new(v: u32) -> C{
+    fn new(v: u32) -> C {
         C(v)
     }
 }
 
 impl Finaly for C {
     fn finaly(&self) {
-        FINALIZE_C_COUNT.fetch_add(1,Ordering::Relaxed);
+        FINALIZE_C_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 }
 
 #[destructor(10)]
-extern fn check_c_finalized() {
+extern "C" fn check_c_finalized() {
     println!("Without this message threads cannot be spawned in destructors...");
     assert_eq!(FINALIZE_C_COUNT.load(Ordering::Relaxed), 1)
 }
 
-
 static UNINIT_ONCE_COUNT: AtomicU32 = AtomicU32::new(0);
-#[dynamic(lazy,finalize,try_init_once)]
+#[dynamic(lazy, finalize, try_init_once)]
 static UNINITIALIZABLE: C = {
-    UNINIT_ONCE_COUNT.fetch_add(1,Ordering::Relaxed);
+    UNINIT_ONCE_COUNT.fetch_add(1, Ordering::Relaxed);
     panic!("Panicked on purpose")
-    };
+};
 
 #[test]
 fn init_may_panick_intolerant() {
-
     assert!(LazyAccess::phase(&UNINITIALIZABLE).is_empty());
 
     assert!(LazyAccess::try_get(&UNINITIALIZABLE).is_err());
@@ -156,27 +157,31 @@ fn init_may_panick_intolerant() {
     assert!(LazyAccess::phase(&UNINITIALIZABLE).is_empty());
 
     assert!(catch_unwind(|| UNINITIALIZABLE.0).is_err());
-    
+
     assert_eq!(UNINIT_ONCE_COUNT.load(Ordering::Relaxed), 1);
 
-    assert_eq!(LazyAccess::phase(&UNINITIALIZABLE), Phase::REGISTERED | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED);
+    assert_eq!(
+        LazyAccess::phase(&UNINITIALIZABLE),
+        Phase::REGISTERED | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED
+    );
 
     assert!(catch_unwind(|| UNINITIALIZABLE.0).is_err());
 
     assert_eq!(UNINIT_ONCE_COUNT.load(Ordering::Relaxed), 1);
 
-    assert_eq!(LazyAccess::phase(&UNINITIALIZABLE), Phase::REGISTERED | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED);
+    assert_eq!(
+        LazyAccess::phase(&UNINITIALIZABLE),
+        Phase::REGISTERED | Phase::INITIALIZATION_PANICKED | Phase::INITIALIZATION_SKIPED
+    );
 
     assert_eq!(UNINIT_ONCE_COUNT.load(Ordering::Relaxed), 1);
-
 }
 
-#[dynamic(lazy,finalize,try_init_once)]
+#[dynamic(lazy, finalize, try_init_once)]
 static NORMAL_WITH_TOLERANCE: C = C::new(33);
 
 #[test]
 fn normal_with_tolerance() {
-
     assert!(LazyAccess::phase(&NORMAL_WITH_TOLERANCE).is_empty());
 
     assert!(LazyAccess::try_get(&NORMAL_WITH_TOLERANCE).is_err());
@@ -185,21 +190,21 @@ fn normal_with_tolerance() {
 
     assert_eq!(NORMAL_WITH_TOLERANCE.0, 33);
 
-    assert!(LazyAccess::phase(&NORMAL_WITH_TOLERANCE) == Phase::INITIALIZED|Phase::REGISTERED);
+    assert!(LazyAccess::phase(&NORMAL_WITH_TOLERANCE) == Phase::INITIALIZED | Phase::REGISTERED);
 
     assert_eq!(LazyAccess::try_get(&NORMAL_WITH_TOLERANCE).unwrap().0, 33);
 
-    assert!(LazyAccess::phase(&NORMAL_WITH_TOLERANCE) == Phase::INITIALIZED|Phase::REGISTERED);
+    assert!(LazyAccess::phase(&NORMAL_WITH_TOLERANCE) == Phase::INITIALIZED | Phase::REGISTERED);
 
     assert_eq!(NORMAL_WITH_TOLERANCE.0, 33);
 
     assert_eq!(LazyAccess::get(&NORMAL_WITH_TOLERANCE).0, 33);
 }
 
-#[dynamic(lazy,finalize)]
+#[dynamic(lazy, finalize)]
 static ATEMPT_AFTER_MAIN: D = D::new(33);
 
-#[dynamic(lazy,finalize,tolerate_leak)]//never droped
+#[dynamic(lazy, finalize, tolerate_leak)] //never droped
 static ATEMPT_AFTER_MAIN_TOL: D = D::new(33);
 
 static FINALIZE_D_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -207,25 +212,24 @@ static FINALIZE_D_COUNT: AtomicU32 = AtomicU32::new(0);
 struct D(u32);
 
 impl D {
-    fn new(v: u32) -> D{
+    fn new(v: u32) -> D {
         D(v)
     }
 }
 
 impl Finaly for D {
     fn finaly(&self) {
-        FINALIZE_D_COUNT.fetch_add(1,Ordering::Relaxed);
+        FINALIZE_D_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 }
 
 #[destructor(100)]
-extern fn check_d_finalized() {
+extern "C" fn check_d_finalized() {
     assert_eq!(FINALIZE_D_COUNT.load(Ordering::Relaxed), 0)
 }
 
 #[destructor(10)]
-extern fn check_late() {
-
+extern "C" fn check_late() {
     assert!(LazyAccess::phase(&ATEMPT_AFTER_MAIN_TOL).is_empty());
 
     assert!(LazyAccess::try_get(&ATEMPT_AFTER_MAIN_TOL).is_err());
@@ -234,11 +238,17 @@ extern fn check_late() {
 
     assert_eq!(ATEMPT_AFTER_MAIN_TOL.0, 33);
 
-    assert!(LazyAccess::phase(&ATEMPT_AFTER_MAIN_TOL) == Phase::INITIALIZED | Phase::REGISTRATION_REFUSED);
+    assert!(
+        LazyAccess::phase(&ATEMPT_AFTER_MAIN_TOL)
+            == Phase::INITIALIZED | Phase::REGISTRATION_REFUSED
+    );
 
     assert_eq!(LazyAccess::try_get(&ATEMPT_AFTER_MAIN_TOL).unwrap().0, 33);
 
-    assert!(LazyAccess::phase(&ATEMPT_AFTER_MAIN_TOL) == Phase::INITIALIZED|Phase::REGISTRATION_REFUSED);
+    assert!(
+        LazyAccess::phase(&ATEMPT_AFTER_MAIN_TOL)
+            == Phase::INITIALIZED | Phase::REGISTRATION_REFUSED
+    );
 
     assert_eq!(ATEMPT_AFTER_MAIN_TOL.0, 33);
 
@@ -253,6 +263,4 @@ extern fn check_late() {
     assert!(LazyAccess::phase(&ATEMPT_AFTER_MAIN).is_empty());
 
     //assert!(catch_unwind(|| ATEMPT_AFTER_MAIN.0).is_err());
-
 }
-

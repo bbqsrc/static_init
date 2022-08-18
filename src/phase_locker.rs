@@ -78,16 +78,11 @@ pub(crate) unsafe trait PhaseLocker<'a, T: 'a> {
     fn phase(&self) -> Phase;
 }
 
-pub(crate) unsafe trait MutPhaseLocker{
+pub(crate) unsafe trait MutPhaseLocker {
     fn get_phase_unique(&mut self) -> Phase;
     fn set_phase(&mut self, p: Phase);
 
-    fn transition<R>(
-        &mut self,
-        f: impl FnOnce() -> R,
-        on_success: Phase,
-        on_panic: Phase,
-    ) -> R;
+    fn transition<R>(&mut self, f: impl FnOnce() -> R, on_success: Phase, on_panic: Phase) -> R;
 }
 
 /// Nature of the lock requested
@@ -104,5 +99,5 @@ pub enum LockResult<R, W> {
     None(Phase),
 }
 
-#[cfg(feature = "lock_statistics")]
+#[cfg(all(feature = "lock_statistics", not(feature = "spin_loop")))]
 pub use sync::LockStatistics;

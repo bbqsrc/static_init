@@ -1,8 +1,8 @@
-#![allow(unused)]//functions that are usefull for extension
+#![allow(unused)] //functions that are usefull for extension
 
 use crate::{
     Finaly, Generator, LazySequentializer, LockNature, LockResult, Phase, Phased, Sequential,
-    Sequentializer, StaticInfo, Uninit,UniqueLazySequentializer
+    Sequentializer, StaticInfo, Uninit, UniqueLazySequentializer,
 };
 use core::cell::UnsafeCell;
 use core::fmt::{self, Debug, Display, Formatter};
@@ -169,12 +169,12 @@ impl Display for AccessError {
 impl std::error::Error for AccessError {}
 
 pub(crate) struct GenericLazySeq<T, M> {
-    value:          T,
+    value: T,
     sequentializer: M,
 }
 
 pub(crate) struct GenericLockedLazySeq<T, M> {
-    value:          T,
+    value: T,
     sequentializer: M,
 }
 
@@ -182,11 +182,11 @@ pub(crate) struct GenericLockedLazySeq<T, M> {
 /// initialize the data, at each access depending on the LazyPolicy
 /// provided as generic argument.
 pub(crate) struct GenericLazy<T, F, M, S> {
-    seq:       GenericLazySeq<T, M>,
+    seq: GenericLazySeq<T, M>,
     generator: F,
-    phantom:   PhantomData<S>,
+    phantom: PhantomData<S>,
     #[cfg(debug_mode)]
-    _info:     Option<StaticInfo>,
+    _info: Option<StaticInfo>,
 }
 
 // SAFETY: The synchronization is ensured by the Sequentializer
@@ -430,9 +430,9 @@ where
     }
 }
 
-
 impl<T, F, M, S> GenericLazy<T, F, M, S>
-    where M: UniqueLazySequentializer<GenericLazySeq<T,M>>,
+where
+    M: UniqueLazySequentializer<GenericLazySeq<T, M>>,
     T: LazyData,
     S: LazyPolicy,
     F: Generator<T::Target>,
@@ -443,8 +443,7 @@ impl<T, F, M, S> GenericLazy<T, F, M, S>
     /// # Safety
     ///
     /// Undefined behaviour if the referenced value has not been initialized
-    pub unsafe fn only_init_then_get_mut_unchecked(&mut self) -> &mut T::Target 
-    {
+    pub unsafe fn only_init_then_get_mut_unchecked(&mut self) -> &mut T::Target {
         self.only_init_unique();
         &mut *self.seq.value.get()
     }
@@ -452,8 +451,7 @@ impl<T, F, M, S> GenericLazy<T, F, M, S>
     #[inline(always)]
     /// Attempt initialization then get a mutable reference to the target, returning an error if the
     /// target is not in the correct phase.
-    pub fn only_init_then_try_get_mut(&mut self) -> Result<&mut T::Target, AccessError>  
-    {
+    pub fn only_init_then_try_get_mut(&mut self) -> Result<&mut T::Target, AccessError> {
         let phase = self.only_init_unique();
         post_init_check_access::<*mut T::Target, S>(self.seq.value.get(), phase)
             .map(|ptr| unsafe { &mut *ptr })
@@ -462,16 +460,14 @@ impl<T, F, M, S> GenericLazy<T, F, M, S>
     #[inline(always)]
     /// Attempt initialization then get a mutable reference to the target, returning an error if the
     /// target is not in the correct phase.
-    pub fn only_init_then_get_mut(&mut self) -> &mut T::Target  
-    {
+    pub fn only_init_then_get_mut(&mut self) -> &mut T::Target {
         Self::only_init_then_try_get_mut(self).unwrap()
     }
 
     #[inline(always)]
     /// Potentialy initialize the inner data, returning the
     /// phase reached at the end of the initialization attempt
-    pub fn only_init_unique(&mut self) -> Phase
-    {
+    pub fn only_init_unique(&mut self) -> Phase {
         let generator = &self.generator;
         let seq = &mut self.seq;
         <M as UniqueLazySequentializer<GenericLazySeq<T, M>>>::init_unique(
@@ -506,7 +502,7 @@ unsafe impl<T: LazyData, M> Sequential for GenericLazySeq<T, M> {
     }
 }
 
-#[must_use="If unused the write lock is immediatly released"]
+#[must_use = "If unused the write lock is immediatly released"]
 pub(crate) struct WriteGuard<T>(T);
 
 impl<T> Deref for WriteGuard<T>
@@ -541,20 +537,18 @@ where
     }
 }
 
-impl<T> Debug for WriteGuard<T> 
-    where T: Deref,
+impl<T> Debug for WriteGuard<T>
+where
+    T: Deref,
     <T as Deref>::Target: LazyData,
     <<T as Deref>::Target as LazyData>::Target: Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("WriteGuard")
-            .field(&*self)
-            .finish()
+        f.debug_tuple("WriteGuard").field(&*self).finish()
     }
 }
 
-
-#[must_use="If unused the read lock is immediatly released"]
+#[must_use = "If unused the read lock is immediatly released"]
 #[derive(Clone)]
 pub(crate) struct ReadGuard<T>(T);
 
@@ -570,16 +564,14 @@ where
     }
 }
 
-
-impl<T> Debug for ReadGuard<T> 
-    where T: Deref,
+impl<T> Debug for ReadGuard<T>
+where
+    T: Deref,
     <T as Deref>::Target: LazyData,
     <<T as Deref>::Target as LazyData>::Target: Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("ReadGuard")
-            .field(&*self)
-            .finish()
+        f.debug_tuple("ReadGuard").field(&*self).finish()
     }
 }
 
@@ -613,11 +605,11 @@ impl<T: LazyData> RefUnwindSafe for WriteGuard<T> where <T as LazyData>::Target:
 /// initialize the data, at each access depending on the LazyPolicy
 /// provided as generic argument.
 pub(crate) struct GenericLockedLazy<T, F, M, S> {
-    seq:       GenericLockedLazySeq<T, M>,
+    seq: GenericLockedLazySeq<T, M>,
     generator: F,
-    phantom:   PhantomData<S>,
+    phantom: PhantomData<S>,
     #[cfg(debug_mode)]
-    _info:     Option<StaticInfo>,
+    _info: Option<StaticInfo>,
 }
 
 impl<T, F, M, S> GenericLockedLazy<T, F, M, S> {
@@ -1123,7 +1115,8 @@ where
 }
 
 impl<T, F, M, S> GenericLockedLazy<T, F, M, S>
-    where M: UniqueLazySequentializer<GenericLockedLazySeq<T,M>>,
+where
+    M: UniqueLazySequentializer<GenericLockedLazySeq<T, M>>,
     T: LazyData,
     S: LazyPolicy,
     F: Generator<T::Target>,

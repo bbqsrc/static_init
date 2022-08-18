@@ -6,11 +6,11 @@
 // copied, modified, or distributed except according to those terms.
 
 //! Safe non const initialized statics and safe mutable statics with unbeatable performance.
-//! 
+//!
 //! Also provides code execution at program start-up/exit.
-//! 
+//!
 //! # Feature
-//! 
+//!
 //! - [x] non const initialized statics.
 //! - [x] statics dropped at program exit.
 //! - [x] safe mutable lazy statics (locked).
@@ -22,117 +22,117 @@
 //! - [x] on nigtly, `thread_locals` and safe mutable `thread_locals`, guaranteed to be
 //!     dropped at thread exit with the lowest possible overhead compared to
 //!     what is provided by system library thread support or the standard library!
-//! 
+//!
 //! # Fastest Lazy Statics
-//! 
+//!
 //! This crate provides *lazy statics* on all plateforms.
-//! 
+//!
 //! On unixes and windows *lesser lazy statics* are *lazy* during program startup phase
 //! (before `main` is called). Once main is called, those statics are all guaranteed to be
 //! initialized and any access to them almost no incur any performance cost
-//! 
+//!
 //! ```
 //! use static_init::{dynamic};
-//! 
-//! #[dynamic] 
+//!
+//! #[dynamic]
 //! static L1: Vec<i32> = vec![1,2,3,4,5,6];
-//! 
-//! #[dynamic(drop)] 
+//!
+//! #[dynamic(drop)]
 //! static mut L2: Vec<i32> = {let mut v = L1.clone(); v.push(43); v};
 //! ```
-//! 
+//!
 //! Those static initialization and access can be 10x faster than
 //! what is provided by the standard library or other crates.
-//! 
+//!
 //! # Safe Mutable Statics
-//! 
+//!
 //! Just add the `mut` keyword to have mutable locked statics.
-//! 
+//!
 //! ```
 //! use static_init::{dynamic};
-//! 
-//! #[dynamic] 
+//!
+//! #[dynamic]
 //! static mut L1: Vec<i32> = vec![1,2,3,4,5,6];
-//! 
-//! #[dynamic(drop)] 
+//!
+//! #[dynamic(drop)]
 //! static mut L2: Vec<i32> = {
 //!    //get a unique lock:
-//!    let mut lock = L1.write(); 
-//!    lock.push(42); 
+//!    let mut lock = L1.write();
+//!    lock.push(42);
 //!    lock.clone()
 //!    };
 //! ```
-//! 
+//!
 //! Those statics use an *apdaptative phase locker* that gives them surprising performance.
-//! 
-//! # Classical Lazy statics 
-//! 
+//!
+//! # Classical Lazy statics
+//!
 //! By default, initialization of statics declared with the `dynamic` is forced before main
 //! start on plateform that support it. If *lazyness* if a required feature, the attribute argument
 //! `lazy` can be used.
-//! 
+//!
 //! ```rust
 //! use static_init::{dynamic};
-//! 
-//! #[dynamic(lazy)] 
+//!
+//! #[dynamic(lazy)]
 //! static L1: Vec<i32> = vec![1,2,3,4,5,6];
-//! 
-//! #[dynamic(lazy,drop)] 
-//! static mut L3: Vec<i32> =L1.clone(); 
+//!
+//! #[dynamic(lazy,drop)]
+//! static mut L3: Vec<i32> =L1.clone();
 //! ```
-//! 
+//!
 //! Even if the static is not mut, dropped statics are always locked. There is also a `finalize` attribute
-//! argument that can be used to run a "drop" equivalent at program exit but leaves the static unchanged. 
-//! 
+//! argument that can be used to run a "drop" equivalent at program exit but leaves the static unchanged.
+//!
 //! Those lazy also provide superior performances compared to other solutions.
-//! 
+//!
 //! # `no_std` support
-//! 
+//!
 //! On linux or Reddox (TBC) this library is `no_std`. The library use directly the `futex` system call
 //! to place thread in a wait queue when needed.
-//! 
+//!
 //! On other plateform `no_std` support can be gain by using the `spin_loop` feature. NB that lock strategies
 //! based on spin loop are not system-fair and cause entire system slow-down.
-//! 
+//!
 //! # Performant
-//! 
+//!
 //! ## Under the hood
-//! 
+//!
 //! The statics and mutable statics declared with `dynamic` attribute use what we
 //! call an  *adaptative phase locker*. This is a lock that is in between a `Once`
 //! and a `RwLock`. It is carefully implemented as a variation over the `RwLock`
 //! algorithms of `parking_lot` crate with other tradeoff and different
-//! capabilities. 
-//! 
+//! capabilities.
+//!
 //! It is qualified *adaptative* because the decision to take a read lock,
 //! a write lock or not to take a lock is performed while the lock attempt is
 //! performed and a thread may attempt to get a write lock but decides to be waked
 //! as the owner of a read lock if it is about to be placed in a wait queue.
-//! 
+//!
 //! Statics and thread locals that need to register themselve for destruction at
 //! program or thread exit are implemented as members of an intrusive list. This
 //! implementation avoid heap memory allocation caused by system library support
 //! (`libc::at_exit`, `glibc::__cxa_at_thread_exit`, pthread... registers use heap
 //! memory allocation), and it avoid to fall on system library implementation
 //! limits that may cause `thread_locals` declared with `std::thread_locals` not to
-//! be dropped. 
-//! 
+//! be dropped.
+//!
 //! Last but not least of the optimization, on windows and unixes (but not Mac yet)
 //! `dynamic` statics initialization is forced before main start. This fact unable
 //! a double check with a single boolean for all statics that is much faster other
-//! double check solution. 
-//! 
+//! double check solution.
+//!
 //! ## Benchmark results
 //!
 //! (see the README file or run benchmark with `cargo bench --feature bench_nightly`)
-//! 
+//!
 //! # Thread local support
-//! 
+//!
 //! On nightly `thread_local` support can be enable with the feature
 //! `thread_local`. The attribute `dynamic` can be used with thread locals as with
 //! regular statics. In this case, the mutable `thread_local` will behave similarly
 //! to a RefCell with the same syntax as mutable lazy statics.
-//! 
+//!
 //! ```rust
 //! # #![cfg_attr(feature = "thread_local", feature(thread_local))]
 //! # use static_init::{Finaly,dynamic};
@@ -143,59 +143,59 @@
 //! #[dynamic(drop)] //guaranteed to be drop: no leak contrarily to std::thread_local
 //! #[thread_local]
 //! static V: Vec<i32> = vec![1,1,2,3,5];
-//! 
+//!
 //! #[dynamic]
 //! #[thread_local]
 //! static mut W: Vec<i32> = V.clone();
-//! # fn main() { 
+//! # fn main() {
 //! assert_ne!(W.read().len(), 0);
 //! assert_ne!(W.try_read().unwrap().len(), 0);
 //! # }
 //! # }
 //! ```
-//! 
-//! # Unsafe Low level 
-//! 
+//!
+//! # Unsafe Low level
+//!
 //! ## Unchecked statics initiliazed at program start up
-//! 
+//!
 //! The library also provides unchecked statics, whose initialization is run before main start. Those statics
 //! does not imply any memory overhead neither execution time overhead. This is the responsability of the coder
 //! to be sure not to access those static before they are initialized.
-//! 
+//!
 //! ```rust
 //! use static_init::dynamic;
 //!
 //! #[dynamic(10)]
 //! static A: Vec<i32> = vec![1,2,3];
-//! 
+//!
 //! #[dynamic(0,drop)]
 //! static mut B: Vec<i32> = unsafe {A.clone()};
 //! ```
-//! 
+//!
 //! Even if A is not declared mutable, the attribute macro convert it into a mutable static to ensure that every
 //! access to it is unsafe.
-//! 
+//!
 //! The number indicates the priority, the larger the number, the sooner the static will be initialized.
-//! 
+//!
 //! Those statics can also be droped at program exit with the `drop` attribute argument.
-//! 
-//! ## Program constructor destructor 
-//! 
+//!
+//! ## Program constructor destructor
+//!
 //! It is possible to register fonction for execution before main start/ after main returns.
-//! 
+//!
 //!
 //! ```rust
 //! use static_init::{constructor, destructor};
 //!
 //! #[constructor(10)]
 //! extern "C" fn run_first() {}
-//! 
+//!
 //! #[constructor(0)]
 //! extern "C" fn then_run() {}
-//! 
+//!
 //! #[destructor(0)]
 //! extern "C" fn pre_finish() {}
-//! 
+//!
 //! #[destructor(10)]
 //! extern "C" fn finaly() {}
 //! ```
@@ -204,7 +204,6 @@
 //!
 //! The feature `debug_order` can be activated to detect trouble with initialization order of raw
 //! statics or dead locks due to lazy initialization depending on itself.
-
 
 // TODO:
 //          - bencher les thread locals
@@ -227,8 +226,8 @@
 //      - initialize standard streams
 //      - sigpip reset
 //
-//   - guard actualy does noting just return expect stack size 
-//   - otherwise map memory and prohibit access with mprotect 
+//   - guard actualy does noting just return expect stack size
+//   - otherwise map memory and prohibit access with mprotect
 //      => so this is not secure and no point in minding about that
 //   - then sys::stack_overflow install a signal handler to handle
 //     signal => once again not secure no point in minding about that
@@ -247,7 +246,13 @@
 // args always accessbile
 // the same as unix with thread_info
 //
-#![cfg_attr(all(not(any(feature = "parking_lot_core", debug_mode)),any(target_os="linux",target_os="android")), no_std)]
+#![cfg_attr(
+    all(
+        not(any(feature = "parking_lot_core", debug_mode)),
+        any(target_os = "linux", target_os = "android")
+    ),
+    no_std
+)]
 #![cfg_attr(all(elf, feature = "thread_local"), feature(linkage))]
 #![cfg_attr(
     feature = "thread_local",
@@ -461,10 +466,9 @@ trait UniqueLazySequentializer<T: Sequential> {
     fn init_unique(
         target: &mut T,
         shall_init: impl Fn(Phase) -> bool,
-        init: impl FnOnce(&mut<T as Sequential>::Data),
+        init: impl FnOnce(&mut <T as Sequential>::Data),
     ) -> Phase;
 }
-
 
 /// A [FinalizableLazySequentializer] sequentialize the [phase](Phase) of an object to
 /// ensure atomic initialization and finalization.
@@ -566,14 +570,14 @@ impl<U, T: FnOnce() -> U> GeneratorTolerance for Cell<Option<T>> {
     const FINAL_REGISTRATION_FAILURE: bool = false;
 }
 
-/// Trait that must be implemented by #[dynamic(finalize)] statics. 
+/// Trait that must be implemented by #[dynamic(finalize)] statics.
 pub trait Finaly {
     /// This method is called when program or thread exit and the lazy
     /// was initialized
     fn finaly(&self);
 }
 
-/// Trait that must be implemented by #[dynamic(prime)] mutable statics. 
+/// Trait that must be implemented by #[dynamic(prime)] mutable statics.
 pub trait Uninit {
     /// This method is called when program or thread exit and the lazy
     /// was initialized
@@ -732,9 +736,9 @@ pub use phase::Phase;
 ///  65436.
 ///
 /// - call to `std::thread::current` will panick.
-/// 
+///
 /// - standard streams may not be initialized.
-/// 
+///
 /// - Some signal handler installed by the standard library may not be installed
 ///
 /// On windows all the standard library should appear initialized.
@@ -803,7 +807,7 @@ pub use static_init_macro::constructor;
 /// Destructor function should have type `unsafe extern "C" fn() -> ()`.
 pub use static_init_macro::destructor;
 
-/// Declare statics that can be initialized with non const fonctions and safe mutable statics 
+/// Declare statics that can be initialized with non const fonctions and safe mutable statics
 ///
 /// Statics on which this attribute is applied will be be initialized at run time (optionaly see
 /// bellow), before main start. This allow statics initialization with non const expressions.
@@ -875,7 +879,7 @@ pub use static_init_macro::destructor;
 /// assert_eq!(*V, vec![1,2]);
 /// ```
 ///
-/// ## Finalized statics 
+/// ## Finalized statics
 ///
 /// The attribute argument `finalize` can be used if the declared type of
 /// the static implement `Finaly` trait. The finalize method is called at
@@ -908,7 +912,7 @@ pub use static_init_macro::destructor;
 /// ```
 ///
 /// ## Tolerances
-/// 
+///
 /// ### Initialization fault tolerance
 ///
 /// By default if the initialization of a lazy panic, initialization will be attempted
@@ -916,9 +920,9 @@ pub use static_init_macro::destructor;
 /// with attribute argument `try_init_once`, in which case, the lazy will be poisonned if
 /// initialization panics.
 ///
-/// ``` 
+/// ```
 /// # use static_init::{dynamic};
-/// #[dynamic(try_init_once)] 
+/// #[dynamic(try_init_once)]
 /// static X :Vec<i32> = vec![1,2];
 ///
 /// #[dynamic(lazy,try_init_once)] //attribute argument can be combined
@@ -927,9 +931,9 @@ pub use static_init_macro::destructor;
 ///
 /// ### Registration for finalization tolerance
 ///
-/// By default lazy that intended to be finalized (because they use the `finalize` or `drop` 
+/// By default lazy that intended to be finalized (because they use the `finalize` or `drop`
 /// attribute argument) refuse to initialize if registration of the finalization or drop at
-/// program exit or thread exit fails. 
+/// program exit or thread exit fails.
 ///
 /// If this is not desired, the `tolerate_leak` attribute argument can be used.
 ///
@@ -941,8 +945,8 @@ pub use static_init_macro::destructor;
 ///     fn finaly(&self){/* some clean up code */ }
 /// }
 ///
-/// #[dynamic(finalize,tolerate_leak)] 
-/// static X :A = A(21); 
+/// #[dynamic(finalize,tolerate_leak)]
+/// static X :A = A(21);
 /// //the initialization may succeed even if it is impossible to register
 /// //the call to finaly at program exit
 /// ```
@@ -1007,7 +1011,7 @@ pub use static_init_macro::destructor;
 /// are release or not yet acquired.
 ///
 /// Those statics are initialized in two steps:
-/// 
+///
 /// - a const initialization that happens at compile time
 ///
 /// - a dynamic intialization that happens the first time they are accessed if
@@ -1049,12 +1053,12 @@ pub use static_init_macro::destructor;
 ///     };
 ///
 /// match P.primed_read() {
-///     Ok(read_lock) => (),/*a read lock that refers to the initialized statics */ 
+///     Ok(read_lock) => (),/*a read lock that refers to the initialized statics */
 ///     Err(read_lock) => (),/* post finalization access, uninit has already been called*/
 ///     }
 ///
 /// match P.primed_write() {
-///     Ok(write_lock) => (),/*a write lock that refers to the initialized statics */ 
+///     Ok(write_lock) => (),/*a write lock that refers to the initialized statics */
 ///     Err(read_lock) => (),/* post finalization access, uninit has already been called*/
 ///     }
 /// ```
@@ -1098,10 +1102,10 @@ pub use static_init_macro::destructor;
 /// //V1 must be initialized first
 /// //because V2 uses the value of V1.
 ///
-/// #[dynamic(10)]
+/// #[dynamic(20)]
 /// static mut V1 :Vec<i32> = vec![1,2];
 ///
-/// #[dynamic(20)]
+/// #[dynamic(10)]
 /// static V2 :Vec<i32> = unsafe{V1.push(3); V1.clone()};
 /// ```
 ///
@@ -1122,7 +1126,7 @@ pub use static_init_macro::destructor;
 /// ```
 /// # use static_init::dynamic;
 ///
-/// #[dynamic(10, drop)] //equivalent to #[dynamic(10,drop=10)] 
+/// #[dynamic(10, drop)] //equivalent to #[dynamic(10,drop=10)]
 /// //or longer #[dynamic(init=10,drop=10)]
 /// static mut V1 :Vec<i32> = vec![1,2];
 ///
@@ -1176,7 +1180,7 @@ pub use generic_lazy::AccessError;
 /// Provides various implementation of lazily initialized types
 pub mod lazy;
 #[doc(inline)]
-pub use lazy::{Lazy, LockedLazy, LazyAccess};
+pub use lazy::{Lazy, LazyAccess, LockedLazy};
 #[doc(inline)]
 pub use lazy::{UnSyncLazy, UnSyncLockedLazy};
 
@@ -1206,12 +1210,12 @@ pub enum FinalyMode {
 #[doc(hidden)]
 pub struct StaticInfo {
     pub variable_name: &'static str,
-    pub file_name:     &'static str,
-    pub line:          u32,
-    pub column:        u32,
-    pub init_mode:     InitMode,
-    pub drop_mode:     FinalyMode,
+    pub file_name: &'static str,
+    pub line: u32,
+    pub column: u32,
+    pub init_mode: InitMode,
+    pub drop_mode: FinalyMode,
 }
 
-#[cfg(feature = "lock_statistics")]
+#[cfg(all(feature = "lock_statistics", not(feature = "spin_loop")))]
 pub use phase_locker::LockStatistics;

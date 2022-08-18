@@ -1,5 +1,5 @@
 use super::spin_wait::SpinWait;
-use super::{LockNature, LockResult, Mappable, PhaseGuard, PhaseLocker,MutPhaseLocker};
+use super::{LockNature, LockResult, Mappable, MutPhaseLocker, PhaseGuard, PhaseLocker};
 use crate::phase::*;
 use crate::{Phase, Phased};
 use core::cell::UnsafeCell;
@@ -11,9 +11,9 @@ use core::sync::atomic::{fence, AtomicU32, Ordering};
 pub(crate) struct SyncPhaseLocker(AtomicU32);
 
 pub(crate) struct Lock<'a> {
-    futex:      &'a AtomicU32,
+    futex: &'a AtomicU32,
     init_phase: Phase,
-    on_unlock:  Phase,
+    on_unlock: Phase,
 }
 
 /// A phase guard that allow atomic phase transition that
@@ -21,7 +21,7 @@ pub(crate) struct Lock<'a> {
 pub(crate) struct SyncPhaseGuard<'a, T: ?Sized>(&'a T, Lock<'a>);
 
 pub(crate) struct ReadLock<'a> {
-    futex:      &'a AtomicU32,
+    futex: &'a AtomicU32,
     init_phase: Phase,
 }
 
@@ -297,7 +297,7 @@ impl<'a> Clone for ReadLock<'a> {
                     .is_ok()
             {
                 return ReadLock {
-                    futex:      &self.futex,
+                    futex: &self.futex,
                     init_phase: self.init_phase,
                 };
             }
@@ -344,7 +344,7 @@ fn is_read_lockable(v: u32) -> bool {
 // SyncPhaseLocker
 // ---------------
 //
-struct MutGuard<'a>(&'a mut AtomicU32,Phase);
+struct MutGuard<'a>(&'a mut AtomicU32, Phase);
 impl<'a> Drop for MutGuard<'a> {
     fn drop(&mut self) {
         *self.0.get_mut() = self.1.bits();
@@ -366,11 +366,11 @@ unsafe impl MutPhaseLocker for SyncPhaseLocker {
     }
 
     #[inline(always)]
-    fn transition<R>(&mut self,f: impl FnOnce() -> R, on_success: Phase, on_panic:Phase) -> R {
+    fn transition<R>(&mut self, f: impl FnOnce() -> R, on_success: Phase, on_panic: Phase) -> R {
         let m = MutGuard(&mut self.0, on_panic);
         let r = f();
         forget(m);
-        Self::set_phase(self,on_success);
+        Self::set_phase(self, on_success);
         r
     }
 }

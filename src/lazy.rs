@@ -3,9 +3,9 @@ use crate::phase_locker::{
     UnSyncReadPhaseGuard,
 };
 use crate::{
-    generic_lazy::{self,
-        AccessError, DropedUnInited, GenericLazy, GenericLockedLazy, LazyData, LazyPolicy, Primed,
-        UnInited,
+    generic_lazy::{
+        self, AccessError, DropedUnInited, GenericLazy, GenericLockedLazy, LazyData, LazyPolicy,
+        Primed, UnInited,
     },
     lazy_sequentializer::UnSyncSequentializer,
     Finaly, Generator, GeneratorTolerance, Phase, Phased, StaticInfo, Uninit,
@@ -16,15 +16,13 @@ use crate::exit_sequentializer::ThreadExitSequentializer;
 
 use crate::{exit_sequentializer::ExitSequentializer, lazy_sequentializer::SyncSequentializer};
 
+use core::cell::Cell;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
-use core::cell::Cell;
 
 struct InitializedChecker<T>(PhantomData<T>);
 
-impl<Tol: GeneratorTolerance> LazyPolicy
-    for InitializedChecker<Tol>
-{
+impl<Tol: GeneratorTolerance> LazyPolicy for InitializedChecker<Tol> {
     #[inline(always)]
     fn shall_init(p: Phase) -> bool {
         if Tol::INIT_FAILURE {
@@ -50,7 +48,6 @@ impl<Tol: GeneratorTolerance> LazyPolicy
         true
     }
 }
-
 
 struct InitializedSoftFinalizedCheckerGeneric<T, const REG_ALWAYS: bool>(PhantomData<T>);
 
@@ -126,18 +123,17 @@ type InitializedSoftFinalizedCheckerLesser<T> = InitializedSoftFinalizedCheckerG
 type InitializedHardFinalizedCheckerLesser<T> = InitializedHardFinalizedCheckerGeneric<T, true>;
 
 /// Thread local final registration always succeed for thread local on glibc plateforms
-#[cfg(all(feature = "thread_local",cxa_thread_at_exit))]
+#[cfg(all(feature = "thread_local", cxa_thread_at_exit))]
 type InitializedSoftFinalizedTLChecker<T> = InitializedSoftFinalizedCheckerGeneric<T, true>;
 
-#[cfg(all(feature = "thread_local",cxa_thread_at_exit))]
+#[cfg(all(feature = "thread_local", cxa_thread_at_exit))]
 type InitializedHardFinalizedTLChecker<T> = InitializedHardFinalizedCheckerGeneric<T, true>;
 
-#[cfg(all(feature = "thread_local",not(cxa_thread_at_exit)))]
+#[cfg(all(feature = "thread_local", not(cxa_thread_at_exit)))]
 type InitializedSoftFinalizedTLChecker<T> = InitializedSoftFinalizedCheckerGeneric<T, false>;
 
-#[cfg(all(feature = "thread_local",not(cxa_thread_at_exit)))]
+#[cfg(all(feature = "thread_local", not(cxa_thread_at_exit)))]
 type InitializedHardFinalizedTLChecker<T> = InitializedHardFinalizedCheckerGeneric<T, false>;
-
 
 /// Helper trait to ease access static lazy associated functions
 pub trait LazyAccess: Sized {
@@ -646,8 +642,9 @@ macro_rules! non_static_debug {
 }
 macro_rules! non_static_impls {
     ($tp:ident, $data:ty $(,T: $tr:ident)? $(,G: $trg:ident)?) => {
-        impl<T, G> $tp<T, Cell<Option<G>>> 
-        where G: FnOnce() -> T
+        impl<T, G> $tp<T, Cell<Option<G>>>
+        where
+            G: FnOnce() -> T,
         {
             #[inline(always)]
             pub fn new(g: G) -> Self {
@@ -746,13 +743,13 @@ macro_rules! extend_locked_lazy {
                 }
             }
         }
-    }
+    };
 }
 macro_rules! extend_unsync_locked_lazy {
     () => {
         non_static_impls! {UnSyncLockedLazy,UnInited::<T>}
         non_static_mut_debug! {UnSyncLockedLazy,UnInited::<T>}
-        
+
         impl<T, G: Generator<T>> UnSyncLockedLazy<T, G> {
             #[inline(always)]
             /// Initialize and return a mutable reference to the target
@@ -771,7 +768,7 @@ macro_rules! extend_unsync_locked_lazy {
                 self.__private.try_get_mut()
             }
         }
-        
+
         impl<T, G> Drop for UnSyncLockedLazy<T, G> {
             #[inline(always)]
             fn drop(&mut self) {
@@ -782,13 +779,12 @@ macro_rules! extend_unsync_locked_lazy {
                 }
             }
         }
-    }
+    };
 }
-
 
 macro_rules! impl_mut_lazy {
     ($mod: ident $(:$extension:ident)?, $tp:ident, $man:ident$(<$x:ident>)?, $checker:ident, $data:ty, $locker:ty, $gdw: ident, $gd: ident $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        pub mod $mod { 
+        pub mod $mod {
             use super::*;
         impl_mut_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker,$gdw,$gd$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?}
         impl_mut_lazy! {@lock $tp,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
@@ -799,7 +795,7 @@ macro_rules! impl_mut_lazy {
         pub use $mod::$tp;
     };
     (static $mod: ident, $tp:ident, $man:ident$(<$x:ident>)?, $checker:ident, $data:ty, $locker: ty, $gdw: ident,$gd:ident  $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        pub mod $mod { 
+        pub mod $mod {
             use super::*;
         impl_mut_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker,$gdw,$gd$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, 'static}
         impl_mut_lazy! {@lock $tp,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)? , 'static}
@@ -809,7 +805,7 @@ macro_rules! impl_mut_lazy {
         pub use $mod::$tp;
     };
     (const_static $mod: ident, $tp:ident, $man:ident$(<$x:ident>)?, $checker:ident, $data:ty, $locker: ty, $gdw: ident,$gd:ident  $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        pub mod $mod { 
+        pub mod $mod {
             use super::*;
         impl_mut_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker,$gdw,$gd$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, 'static}
         impl_mut_lazy! {@const_lock $tp,$checker, $data,$gdw,$gd$(,T:$tr)?$(,G:$trg)? , 'static}
@@ -819,7 +815,7 @@ macro_rules! impl_mut_lazy {
         pub use $mod::$tp;
     };
     (thread_local $mod: ident $(:$extension:ident)?, $tp:ident, $man:ident$(<$x:ident>)?, $checker:ident, $data:ty,$locker: ty,  $gdw: ident,$gd:ident  $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        pub mod $mod { 
+        pub mod $mod {
             use super::*;
         impl_mut_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker,$gdw,$gd$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe}
         impl_mut_lazy! {@lock_thread_local $tp,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
@@ -830,7 +826,7 @@ macro_rules! impl_mut_lazy {
         pub use $mod::$tp;
     };
     (global $mod: ident, $tp:ident, $man:ident$(<$x:ident>)?, $checker:ident, $data:ty,$locker: ty,  $gdw: ident,$gd:ident$(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        pub mod $mod { 
+        pub mod $mod {
             use super::*;
         impl_mut_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker,$gdw,$gd$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe, 'static}
         impl_mut_lazy! {@lock_global $tp,$checker,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
@@ -840,7 +836,7 @@ macro_rules! impl_mut_lazy {
         pub use $mod::$tp;
     };
     (primed_static $mod: ident, $tp:ident, $man:ident$(<$x:ident>)?, $checker:ident, $data:ty, $locker:ty, $gdw: ident, $gd: ident $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        pub mod $mod { 
+        pub mod $mod {
             use super::*;
         impl_mut_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker,$gdw,$gd$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, 'static}
         impl_mut_lazy! {@lock $tp,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?, 'static}
@@ -851,7 +847,7 @@ macro_rules! impl_mut_lazy {
         pub use $mod::$tp;
     };
     (global_primed_static $mod: ident, $tp:ident, $man:ident$(<$x:ident>)?, $checker:ident, $data:ty, $locker:ty, $gdw: ident, $gd: ident $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        pub mod $mod { 
+        pub mod $mod {
             use super::*;
         impl_mut_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker,$gdw,$gd$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, 'static}
         impl_mut_lazy! {@lock_global $tp,$checker,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
@@ -862,7 +858,7 @@ macro_rules! impl_mut_lazy {
         pub use $mod::$tp;
     };
     (primed_thread_local $mod: ident, $tp:ident, $man:ident$(<$x:ident>)?, $checker:ident, $data:ty,$locker: ty,  $gdw: ident,$gd:ident  $(,T: $tr: ident)?$(,G: $trg:ident)?, $doc:literal $(cfg($attr:meta))?) => {
-        pub mod $mod { 
+        pub mod $mod {
             use super::*;
         impl_mut_lazy! {@proc $tp,$man$(<$x>)?,$checker,$data,$locker,$gdw,$gd$(,T:$tr)?$(,G:$trg)?,$doc $(cfg($attr))?, unsafe}
         impl_mut_lazy! {@lock_thread_local $tp,$data,$gdw,$gd$(,T:$tr)?$(,G:$trg)?}
@@ -971,7 +967,7 @@ macro_rules! impl_mut_lazy {
             ///
             /// # Panic
             ///
-            /// If locks succeeds, panics if the lazy was droped 
+            /// If locks succeeds, panics if the lazy was droped
             #[inline(always)]
             pub fn fast_read(&'static self) -> Option<ReadGuard<'_,T>> {
                     let l = unsafe{GenericLockedLazy::fast_read_lock_unchecked(&self.__private)};
@@ -1513,7 +1509,7 @@ macro_rules! impl_mut_lazy {
         pub struct $tp<T, G = fn() -> T> {
             __private: GenericLockedLazy<$data, G, $man$(<$x>)?, $checker::<G>>,
         }
-        
+
         #[must_use="If unused the write lock is immediatly released"]
         #[derive(Debug)]
         pub struct WriteGuard<'a,T>(generic_lazy::WriteGuard<$gdw::<'a,$data>>);
@@ -1537,7 +1533,7 @@ macro_rules! impl_mut_lazy {
 
         use core::ops::{Deref,DerefMut};
 
-        impl<'a,T> Deref for WriteGuard<'a,T> 
+        impl<'a,T> Deref for WriteGuard<'a,T>
         $(where T: $static)?
         {
             type Target = T;
@@ -1546,7 +1542,7 @@ macro_rules! impl_mut_lazy {
                 &*self.0
             }
         }
-        impl<'a,T> DerefMut for WriteGuard<'a,T> 
+        impl<'a,T> DerefMut for WriteGuard<'a,T>
         $(where T: $static)?
         {
             #[inline(always)]
@@ -1554,7 +1550,7 @@ macro_rules! impl_mut_lazy {
                 &mut *self.0
             }
         }
-        impl<'a,T> Deref for ReadGuard<'a,T> 
+        impl<'a,T> Deref for ReadGuard<'a,T>
         $(where T: $static)?
         {
             type Target = T;
@@ -1583,7 +1579,7 @@ macro_rules! impl_mut_lazy {
         }
 
         impl<T, G> Phased for $tp<T, G>
-        where 
+        where
         $(T: $static ,)?
         G: $($static +)? Generator<T>
         {
@@ -1594,7 +1590,7 @@ macro_rules! impl_mut_lazy {
         }
 
         impl<T, G> $tp<T, G>
-        where 
+        where
         $(T: $static ,)?
         G: $($static +)? Generator<T>,
         $(G:$trg, T:Send,)?
@@ -1625,7 +1621,6 @@ impl_mut_lazy! {primed_static primed_locked_lazy, PrimedLockedLazy,SyncSequentia
 
 impl_mut_lazy! {global_primed_static primed_lesser_locked_lazy, PrimedLesserLockedLazy,SyncSequentializer<G>,InitializedChecker,Primed::<T>, SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard,
 "The actual type of mutable statics attributed with [#[dynamic(primed)]](macro@crate::dynamic)"}
-
 
 impl_mut_lazy! {static locked_lazy_finalize,LockedLazyFinalize,ExitSequentializer<G>,InitializedSoftFinalizedChecker,UnInited::<T>,SyncPhaseLocker, SyncPhaseGuard, SyncReadPhaseGuard, T:Finaly,G:Sync,
 "The actual type of mutable statics attributed with [#[dynamic(lazy,finalize)]](macro@crate::dynamic)"
@@ -1858,7 +1853,8 @@ mod test_primed_mut_lazy {
 #[cfg(test)]
 mod test_quasi_mut_lazy {
     use super::LesserLockedLazy;
-    static _X: LesserLockedLazy<u32, fn() -> u32> = unsafe { LesserLockedLazy::from_generator(|| 22) };
+    static _X: LesserLockedLazy<u32, fn() -> u32> =
+        unsafe { LesserLockedLazy::from_generator(|| 22) };
     #[test]
     fn test() {
         assert_eq!(*_X.read(), 22);

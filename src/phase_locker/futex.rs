@@ -7,10 +7,10 @@
 /// are extremely fair with other read locks.
 ///
 /// But this mitigation can lead to the opposite. If there
-/// are many attempts to get a write lock, read locks will 
+/// are many attempts to get a write lock, read locks will
 /// never be awaken. So if concecutive `READ_FAIRNESS_PERIOD`
 /// write locks are awaked, gives priority to awake read locks
-const READ_FAIRNESS_PERIOD:u16 = 32;
+const READ_FAIRNESS_PERIOD: u16 = 32;
 #[cfg(all(
     not(feature = "parking_lot_core"),
     any(target_os = "linux", target_os = "android")
@@ -20,13 +20,13 @@ mod linux {
     use crate::phase::*;
     use core::ops::{Deref, DerefMut};
     use core::ptr;
-    use core::sync::atomic::{compiler_fence, AtomicU32, AtomicU16, Ordering};
+    use core::sync::atomic::{compiler_fence, AtomicU16, AtomicU32, Ordering};
     use libc::{syscall, SYS_futex, FUTEX_PRIVATE_FLAG, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET};
 
     pub(crate) struct Futex {
-        futex:        AtomicU32,
+        futex: AtomicU32,
         writer_count: AtomicU32,
-        fairness:     AtomicU16,
+        fairness: AtomicU16,
     }
 
     const READER_BIT: u32 = 0b01;
@@ -35,9 +35,9 @@ mod linux {
     impl Futex {
         pub(crate) const fn new(value: u32) -> Self {
             Self {
-                futex:        AtomicU32::new(value),
+                futex: AtomicU32::new(value),
                 writer_count: AtomicU32::new(0),
-                fairness:     AtomicU16::new(0),
+                fairness: AtomicU16::new(0),
                 //to allow the static to be placed zeroed segment
                 //and fairness with threads who attempted but failed to
                 //initialize the static
@@ -139,29 +139,32 @@ mod linux {
 ))]
 pub(crate) use linux::Futex;
 
-#[cfg(any(feature = "parking_lot_core", not(any(target_os="linux",target_os="android"))))]
+#[cfg(any(
+    feature = "parking_lot_core",
+    not(any(target_os = "linux", target_os = "android"))
+))]
 mod other {
     use super::READ_FAIRNESS_PERIOD;
     use crate::phase::*;
     use core::ops::{Deref, DerefMut};
-    use core::sync::atomic::{compiler_fence, AtomicU32, AtomicU16, Ordering};
+    use core::sync::atomic::{compiler_fence, AtomicU16, AtomicU32, Ordering};
     use parking_lot_core::{
         park, unpark_filter, unpark_one, FilterOp, ParkResult, DEFAULT_PARK_TOKEN,
         DEFAULT_UNPARK_TOKEN,
     };
 
     pub(crate) struct Futex {
-        futex:        AtomicU32,
+        futex: AtomicU32,
         writer_count: AtomicU32,
-        fairness:     AtomicU16,
+        fairness: AtomicU16,
     }
 
     impl Futex {
         pub(crate) const fn new(value: u32) -> Self {
             Self {
-                futex:        AtomicU32::new(value),
+                futex: AtomicU32::new(value),
                 writer_count: AtomicU32::new(0),
-                fairness:     AtomicU16::new(0),
+                fairness: AtomicU16::new(0),
             }
         }
 
@@ -262,5 +265,8 @@ mod other {
         }
     }
 }
-#[cfg(any(feature = "parking_lot_core", not(any(target_os="linux",target_os="android"))))]
+#[cfg(any(
+    feature = "parking_lot_core",
+    not(any(target_os = "linux", target_os = "android"))
+))]
 pub(crate) use other::Futex;
